@@ -3,3 +3,5 @@ node_modules
 dist
 do.ts
 do2.ts
+.env
+.env.local
