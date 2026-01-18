@@ -79,7 +79,6 @@
     "dist/**/*.d.ts"
   ],
   "dependencies": {
-    "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1",
     "node-sql-parser": "^5.3.13"
   }
 }
