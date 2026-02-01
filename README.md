@@ -19,6 +19,8 @@ Works with local DuckDB files, in-memory databases, and [MotherDuck](https://mot
 
 > **Status:** Experimental. Core query building, migrations, and type inference work well. Some DuckDB-specific types and edge cases are still being refined.
 
+> **Note:** The NPM package is `@leonardovida-md/drizzle-neo-duckdb` while the repository is `drizzle-duckdb`. This is due to a migration to preserve the existing NPM package name.
+
 Docs tip: every docs page has a **Markdown (raw)** button for LLM-friendly source.
 
 ## Installation
