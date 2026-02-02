@@ -3,7 +3,7 @@
   "module": "./dist/index.mjs",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "A drizzle ORM client for use with DuckDB. Based on drizzle's Postgres client.",
   "type": "module",
   "scripts": {
@@ -13,13 +13,15 @@
     "t": "vitest --watch --ui",
     "bench": "vitest bench --run test/perf --pool=threads --poolOptions.threads.singleThread=true --no-file-parallelism",
     "perf:run": "bun run scripts/run-perf.ts",
-    "perf:compare": "bun run scripts/compare-perf.ts"
+    "perf:compare": "bun run scripts/compare-perf.ts",
+    "publish:dual": "bun run scripts/publish-dual.ts",
+    "publish:dual:dry": "bun run scripts/publish-dual.ts --dry-run"
   },
   "bin": {
     "duckdb-introspect": "dist/duckdb-introspect.mjs"
   },
   "peerDependencies": {
-    "@duckdb/node-api": "1.4.2-r.1",
+    "@duckdb/node-api": "1.4.4-r.1",
     "drizzle-orm": "^0.40.0"
   },
   "peerDependenciesMeta": {
@@ -28,7 +30,7 @@
     }
   },
   "devDependencies": {
-    "@duckdb/node-api": "1.4.2-r.1",
+    "@duckdb/node-api": "1.4.4-r.1",
     "@types/bun": "^1.2.5",
     "@types/uuid": "^10.0.0",
     "@vitest/ui": "^1.6.0",
