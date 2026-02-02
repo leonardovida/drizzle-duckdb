@@ -65,6 +65,14 @@
 - Include a body when documenting workarounds or DuckDB quirks. Reference DuckDB tickets inline.
 - PRs should link issues, summarize behavior changes, call out schema and migration updates, and attach `bun test` and `bun run build` output. Screenshots help when showing SQL traces or planner output.
 
+## Release Process
+
+- Bump the `package.json` version.
+- Run `bun run build` and `bun test` when practical.
+- Commit with a message like `Release v1.3.2`.
+- Tag the commit as `v1.3.2`.
+- Create a GitHub release from the tag to trigger the publish pipeline.
+
 ## Writing Style
 
 - Avoid em dashes and sentence dashes.
