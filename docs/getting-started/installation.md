@@ -35,6 +35,8 @@ pnpm add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
 yarn add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
 ```
 
+Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB 1.4.4.
+
 ## Requirements
 
 - **Node.js** 18+ or **Bun** 1.0+

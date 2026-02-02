@@ -48,7 +48,7 @@
 
 ## DuckDB Runtime Notes
 
-- Preferred client is `@duckdb/node-api@1.4.2-r.1`. Tests use it. For hermetic runs, use `DuckDBInstance.create(':memory:')` or `DuckDBConnection.create`.
+- Preferred client is `@duckdb/node-api@1.4.4-r.1`. Tests use it. For hermetic runs, use `DuckDBInstance.create(':memory:')` or `DuckDBConnection.create`.
 - Clean up connections with `closeSync`, `close`, or `disconnectSync`. Avoid leaving `.duckdb` files in the repo.
 - Custom column helpers live in `src/columns.ts` (`duckDbStruct`, `duckDbMap`, `duckDbBlob`). For JSON like structures, use these helpers or Drizzle custom types, not Postgres JSON columns.
 
