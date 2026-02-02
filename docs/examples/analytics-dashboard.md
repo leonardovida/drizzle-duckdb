@@ -9,7 +9,7 @@ nav_order: 1
 
 This example shows an analytics dashboard with multi-table schemas, DuckDB-specific types, transactions, and analytical queries.
 
-**Source**: [example/analytics-dashboard.ts](https://github.com/leonardovida-md/drizzle-neo-duckdb/blob/main/example/analytics-dashboard.ts)
+**Source**: [example/analytics-dashboard.ts](https://github.com/leonardovida/drizzle-duckdb/blob/main/example/analytics-dashboard.ts)
 
 ## Features Demonstrated
 
@@ -335,8 +335,8 @@ const preferencesAnalysis = await db.execute(sql`
 
 ```bash
 # Clone and install
-git clone https://github.com/leonardovida-md/drizzle-neo-duckdb.git
-cd drizzle-neo-duckdb
+git clone https://github.com/leonardovida/drizzle-duckdb.git
+cd drizzle-duckdb
 bun install
 
 # Run the example

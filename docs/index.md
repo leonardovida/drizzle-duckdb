@@ -11,7 +11,7 @@ nav_exclude: true
 DuckDB dialect for Drizzle ORM with full TypeScript inference, DuckDB-native types, and Postgres-compatible schema definitions.
 
 [Get Started]({{ '/getting-started/' | relative_url }}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
-[View on GitHub](https://github.com/leonardovida/drizzle-neo-duckdb){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[View on GitHub](https://github.com/leonardovida/drizzle-duckdb){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [LLM Context (llms.txt)]({{ '/llms.txt' | relative_url }}){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---

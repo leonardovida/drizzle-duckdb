@@ -47,10 +47,10 @@ const allUsers = await db.select().from(users);
 
 ## Documentation
 
-- Getting Started: /drizzle-neo-duckdb/getting-started/
-- Core Concepts: /drizzle-neo-duckdb/core/
-- API Reference: /drizzle-neo-duckdb/api/
-- Examples: /drizzle-neo-duckdb/examples/
+- Getting Started: /drizzle-duckdb/getting-started/
+- Core Concepts: /drizzle-duckdb/core/
+- API Reference: /drizzle-duckdb/api/
+- Examples: /drizzle-duckdb/examples/
 
 ## DuckDB-Specific Column Types
 
@@ -110,8 +110,8 @@ const db = drizzle(connection);
 
 ## Links
 
-- GitHub: https://github.com/leonardovida/drizzle-neo-duckdb
+- GitHub: https://github.com/leonardovida/drizzle-duckdb
 - npm: https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb
-- Documentation: https://leonardovida.github.io/drizzle-neo-duckdb/
+- Documentation: https://leonardovida.github.io/drizzle-duckdb/
 - DuckDB: https://duckdb.org/
 - Drizzle ORM: https://orm.drizzle.team/

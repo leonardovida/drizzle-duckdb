@@ -1,7 +1,7 @@
 title: Drizzle DuckDB
 description: DuckDB dialect for Drizzle ORM
 url: https://leonardovida.github.io
-baseurl: /drizzle-neo-duckdb
+baseurl: /drizzle-duckdb
 
 theme: just-the-docs
 remote_theme: just-the-docs/just-the-docs@v0.10.0
@@ -40,7 +40,7 @@ footer_content: 'Released under the Apache 2.0 License. Copyright 2025-present.'
 
 # External links
 aux_links:
-  GitHub: https://github.com/leonardovida/drizzle-neo-duckdb
+  GitHub: https://github.com/leonardovida/drizzle-duckdb
   npm: https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb
 aux_links_new_tab: true
 

@@ -73,7 +73,7 @@ const allUsers = await db.select().from(users);
 
 ## Resources
 
-- [GitHub Repository](https://github.com/leonardovida-md/drizzle-neo-duckdb)
+- [GitHub Repository](https://github.com/leonardovida/drizzle-duckdb)
 - [npm Package](https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb)
 - [DuckDB Documentation](https://duckdb.org/docs/)
 - [Drizzle ORM Documentation](https://orm.drizzle.team/)

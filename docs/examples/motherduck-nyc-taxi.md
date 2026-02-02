@@ -9,7 +9,7 @@ nav_order: 2
 
 This example demonstrates Drizzle DuckDB with MotherDuck cloud database, querying NYC taxi sample data.
 
-**Source**: [example/motherduck-nyc-taxi.ts](https://github.com/leonardovida-md/drizzle-neo-duckdb/blob/main/example/motherduck-nyc-taxi.ts)
+**Source**: [example/motherduck-nyc-taxi.ts](https://github.com/leonardovida/drizzle-duckdb/blob/main/example/motherduck-nyc-taxi.ts)
 
 ## Features Demonstrated
 

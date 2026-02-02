@@ -60,8 +60,8 @@ All examples are located in the `/example` directory of the repository.
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/leonardovida-md/drizzle-neo-duckdb.git
-   cd drizzle-neo-duckdb
+   git clone https://github.com/leonardovida/drizzle-duckdb.git
+   cd drizzle-duckdb
    ```
 
 2. Install dependencies:
