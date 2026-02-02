@@ -4,7 +4,7 @@
 
 ### DuckDB dialect for [Drizzle ORM](https://orm.drizzle.team/)
 
-[![npm version](https://img.shields.io/npm/v/@duckdbfan/drizzle-duckdb)](https://www.npmjs.com/package/@duckdbfan/drizzle-duckdb)
+[![npm version](https://img.shields.io/npm/v/@leonardovida-md/drizzle-neo-duckdb)](https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 [Documentation](https://leonardovida.github.io/drizzle-neo-duckdb/) • [LLM Context](https://leonardovida.github.io/drizzle-neo-duckdb/llms.txt) • [Examples](./example) • [Contributing](#contributing)
@@ -19,14 +19,22 @@ Works with local DuckDB files, in-memory databases, and [MotherDuck](https://mot
 
 > **Status:** Experimental. Core query building, migrations, and type inference work well. Some DuckDB-specific types and edge cases are still being refined.
 
-> **Note:** The package is published to both `@duckdbfan/drizzle-duckdb` and `@leonardovida-md/drizzle-neo-duckdb`. The `@duckdbfan/drizzle-duckdb` name is the original one we want to keep. The `@leonardovida-md/drizzle-neo-duckdb` package will be deprecated on May 2, 2026.
+> **Note:** The NPM package is `@leonardovida-md/drizzle-neo-duckdb` while the repository is `drizzle-duckdb`. This is due to a migration to preserve the existing NPM package name.
 
 Docs tip: every docs page has a **Markdown (raw)** button for LLM-friendly source.
 
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
+bun add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+```
+
+```bash
+npm install @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+```
+
+```bash
+pnpm add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
 ```
 
 Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB 1.4.4.
@@ -35,7 +43,7 @@ Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@duckdbfan/drizzle-duckdb';
+import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
 import { sql } from 'drizzle-orm';
 import { integer, text, pgTable } from 'drizzle-orm/pg-core';
 
@@ -128,7 +136,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import {
   createDuckDBConnectionPool,
   drizzle,
-} from '@duckdbfan/drizzle-duckdb';
+} from '@leonardovida-md/drizzle-neo-duckdb';
 
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: process.env.MOTHERDUCK_TOKEN,
@@ -147,7 +155,7 @@ const db = drizzle(pool);
 
 - Use `drizzle-orm/pg-core` for schemas; DuckDB SQL is largely Postgres-compatible.
 - DuckDB-specific helpers: `duckDbList`, `duckDbArray`, `duckDbStruct`, `duckDbMap`, `duckDbJson`, `duckDbBlob`, `duckDbInet`, `duckDbInterval`, `duckDbTimestamp`, `duckDbDate`, `duckDbTime`.
-- Browser-safe imports live under `@duckdbfan/drizzle-duckdb/helpers` (introspection emits this path).
+- Browser-safe imports live under `@leonardovida-md/drizzle-neo-duckdb/helpers` (introspection emits this path).
 
 See the [column types](https://leonardovida.github.io/drizzle-neo-duckdb/api/columns) docs for full API.
 
@@ -196,7 +204,7 @@ import {
   duckDbArrayContains,
   duckDbArrayContained,
   duckDbArrayOverlaps,
-} from '@duckdbfan/drizzle-duckdb';
+} from '@leonardovida-md/drizzle-neo-duckdb';
 
 // Check if array contains all values
 const results = await db
@@ -235,7 +243,7 @@ await db.transaction(async (tx) => {
 Apply SQL migration files using the `migrate` function:
 
 ```typescript
-import { migrate } from '@duckdbfan/drizzle-duckdb';
+import { migrate } from '@leonardovida-md/drizzle-neo-duckdb';
 
 await migrate(db, { migrationsFolder: './drizzle' });
 ```
@@ -255,7 +263,7 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 ### Programmatic
 
 ```typescript
-import { introspect } from '@duckdbfan/drizzle-duckdb';
+import { introspect } from '@leonardovida-md/drizzle-neo-duckdb';
 
 const result = await introspect(db, {
   schemas: ['public', 'analytics'],
