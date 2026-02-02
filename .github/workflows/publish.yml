@@ -33,7 +33,15 @@ jobs:
       - name: Build package
         run: bun run build
 
-      - name: Publish to npm
+      - name: Publish to npm (@leonardovida-md/drizzle-neo-duckdb)
         run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npm (@duckdbfan/drizzle-duckdb)
+        run: |
+          jq '.name = "@duckdbfan/drizzle-duckdb"' package.json > package.tmp.json
+          mv package.tmp.json package.json
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
