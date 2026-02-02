@@ -1,6 +1,10 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { DuckDBConnectionPool } from './client.ts';
-import { resolvePoolSize, type DuckDBPoolConfig, type PoolPreset } from './pool.ts';
+import {
+  resolvePoolSize,
+  type DuckDBPoolConfig,
+  type PoolPreset,
+} from './pool.ts';
 
 export interface DuckLakeAttachOptions {
   createIfNotExists?: boolean;
@@ -111,9 +115,7 @@ export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
       options.push(`DATA_PATH=${optionValueToSql(attachOptions.dataPath)}`);
     }
     if (attachOptions.encrypted !== undefined) {
-      options.push(
-        `ENCRYPTED=${optionValueToSql(attachOptions.encrypted)}`
-      );
+      options.push(`ENCRYPTED=${optionValueToSql(attachOptions.encrypted)}`);
     }
     if (attachOptions.metaParameterName) {
       options.push(
@@ -124,16 +126,12 @@ export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
     }
     if (attachOptions.metadataCatalog) {
       options.push(
-        `METADATA_CATALOG=${optionValueToSql(
-          attachOptions.metadataCatalog
-        )}`
+        `METADATA_CATALOG=${optionValueToSql(attachOptions.metadataCatalog)}`
       );
     }
     if (attachOptions.overrideDataPath !== undefined) {
       options.push(
-        `OVERRIDE_DATA_PATH=${optionValueToSql(
-          attachOptions.overrideDataPath
-        )}`
+        `OVERRIDE_DATA_PATH=${optionValueToSql(attachOptions.overrideDataPath)}`
       );
     }
     if (attachOptions.readOnly !== undefined) {
@@ -219,7 +217,11 @@ export function isDuckDbFileCatalog(catalog: string): boolean {
   if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return true;
   if (trimmed.startsWith('md:')) return false;
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) return false;
-  if (/^(postgres|postgresql|mysql|mariadb|sqlite|snowflake|bigquery):/i.test(trimmed)) {
+  if (
+    /^(postgres|postgresql|mysql|mariadb|sqlite|snowflake|bigquery):/i.test(
+      trimmed
+    )
+  ) {
     return false;
   }
 
@@ -244,8 +246,7 @@ export function resolveDuckLakePoolSize(
     ducklakeConfig !== undefined
       ? isDuckDbFileCatalog(normalizeDuckLakeConfig(ducklakeConfig).catalog)
       : false;
-  const poolSize =
-    !hasPoolSetting && isLocalCatalog ? 1 : resolvedPoolSize;
+  const poolSize = !hasPoolSetting && isLocalCatalog ? 1 : resolvedPoolSize;
 
   return {
     poolSize,

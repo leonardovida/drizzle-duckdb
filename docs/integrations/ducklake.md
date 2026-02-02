@@ -60,7 +60,10 @@ If you have a direct connection, call `configureDuckLake` before using Drizzle:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { configureDuckLake, drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import {
+  configureDuckLake,
+  drizzle,
+} from '@leonardovida-md/drizzle-neo-duckdb';
 
 const instance = await DuckDBInstance.create(':memory:');
 const connection = await instance.connect();

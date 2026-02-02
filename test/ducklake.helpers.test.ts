@@ -35,7 +35,9 @@ describe('DuckLake helpers', () => {
     expect(isDuckDbFileCatalog('ducklake:./ducklake.duckdb')).toBe(true);
     expect(isDuckDbFileCatalog(':memory:')).toBe(true);
     expect(isDuckDbFileCatalog('md:__ducklake_metadata_db')).toBe(false);
-    expect(isDuckDbFileCatalog('ducklake:md:__ducklake_metadata_db')).toBe(false);
+    expect(isDuckDbFileCatalog('ducklake:md:__ducklake_metadata_db')).toBe(
+      false
+    );
     expect(isDuckDbFileCatalog('postgres://localhost/db')).toBe(false);
   });
 

@@ -165,7 +165,13 @@ function createFromClient<
   });
   const session = driver.createSession(schema);
 
-  const db = new DuckDBDatabase(dialect, session, schema, finalClient, instance);
+  const db = new DuckDBDatabase(
+    dialect,
+    session,
+    schema,
+    finalClient,
+    instance
+  );
   return db as DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>;
 }
 

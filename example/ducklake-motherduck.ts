@@ -51,9 +51,10 @@ async function main() {
       )
     `);
 
-    await db
-      .insert(users)
-      .values([{ id: 1, name: 'Quinn' }, { id: 2, name: 'Riley' }]);
+    await db.insert(users).values([
+      { id: 1, name: 'Quinn' },
+      { id: 2, name: 'Riley' },
+    ]);
 
     const rows = await db.select().from(users).orderBy(users.id);
     console.table(rows);
