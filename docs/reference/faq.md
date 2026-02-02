@@ -50,6 +50,21 @@ const instance = await DuckDBInstance.create('md:', {
 
 See the [MotherDuck guide]({{ '/integrations/motherduck' | relative_url }}) for details.
 
+### Does it work with DuckLake?
+
+Yes. Use the `ducklake` config to attach a DuckLake catalog:
+
+```typescript
+const db = await drizzle(':memory:', {
+  ducklake: {
+    catalog: './ducklake.duckdb',
+    attachOptions: { dataPath: './ducklake-data' },
+  },
+});
+```
+
+DuckLake supports `NOT NULL` constraints only. Primary keys, foreign keys, unique constraints, check constraints, and indexes are not supported.
+
 ### What about DuckDB WASM (browser)?
 
 Currently, this package only supports `@duckdb/node-api` (Node.js). Browser support via DuckDB WASM is not available.

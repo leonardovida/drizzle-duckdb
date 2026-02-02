@@ -24,6 +24,7 @@ DuckDB dialect for Drizzle ORM with full TypeScript inference, DuckDB-native typ
 | **DuckDB Native**       | Native support for DuckDB types like STRUCT, MAP, LIST, and JSON. Works with local files and MotherDuck. |
 | **Fast Analytics**      | Leverage DuckDB's analytical engine for blazing fast queries on large datasets.                          |
 | **Postgres Compatible** | Built on Drizzle's Postgres driver. Use familiar schema definitions and query patterns.                  |
+| **DuckLake Ready**      | Attach DuckLake catalogs for lakehouse storage with local files or MotherDuck.                           |
 
 ---
 

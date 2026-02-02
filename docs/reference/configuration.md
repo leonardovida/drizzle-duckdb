@@ -210,6 +210,33 @@ const pool = createDuckDBConnectionPool(instance, {
 const db = drizzle(pool);
 ```
 
+### ducklake
+
+Attach a DuckLake catalog when creating a connection with `drizzle()`.
+
+```typescript
+const db = await drizzle(':memory:', {
+  ducklake: {
+    catalog: './ducklake.duckdb',
+    attachOptions: {
+      dataPath: './ducklake-data',
+      createIfNotExists: true,
+    },
+  },
+});
+```
+
+Options:
+
+- `catalog` string. Required. The catalog value after the `ducklake:` prefix.
+- `alias` string. Optional. Defaults to `ducklake`.
+- `use` boolean. Optional. Defaults to `true`.
+- `install` boolean. Optional. Defaults to `false`.
+- `load` boolean. Optional. Defaults to `false`.
+- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameterName`, `metadataCatalog`, `overrideDataPath`, and `readOnly`.
+
+When the DuckLake catalog is a local DuckDB file, `drizzle()` defaults to a single connection pool size of 1. You can override this with `pool`, but it can cause write conflicts.
+
 ## migrate() Options
 
 The `migrate()` function accepts either a string path or configuration object:

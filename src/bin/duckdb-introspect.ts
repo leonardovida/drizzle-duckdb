@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { drizzle } from '../index.ts';
+import { configureDuckLake, type DuckLakeConfig } from '../ducklake.ts';
 import { introspect } from '../introspect.ts';
 
 interface CliOptions {
@@ -16,6 +17,7 @@ interface CliOptions {
   includeViews: boolean;
   useCustomTimeTypes: boolean;
   importBasePath?: string;
+  ducklake?: DuckLakeConfig;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -25,6 +27,23 @@ function parseArgs(argv: string[]): CliOptions {
     allDatabases: false,
     includeViews: false,
     useCustomTimeTypes: true,
+  };
+
+  const ensureDuckLakeConfig = (): DuckLakeConfig => {
+    if (!options.ducklake) {
+      options.ducklake = { catalog: '' };
+    }
+    return options.ducklake;
+  };
+
+  const ensureDuckLakeAttachOptions = (): NonNullable<
+    DuckLakeConfig['attachOptions']
+  > => {
+    const config = ensureDuckLakeConfig();
+    if (!config.attachOptions) {
+      config.attachOptions = {};
+    }
+    return config.attachOptions;
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -72,6 +91,50 @@ function parseArgs(argv: string[]): CliOptions {
       case '--import-base':
         options.importBasePath = argv[++i];
         break;
+      case '--ducklake-catalog':
+        ensureDuckLakeConfig().catalog = argv[++i] ?? '';
+        break;
+      case '--ducklake-alias':
+        ensureDuckLakeConfig().alias = argv[++i];
+        break;
+      case '--ducklake-no-use':
+        ensureDuckLakeConfig().use = false;
+        break;
+      case '--ducklake-install':
+        ensureDuckLakeConfig().install = true;
+        break;
+      case '--ducklake-load':
+        ensureDuckLakeConfig().load = true;
+        break;
+      case '--ducklake-data-path':
+        ensureDuckLakeAttachOptions().dataPath = argv[++i];
+        break;
+      case '--ducklake-read-only':
+        ensureDuckLakeAttachOptions().readOnly = true;
+        break;
+      case '--ducklake-create-if-not-exists':
+        ensureDuckLakeAttachOptions().createIfNotExists = true;
+        break;
+      case '--ducklake-override-data-path':
+        ensureDuckLakeAttachOptions().overrideDataPath = true;
+        break;
+      case '--ducklake-data-inlining-row-limit': {
+        const value = argv[++i];
+        const parsed = value ? Number(value) : NaN;
+        if (Number.isFinite(parsed)) {
+          ensureDuckLakeAttachOptions().dataInliningRowLimit = parsed;
+        }
+        break;
+      }
+      case '--ducklake-encrypted':
+        ensureDuckLakeAttachOptions().encrypted = true;
+        break;
+      case '--ducklake-metadata-catalog':
+        ensureDuckLakeAttachOptions().metadataCatalog = argv[++i];
+        break;
+      case '--ducklake-meta-parameter-name':
+        ensureDuckLakeAttachOptions().metaParameterName = argv[++i];
+        break;
       case '--help':
       case '-h':
         printHelp();
@@ -102,6 +165,19 @@ Options:
   --include-views  Include views in the generated schema
   --use-pg-time    Use pg-core timestamp/date/time instead of DuckDB custom helpers
   --import-base    Override import path for duckdb helpers (default: package name)
+  --ducklake-catalog           DuckLake catalog value after the ducklake: prefix
+  --ducklake-alias             Alias for attached DuckLake database
+  --ducklake-no-use            Do not run USE after attach
+  --ducklake-install           Run INSTALL ducklake before attach
+  --ducklake-load              Run LOAD ducklake before attach
+  --ducklake-data-path         Data path for DuckLake table storage
+  --ducklake-read-only         Attach DuckLake in read-only mode
+  --ducklake-create-if-not-exists  Create catalog if it does not exist
+  --ducklake-override-data-path    Override data path for existing catalog
+  --ducklake-data-inlining-row-limit  Inline row limit for data storage
+  --ducklake-encrypted         Enable encryption for the metadata catalog
+  --ducklake-metadata-catalog  Override metadata catalog name
+  --ducklake-meta-parameter-name  Set meta parameter name for metadata storage
 
 Database Filtering:
   By default, only tables from the current database are introspected. This prevents
@@ -116,6 +192,14 @@ Examples:
 
   # MotherDuck (requires MOTHERDUCK_TOKEN env var)
   MOTHERDUCK_TOKEN=xxx bun x duckdb-introspect --url md: --database my_cloud_db --out ./schema.ts
+
+  # DuckLake local catalog with data path
+  bun x duckdb-introspect --url :memory: --ducklake-catalog ./ducklake.duckdb \\
+    --ducklake-data-path ./ducklake-data --out ./schema.ts
+
+  # DuckLake on MotherDuck
+  MOTHERDUCK_TOKEN=xxx bun x duckdb-introspect --url md: \\
+    --ducklake-catalog md:__ducklake_metadata_my_db --out ./schema.ts
 `);
 }
 
@@ -136,6 +220,13 @@ async function main() {
   const db = drizzle(connection);
 
   try {
+    if (options.ducklake && !options.ducklake.catalog) {
+      throw new Error('DuckLake requires --ducklake-catalog');
+    }
+    if (options.ducklake?.catalog) {
+      await configureDuckLake(connection, options.ducklake);
+    }
+
     const result = await introspect(db, {
       database: options.database,
       allDatabases: options.allDatabases,

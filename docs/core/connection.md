@@ -29,6 +29,14 @@ const db = await drizzle({
     options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
   },
 });
+
+// DuckLake catalog attach
+const db = await drizzle(':memory:', {
+  ducklake: {
+    catalog: './ducklake.duckdb',
+    attachOptions: { dataPath: './ducklake-data' },
+  },
+});
 ```
 
 This creates a connection pool automatically, which is critical for MotherDuck performance (see [Connection Pooling](#connection-pooling)).
@@ -77,6 +85,38 @@ const db = await drizzle({
 ```
 
 See the [MotherDuck guide](/integrations/motherduck) for more details.
+
+## DuckLake
+
+Attach a DuckLake catalog during connection setup:
+
+```typescript
+const db = await drizzle(':memory:', {
+  ducklake: {
+    catalog: './ducklake.duckdb',
+    attachOptions: {
+      dataPath: './ducklake-data',
+      createIfNotExists: true,
+    },
+  },
+});
+```
+
+For MotherDuck, use the DuckLake metadata catalog created by `CREATE DATABASE ... TYPE DUCKLAKE`:
+
+```typescript
+const db = await drizzle({
+  connection: {
+    path: 'md:',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+  ducklake: {
+    catalog: 'md:__ducklake_metadata_my_lake',
+  },
+});
+```
+
+See the [DuckLake guide](/integrations/ducklake) for details.
 
 ## With Logging
 

@@ -38,6 +38,7 @@ const allUsers = await db.select().from(users);
 - Array query helpers: duckDbArrayContains, duckDbArrayContained, duckDbArrayOverlaps
 - Migrations and schema introspection
 - MotherDuck cloud support
+- DuckLake catalog attach support
 
 ## Important Notes
 

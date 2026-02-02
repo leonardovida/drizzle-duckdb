@@ -114,6 +114,10 @@ If your runtime exposes an Arrow/columnar API, `db.executeArrow()` will return i
 
 DuckDB executes a single query at a time per connection. Without pooling, concurrent requests will serialize. The async `drizzle()` entrypoints auto-create a pool (default size: 4); configure size/presets with the `pool` option or use `createDuckDBConnectionPool` for timeouts, queue limits, and recycling.
 
+## DuckLake Limitations
+
+DuckLake supports `NOT NULL` constraints only. Primary keys, foreign keys, unique constraints, check constraints, and indexes are not supported. Avoid relying on those features when using DuckLake catalogs.
+
 ### Column Alias Deduplication
 
 When selecting the same column multiple times (e.g., in multi-join queries), duplicate aliases are automatically suffixed to avoid collisions:

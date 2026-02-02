@@ -51,6 +51,39 @@ export MOTHERDUCK_TOKEN=your_token_here
 bun example/motherduck-nyc-taxi.ts
 ```
 
+### [DuckLake Local Catalog]({{ '/examples/ducklake-local' | relative_url }})
+
+Local DuckLake example featuring:
+
+- DuckLake catalog attach
+- Data path configuration
+- Basic table creation and inserts
+
+**Best for**: Getting started with DuckLake on local storage.
+
+Run locally:
+
+```bash
+bun example/ducklake-local.ts
+```
+
+### [DuckLake MotherDuck]({{ '/examples/ducklake-motherduck' | relative_url }})
+
+DuckLake on MotherDuck example featuring:
+
+- DuckLake catalog attach using MotherDuck metadata
+- Basic table creation and inserts
+
+**Best for**: DuckLake on MotherDuck catalogs.
+
+Run with MotherDuck:
+
+```bash
+export MOTHERDUCK_TOKEN=your_token_here
+export DUCKLAKE_MOTHERDUCK_DB=my_lake
+bun example/ducklake-motherduck.ts
+```
+
 ## Running Examples
 
 All examples are located in the `/example` directory of the repository.
@@ -74,6 +107,9 @@ All examples are located in the `/example` directory of the repository.
 ```bash
 # Run the analytics dashboard example
 bun run example/analytics-dashboard.ts
+
+# Run the DuckLake local example
+bun run example/ducklake-local.ts
 ```
 
 ### MotherDuck Examples
@@ -84,6 +120,10 @@ export MOTHERDUCK_TOKEN=your_token_here
 
 # Run the NYC taxi example
 bun run example/motherduck-nyc-taxi.ts
+
+# Run the DuckLake MotherDuck example
+export DUCKLAKE_MOTHERDUCK_DB=my_lake
+bun run example/ducklake-motherduck.ts
 ```
 
 ## Example Structure

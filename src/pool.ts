@@ -51,6 +51,8 @@ export interface DuckDBConnectionPoolOptions {
   maxLifetimeMs?: number;
   /** Max idle time (ms) before an idle connection is discarded. */
   idleTimeoutMs?: number;
+  /** Optional setup hook for newly created connections. */
+  setup?: (connection: DuckDBConnection) => Promise<void>;
 }
 
 export function createDuckDBConnectionPool(
@@ -62,6 +64,7 @@ export function createDuckDBConnectionPool(
   const maxWaitingRequests = options.maxWaitingRequests ?? 100;
   const maxLifetimeMs = options.maxLifetimeMs;
   const idleTimeoutMs = options.idleTimeoutMs;
+  const setup = options.setup;
   const metadata = new WeakMap<
     DuckDBConnection,
     { createdAt: number; lastUsedAt: number }
@@ -121,6 +124,14 @@ export function createDuckDBConnectionPool(
       total += 1;
       try {
         const connection = await DuckDBConnection.create(instance);
+        if (setup) {
+          try {
+            await setup(connection);
+          } catch (error) {
+            await closeClientConnection(connection);
+            throw error;
+          }
+        }
         // Check if pool was closed during async connection creation
         if (closed) {
           await closeClientConnection(connection);
