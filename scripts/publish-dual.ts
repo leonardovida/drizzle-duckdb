@@ -7,29 +7,29 @@
  * Usage: bun run publish:dual [--dry-run]
  */
 
-import { $ } from "bun";
-import { readFile, writeFile } from "node:fs/promises";
+import { $ } from 'bun';
+import { readFile, writeFile } from 'node:fs/promises';
 
-const PACKAGE_JSON_PATH = new URL("../package.json", import.meta.url).pathname;
-const ORIGINAL_NAME = "@leonardovida-md/drizzle-neo-duckdb";
-const NEW_NAME = "@duckdbfan/drizzle-duckdb";
+const PACKAGE_JSON_PATH = new URL('../package.json', import.meta.url).pathname;
+const ORIGINAL_NAME = '@leonardovida-md/drizzle-neo-duckdb';
+const NEW_NAME = '@duckdbfan/drizzle-duckdb';
 
-const dryRun = process.argv.includes("--dry-run");
+const dryRun = process.argv.includes('--dry-run');
 
 async function readPackageJson() {
-  const content = await readFile(PACKAGE_JSON_PATH, "utf-8");
+  const content = await readFile(PACKAGE_JSON_PATH, 'utf-8');
   return JSON.parse(content);
 }
 
 async function writePackageJson(pkg: Record<string, unknown>) {
-  await writeFile(PACKAGE_JSON_PATH, JSON.stringify(pkg, null, 2) + "\n");
+  await writeFile(PACKAGE_JSON_PATH, JSON.stringify(pkg, null, 2) + '\n');
 }
 
 async function publish(name: string) {
   console.log(`\nPublishing as ${name}...`);
 
   if (dryRun) {
-    console.log("  [dry-run] Would run: bun publish --access public");
+    console.log('  [dry-run] Would run: bun publish --access public');
     return true;
   }
 
@@ -45,7 +45,7 @@ async function publish(name: string) {
 
 async function main() {
   if (dryRun) {
-    console.log("Running in dry-run mode (no actual publishing)\n");
+    console.log('Running in dry-run mode (no actual publishing)\n');
   }
 
   // Read original package.json
@@ -55,7 +55,7 @@ async function main() {
   console.log(`Publishing version ${version} to both scopes...`);
 
   // Ensure we're built
-  console.log("\nBuilding...");
+  console.log('\nBuilding...');
   if (!dryRun) {
     await $`bun run build`.quiet();
   }
@@ -73,9 +73,9 @@ async function main() {
   // Restore original package.json (keep original name as canonical)
   await writePackageJson(originalPkg);
 
-  console.log("\n--- Summary ---");
-  console.log(`${ORIGINAL_NAME}: ${result1 ? "success" : "failed"}`);
-  console.log(`${NEW_NAME}: ${result2 ? "success" : "failed"}`);
+  console.log('\n--- Summary ---');
+  console.log(`${ORIGINAL_NAME}: ${result1 ? 'success' : 'failed'}`);
+  console.log(`${NEW_NAME}: ${result2 ? 'success' : 'failed'}`);
 
   if (!result1 || !result2) {
     process.exit(1);
@@ -83,6 +83,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Publish failed:", err);
+  console.error('Publish failed:', err);
   process.exit(1);
 });
