@@ -76,7 +76,7 @@ const db = await drizzle({
 });
 ```
 
-See the [MotherDuck guide](/integrations/motherduck) for more details.
+See the [MotherDuck guide](/integrations/motherduck) for the auto pooling example and `db.close()` cleanup.
 
 ## With Logging
 

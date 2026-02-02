@@ -19,6 +19,29 @@ nav_order: 2
 
 ### Connect
 
+The async `drizzle()` entrypoint creates a pool automatically and exposes `db.close()` to clean up:
+
+```typescript
+import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+
+const db = await drizzle({
+  connection: {
+    path: 'md:',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+});
+
+try {
+  // Query MotherDuck
+} finally {
+  await db.close();
+}
+```
+
+{: .highlight }
+
+If you need to manage the instance and connection directly, use the lower level API:
+
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
@@ -29,8 +52,6 @@ const instance = await DuckDBInstance.create('md:', {
 const connection = await instance.connect();
 const db = drizzle(connection);
 ```
-
-{: .highlight }
 
 > **Environment Variables**
 >
@@ -135,6 +156,22 @@ MotherDuck offers different instance sizes. For large analytical queries, consid
 
 MotherDuck caches query results. Repeated queries on the same data will be faster.
 
+### Read Scaling and Session Affinity
+
+MotherDuck can use read scaling tokens to spread reads across replicas. Set a stable `session_hint` in your connection options to keep related queries on the same replica. Instance cache TTL determines how long a replica stays warm, so reuse the same `session_hint` while you want cache affinity.
+
+```typescript
+const db = await drizzle({
+  connection: {
+    path: 'md:',
+    options: {
+      motherduck_token: process.env.MOTHERDUCK_TOKEN,
+      session_hint: 'analytics-dashboard',
+    },
+  },
+});
+```
+
 ### Batch Operations
 
 For writes, batch your operations:
@@ -147,6 +184,24 @@ await db.insert(events).values(manyEvents);
 for (const event of manyEvents) {
   await db.insert(events).values(event);
 }
+```
+
+### Bulk Loading
+
+For large loads, prefer SQL based bulk loading with CTAS or `INSERT INTO`. When loading from cloud storage, keep data in the same region as your MotherDuck instance to reduce latency.
+
+```typescript
+import { sql } from 'drizzle-orm';
+
+await db.execute(sql`
+  CREATE TABLE events AS
+  SELECT * FROM read_parquet('s3://bucket/path/*.parquet')
+`);
+
+await db.execute(sql`
+  INSERT INTO events
+  SELECT * FROM read_csv_auto('s3://bucket/path/*.csv')
+`);
 ```
 
 ## Limitations

@@ -17,7 +17,7 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
   const tableName = `pool_test_${Date.now()}`;
 
   const testTable = pgTable(tableName, {
-    id: integer('id').primaryKey(),
+    id: integer('id'),
     name: text('name'),
     value: integer('value'),
   });
@@ -37,7 +37,7 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     await db.execute(
       sql.raw(`
       CREATE TABLE ${tableName} (
-        id INTEGER PRIMARY KEY,
+        id INTEGER,
         name TEXT,
         value INTEGER
       )
