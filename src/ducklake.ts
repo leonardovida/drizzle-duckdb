@@ -179,10 +179,9 @@ export function wrapDuckLakePool(
   config: DuckLakeConfig
 ): DuckDBConnectionPool {
   const configuredConnections = new WeakSet<DuckDBConnection>();
+  const poolWithSize = pool as unknown as { size?: number };
   const size =
-    'size' in (pool as Record<string, unknown>)
-      ? (pool as unknown as { size: number }).size
-      : undefined;
+    typeof poolWithSize.size === 'number' ? poolWithSize.size : undefined;
 
   const wrapped: DuckDBConnectionPool & { size?: number } = {
     async acquire() {
