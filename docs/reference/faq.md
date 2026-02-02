@@ -64,14 +64,14 @@ For browser use, consider:
 
 ### What Postgres features don't work?
 
-| Feature                    | Status                       | Alternative                                             |
-| -------------------------- | ---------------------------- | ------------------------------------------------------- |
-| `json()` / `jsonb()`       | Not supported                | Use `duckDbJson()`                                      |
-| `SAVEPOINT`                | Not supported                | Avoid nested transactions                               |
+| Feature                    | Status                        | Alternative                                             |
+| -------------------------- | ----------------------------- | ------------------------------------------------------- |
+| `json()` / `jsonb()`       | Not supported                 | Use `duckDbJson()`                                      |
+| `SAVEPOINT`                | Not supported                 | Avoid nested transactions                               |
 | Prepared statement caching | Available with `prepareCache` | Cache is per connection                                 |
-| Result streaming           | Chunked reads                | Use `executeBatches()` / `executeArrow()` or pagination |
-| Concurrent queries         | One/query/conn               | Use connection pooling for parallelism                  |
-| `SERIAL` type              | Not available                | Use sequences with `nextval()`                          |
+| Result streaming           | Chunked reads                 | Use `executeBatches()` / `executeArrow()` or pagination |
+| Concurrent queries         | One/query/conn                | Use connection pooling for parallelism                  |
+| `SERIAL` type              | Not available                 | Use sequences with `nextval()`                          |
 
 See [Limitations]({{ '/reference/limitations' | relative_url }}) for the complete list.
 
