@@ -49,6 +49,18 @@ function isSavepointSyntaxError(error: unknown): boolean {
   );
 }
 
+const VALID_TRANSACTION_ISOLATION_LEVELS = new Set<string>([
+  'read uncommitted',
+  'read committed',
+  'repeatable read',
+  'serializable',
+]);
+
+const VALID_TRANSACTION_ACCESS_MODES = new Set<string>([
+  'read only',
+  'read write',
+]);
+
 export class DuckDBPreparedQuery<
   T extends PreparedQueryConfig,
 > extends PgPreparedQuery<T> {
@@ -353,6 +365,39 @@ export class DuckDBTransaction<
   }
 
   getTransactionConfigSQL(config: PgTransactionConfig): SQL {
+    if (
+      config.isolationLevel &&
+      !VALID_TRANSACTION_ISOLATION_LEVELS.has(config.isolationLevel)
+    ) {
+      throw new Error(
+        `Invalid transaction isolation level "${config.isolationLevel}". Expected one of: ${Array.from(
+          VALID_TRANSACTION_ISOLATION_LEVELS
+        ).join(', ')}.`
+      );
+    }
+
+    if (
+      config.accessMode &&
+      !VALID_TRANSACTION_ACCESS_MODES.has(config.accessMode)
+    ) {
+      throw new Error(
+        `Invalid transaction access mode "${config.accessMode}". Expected one of: ${Array.from(
+          VALID_TRANSACTION_ACCESS_MODES
+        ).join(', ')}.`
+      );
+    }
+
+    if (
+      config.deferrable !== undefined &&
+      typeof config.deferrable !== 'boolean'
+    ) {
+      throw new Error(
+        `Invalid transaction deferrable flag "${String(
+          config.deferrable
+        )}". Expected a boolean.`
+      );
+    }
+
     const chunks: string[] = [];
     if (config.isolationLevel) {
       chunks.push(`isolation level ${config.isolationLevel}`);

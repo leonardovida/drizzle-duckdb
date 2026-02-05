@@ -7,6 +7,14 @@ import { describe, expect, test, beforeAll, afterAll } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
 const skipMotherduck = !motherduckToken || process.env.SKIP_MOTHERDUCK === '1';
+const DUCKLAKE_CONSTRAINT_ERROR =
+  'PRIMARY KEY/UNIQUE constraints are not supported in DuckLake';
+
+function isDuckLakeConstraintError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes(DUCKLAKE_CONSTRAINT_ERROR)
+  );
+}
 
 /**
  * Pool performance tests comparing single connection vs pooled connections.
@@ -24,35 +32,63 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
 
   let instance: DuckDBInstance;
   let singleConnection: DuckDBConnection;
+  let skipReason: string | undefined;
+  let warnedAboutSkip = false;
+
+  const skipWhenUnsupported = (ctx?: { skip?: (reason?: string) => void }) => {
+    if (!skipReason) {
+      return true;
+    }
+
+    if (typeof ctx?.skip === 'function') {
+      ctx.skip(skipReason);
+      return false;
+    }
+
+    if (!warnedAboutSkip) {
+      warnedAboutSkip = true;
+      console.warn(skipReason);
+    }
+
+    return false;
+  };
 
   beforeAll(async () => {
-    instance = await DuckDBInstance.create('md:', {
-      motherduck_token: motherduckToken!,
-    });
-    singleConnection = await instance.connect();
+    try {
+      instance = await DuckDBInstance.create('md:', {
+        motherduck_token: motherduckToken!,
+      });
+      singleConnection = await instance.connect();
 
-    // Create test table
-    const db = drizzle(singleConnection);
-    await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
-    await db.execute(
-      sql.raw(`
-      CREATE TABLE ${tableName} (
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        value INTEGER
-      )
-    `)
-    );
+      // Create test table
+      const db = drizzle(singleConnection);
+      await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
+      await db.execute(
+        sql.raw(`
+        CREATE TABLE ${tableName} (
+          id INTEGER PRIMARY KEY,
+          name TEXT,
+          value INTEGER
+        )
+      `)
+      );
 
-    // Insert test data
-    const values = Array.from({ length: 100 }, (_, i) => ({
-      id: i,
-      name: `item_${i}`,
-      value: Math.floor(Math.random() * 1000),
-    }));
+      // Insert test data
+      const values = Array.from({ length: 100 }, (_, i) => ({
+        id: i,
+        name: `item_${i}`,
+        value: Math.floor(Math.random() * 1000),
+      }));
 
-    for (const v of values) {
-      await db.insert(testTable).values(v);
+      for (const v of values) {
+        await db.insert(testTable).values(v);
+      }
+    } catch (error) {
+      if (isDuckLakeConstraintError(error)) {
+        skipReason = `Skipping MotherDuck pooling performance tests: ${DUCKLAKE_CONSTRAINT_ERROR}`;
+        return;
+      }
+      throw error;
     }
   }, 120_000);
 
@@ -71,7 +107,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     }
   });
 
-  test('single connection: concurrent queries serialize', async () => {
+  test('single connection: concurrent queries serialize', async (ctx) => {
+    if (!skipWhenUnsupported(ctx)) return;
     const db = drizzle(singleConnection);
 
     // Run 10 concurrent queries on a single connection
@@ -97,7 +134,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     return { time: singleConnectionTime, queryCount: concurrentQueries };
   }, 120_000);
 
-  test('pooled connection: concurrent queries run in parallel', async () => {
+  test('pooled connection: concurrent queries run in parallel', async (ctx) => {
+    if (!skipWhenUnsupported(ctx)) return;
     const pool = createDuckDBConnectionPool(instance, { size: 4 });
     const db = drizzle(pool);
 
@@ -126,7 +164,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     return { time: pooledTime, queryCount: concurrentQueries };
   }, 120_000);
 
-  test('comparison: pool vs single with heavier queries', async () => {
+  test('comparison: pool vs single with heavier queries', async (ctx) => {
+    if (!skipWhenUnsupported(ctx)) return;
     const concurrentQueries = 8;
 
     // Heavier query that takes more time
@@ -181,7 +220,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     expect(speedup).toBeGreaterThan(0);
   }, 120_000);
 
-  test('auto-pooling via connection string', async () => {
+  test('auto-pooling via connection string', async (ctx) => {
+    if (!skipWhenUnsupported(ctx)) return;
     // Test the new async drizzle() with connection string
     const db = await drizzle({
       connection: {
@@ -215,7 +255,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     await db.close();
   }, 120_000);
 
-  test('pool presets work correctly', async () => {
+  test('pool presets work correctly', async (ctx) => {
+    if (!skipWhenUnsupported(ctx)) return;
     // Test 'standard' preset (6 connections)
     const db = await drizzle({
       connection: {
