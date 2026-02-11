@@ -136,10 +136,7 @@ DuckDB executes one query per connection. The async `drizzle()` entrypoints crea
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  createDuckDBConnectionPool,
-  drizzle,
-} from '@duckdbfan/drizzle-duckdb';
+import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: process.env.MOTHERDUCK_TOKEN,

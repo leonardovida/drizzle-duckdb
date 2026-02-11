@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { describe, expect, test, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 import type { DuckDBDatabase } from '../src/driver.ts';
+import { DuckDBTransaction } from '../src/session.ts';
 
 describe('Session Options Tests', () => {
   describe('array operator AST transformation', () => {
@@ -155,6 +156,48 @@ describe('Session Options Tests', () => {
       // Note: The warning may or may not be triggered depending on
       // how the query is constructed. This test validates the callback mechanism.
       await db.close();
+    });
+  });
+
+  describe('transaction config validation', () => {
+    const getTransactionConfigSQL = (config: unknown) =>
+      DuckDBTransaction.prototype.getTransactionConfigSQL.call(
+        {} as DuckDBTransaction<any, any>,
+        config as any
+      );
+
+    test('accepts valid transaction config values', () => {
+      expect(() =>
+        getTransactionConfigSQL({
+          isolationLevel: 'serializable',
+          accessMode: 'read only',
+          deferrable: true,
+        })
+      ).not.toThrow();
+    });
+
+    test('rejects invalid isolation level values', () => {
+      expect(() =>
+        getTransactionConfigSQL({
+          isolationLevel: 'serializable; drop table users;',
+        })
+      ).toThrow('Invalid transaction isolation level');
+    });
+
+    test('rejects invalid access mode values', () => {
+      expect(() =>
+        getTransactionConfigSQL({
+          accessMode: 'read only; drop table users;',
+        })
+      ).toThrow('Invalid transaction access mode');
+    });
+
+    test('rejects non-boolean deferrable values', () => {
+      expect(() =>
+        getTransactionConfigSQL({
+          deferrable: 'yes',
+        })
+      ).toThrow('Invalid transaction deferrable flag');
     });
   });
 });

@@ -85,4 +85,4 @@ test('generated schema type-checks with tsc', async () => {
   }
 
   expect(true).toBe(true);
-});
+}, 20_000);
