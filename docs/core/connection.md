@@ -84,7 +84,39 @@ const db = await drizzle({
 });
 ```
 
-See the [MotherDuck guide](/integrations/motherduck) for more details.
+See the [MotherDuck guide](/integrations/motherduck) for the auto pooling example and `db.close()` cleanup.
+
+## DuckLake
+
+Attach a DuckLake catalog during connection setup:
+
+```typescript
+const db = await drizzle(':memory:', {
+  ducklake: {
+    catalog: './ducklake.duckdb',
+    attachOptions: {
+      dataPath: './ducklake-data',
+      createIfNotExists: true,
+    },
+  },
+});
+```
+
+For MotherDuck, use the DuckLake metadata catalog created by `CREATE DATABASE ... TYPE DUCKLAKE`:
+
+```typescript
+const db = await drizzle({
+  connection: {
+    path: 'md:',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+  ducklake: {
+    catalog: 'md:__ducklake_metadata_my_lake',
+  },
+});
+```
+
+See the [DuckLake guide](/integrations/ducklake) for details.
 
 ## DuckLake
 

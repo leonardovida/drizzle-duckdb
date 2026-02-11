@@ -73,19 +73,20 @@ For browser use, consider:
 
 - Using an API endpoint that queries DuckDB server-side
 - Using MotherDuck with a server-side proxy
+- Trying the community `@proj-airi/drizzle-duckdb-wasm` driver for DuckDB WASM. It is not officially supported by this package.
 
 ## Compatibility
 
 ### What Postgres features don't work?
 
-| Feature                    | Status         | Alternative                                             |
-| -------------------------- | -------------- | ------------------------------------------------------- |
-| `json()` / `jsonb()`       | Not supported  | Use `duckDbJson()`                                      |
-| `SAVEPOINT`                | Not supported  | Avoid nested transactions                               |
-| Prepared statement caching | Not available  | N/A (minimal impact)                                    |
-| Result streaming           | Chunked reads  | Use `executeBatches()` / `executeArrow()` or pagination |
-| Concurrent queries         | One/query/conn | Use connection pooling for parallelism                  |
-| `SERIAL` type              | Not available  | Use sequences with `nextval()`                          |
+| Feature                    | Status                        | Alternative                                             |
+| -------------------------- | ----------------------------- | ------------------------------------------------------- |
+| `json()` / `jsonb()`       | Not supported                 | Use `duckDbJson()`                                      |
+| `SAVEPOINT`                | Not supported                 | Avoid nested transactions                               |
+| Prepared statement caching | Available with `prepareCache` | Cache is per connection                                 |
+| Result streaming           | Chunked reads                 | Use `executeBatches()` / `executeArrow()` or pagination |
+| Concurrent queries         | One/query/conn                | Use connection pooling for parallelism                  |
+| `SERIAL` type              | Not available                 | Use sequences with `nextval()`                          |
 
 See [Limitations]({{ '/reference/limitations' | relative_url }}) for the complete list.
 
