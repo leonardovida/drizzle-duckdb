@@ -247,6 +247,28 @@ async function materializeResultRows(result: {
   return { columns, rows };
 }
 
+type StreamResultLike = {
+  yieldRowsJs: () => AsyncIterable<unknown[][]>;
+  columnNames: () => string[];
+  deduplicatedColumnNames?: () => string[];
+  close?: () => Promise<void> | void;
+  cancel?: () => Promise<void> | void;
+};
+
+async function closeStreamResult(result: StreamResultLike): Promise<void> {
+  try {
+    if (typeof result.close === 'function') {
+      await result.close();
+      return;
+    }
+    if (typeof result.cancel === 'function') {
+      await result.cancel();
+    }
+  } catch {
+    // Ignore cleanup errors because stream consumers already handled main errors.
+  }
+}
+
 async function materializeRows(
   client: DuckDBClientLike,
   query: string,
@@ -408,7 +430,7 @@ export async function* executeInBatches(
       ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
       : undefined;
 
-  const result = await client.stream(query, values);
+  const result = (await client.stream(query, values)) as StreamResultLike;
   const rawColumns =
     typeof result.deduplicatedColumnNames === 'function'
       ? result.deduplicatedColumnNames()
@@ -420,19 +442,23 @@ export async function* executeInBatches(
 
   let buffer: RowData[] = [];
 
-  for await (const chunk of result.yieldRowsJs()) {
-    const objects = mapRowsToObjects(columns, chunk);
-    for (const row of objects) {
-      buffer.push(row);
-      if (buffer.length >= rowsPerChunk) {
-        yield buffer;
-        buffer = [];
+  try {
+    for await (const chunk of result.yieldRowsJs()) {
+      const objects = mapRowsToObjects(columns, chunk);
+      for (const row of objects) {
+        buffer.push(row);
+        if (buffer.length >= rowsPerChunk) {
+          yield buffer;
+          buffer = [];
+        }
       }
     }
-  }
 
-  if (buffer.length > 0) {
-    yield buffer;
+    if (buffer.length > 0) {
+      yield buffer;
+    }
+  } finally {
+    await closeStreamResult(result);
   }
 }
 
@@ -462,7 +488,7 @@ export async function* executeInBatchesRaw(
       ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
       : undefined;
 
-  const result = await client.stream(query, values);
+  const result = (await client.stream(query, values)) as StreamResultLike;
   const rawColumns =
     typeof result.deduplicatedColumnNames === 'function'
       ? result.deduplicatedColumnNames()
@@ -474,18 +500,22 @@ export async function* executeInBatchesRaw(
 
   let buffer: unknown[][] = [];
 
-  for await (const chunk of result.yieldRowsJs()) {
-    for (const row of chunk) {
-      buffer.push(row as unknown[]);
-      if (buffer.length >= rowsPerChunk) {
-        yield { columns, rows: buffer };
-        buffer = [];
+  try {
+    for await (const chunk of result.yieldRowsJs()) {
+      for (const row of chunk) {
+        buffer.push(row as unknown[]);
+        if (buffer.length >= rowsPerChunk) {
+          yield { columns, rows: buffer };
+          buffer = [];
+        }
       }
     }
-  }
 
-  if (buffer.length > 0) {
-    yield { columns, rows: buffer };
+    if (buffer.length > 0) {
+      yield { columns, rows: buffer };
+    }
+  } finally {
+    await closeStreamResult(result);
   }
 }
 
