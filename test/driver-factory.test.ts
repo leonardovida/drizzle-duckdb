@@ -3,7 +3,9 @@ import { sql } from 'drizzle-orm';
 import { describe, expect, test, afterEach } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 import { POOL_PRESETS } from '../src/pool.ts';
-import type { DuckDBDatabase } from '../src/driver.ts';
+import { DuckDBDatabase } from '../src/driver.ts';
+import { DuckDBDialect } from '../src/dialect.ts';
+import { DuckDBSession } from '../src/session.ts';
 
 describe('Driver Factory Tests', () => {
   let db: DuckDBDatabase | null = null;
@@ -71,6 +73,38 @@ describe('Driver Factory Tests', () => {
       await db.close();
       db = null;
       instance.closeSync?.();
+    });
+
+    test('close() attempts instance close even when client close fails', async () => {
+      const closeError = new Error('client close failed');
+      const client = {
+        close: async () => {
+          throw closeError;
+        },
+      };
+
+      let instanceClosed = 0;
+      const instance = {
+        closeSync: () => {
+          instanceClosed += 1;
+        },
+      };
+
+      const dbWithFailingClient = new DuckDBDatabase(
+        new DuckDBDialect(),
+        new DuckDBSession(
+          client as never,
+          new DuckDBDialect(),
+          undefined,
+          {}
+        ) as never,
+        undefined,
+        client as never,
+        instance as never
+      );
+
+      await expect(dbWithFailingClient.close()).rejects.toBe(closeError);
+      expect(instanceClosed).toBe(1);
     });
   });
 });

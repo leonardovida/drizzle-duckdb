@@ -202,8 +202,13 @@ async function createFromConnectionString<
 
   if (poolSize === false) {
     const connection = await instance.connect();
-    if (ducklakeConfig) {
-      await configureDuckLake(connection, ducklakeConfig);
+    try {
+      if (ducklakeConfig) {
+        await configureDuckLake(connection, ducklakeConfig);
+      }
+    } catch (error) {
+      await closeClientConnection(connection);
+      throw error;
     }
     const { ducklake, ...restConfig } = config;
     return createFromClient(
@@ -356,22 +361,39 @@ export class DuckDBDatabase<
    * Should be called when shutting down the application.
    */
   async close(): Promise<void> {
-    if (isPool(this.$client) && this.$client.close) {
-      await this.$client.close();
-    }
-    if (!isPool(this.$client)) {
-      await closeClientConnection(this.$client);
-    }
-    if (this.$instance) {
-      const maybeClosable = this.$instance as unknown as {
-        close?: () => Promise<void> | void;
-        closeSync?: () => void;
-      };
-      if (typeof maybeClosable.close === 'function') {
-        await maybeClosable.close();
-      } else if (typeof maybeClosable.closeSync === 'function') {
-        maybeClosable.closeSync();
+    let firstError: unknown;
+
+    try {
+      if (isPool(this.$client) && this.$client.close) {
+        await this.$client.close();
       }
+      if (!isPool(this.$client)) {
+        await closeClientConnection(this.$client);
+      }
+    } catch (error) {
+      firstError = error;
+    }
+
+    try {
+      if (this.$instance) {
+        const maybeClosable = this.$instance as unknown as {
+          close?: () => Promise<void> | void;
+          closeSync?: () => void;
+        };
+        if (typeof maybeClosable.close === 'function') {
+          await maybeClosable.close();
+        } else if (typeof maybeClosable.closeSync === 'function') {
+          maybeClosable.closeSync();
+        }
+      }
+    } catch (error) {
+      if (!firstError) {
+        firstError = error;
+      }
+    }
+
+    if (firstError) {
+      throw firstError;
     }
   }
 

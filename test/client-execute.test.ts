@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   executeArrowOnClient,
   executeInBatches,
+  executeInBatchesRaw,
   type DuckDBClientLike,
 } from '../src/client.ts';
 
@@ -9,8 +10,14 @@ function makeClient(options: {
   arrowValue?: unknown;
   fallbackValue?: unknown;
   rows?: unknown[][];
+  onStreamClose?: () => void;
 }): DuckDBClientLike {
-  const { arrowValue, fallbackValue = {}, rows = [[1], [2], [3]] } = options;
+  const {
+    arrowValue,
+    fallbackValue = {},
+    rows = [[1], [2], [3]],
+    onStreamClose,
+  } = options;
 
   return {
     async run(_query: string, _values?: unknown[]) {
@@ -24,6 +31,9 @@ function makeClient(options: {
         deduplicatedColumnNames: () => ['id'],
         async *yieldRowsJs() {
           yield rows;
+        },
+        close() {
+          onStreamClose?.();
         },
       };
     },
@@ -63,5 +73,43 @@ describe('executeInBatches', () => {
     }
 
     expect(chunks).toEqual([[{ id: 1 }, { id: 2 }], [{ id: 3 }]]);
+  });
+
+  test('closes stream when consumer exits early', async () => {
+    let closeCalls = 0;
+    const client = makeClient({
+      rows: [[1], [2], [3], [4]],
+      onStreamClose: () => {
+        closeCalls += 1;
+      },
+    });
+
+    for await (const _chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: 1,
+    })) {
+      break;
+    }
+
+    expect(closeCalls).toBe(1);
+  });
+});
+
+describe('executeInBatchesRaw', () => {
+  test('closes stream when consumer exits early', async () => {
+    let closeCalls = 0;
+    const client = makeClient({
+      rows: [[1], [2], [3], [4]],
+      onStreamClose: () => {
+        closeCalls += 1;
+      },
+    });
+
+    for await (const _chunk of executeInBatchesRaw(client, 'select', [], {
+      rowsPerChunk: 1,
+    })) {
+      break;
+    }
+
+    expect(closeCalls).toBe(1);
   });
 });
