@@ -12,7 +12,7 @@ Bun is the recommended runtime for Drizzle DuckDB. It provides excellent perform
 ## Installation
 
 ```bash
-bun add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 ## Basic Usage
@@ -20,7 +20,7 @@ bun add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
 ```typescript
 // db.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 const instance = await DuckDBInstance.create('./app.duckdb');
@@ -77,7 +77,7 @@ bun run scripts/introspect.ts
   },
   "dependencies": {
     "@duckdb/node-api": "^1.0.0",
-    "@leonardovida-md/drizzle-neo-duckdb": "^1.0.0",
+    "@duckdbfan/drizzle-duckdb": "^1.0.0",
     "drizzle-orm": "^0.30.0"
   },
   "devDependencies": {
@@ -109,7 +109,7 @@ bun run scripts/introspect.ts
 ```typescript
 // scripts/migrate.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
 
 async function main() {
   const instance = await DuckDBInstance.create('./app.duckdb');
@@ -131,7 +131,7 @@ main().catch(console.error);
 ```typescript
 // scripts/introspect.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, introspect } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, introspect } from '@duckdbfan/drizzle-duckdb';
 import { writeFileSync } from 'fs';
 
 async function main() {
@@ -158,7 +158,7 @@ Bun has a built-in test runner:
 // tests/db.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 
 let instance: DuckDBInstance;

@@ -63,7 +63,7 @@ Returns a `DuckDBDatabase` instance that provides the full Drizzle query builder
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 // Create connection
 const instance = await DuckDBInstance.create(':memory:');

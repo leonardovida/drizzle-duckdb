@@ -113,12 +113,7 @@ const results = await db
 
 ```typescript
 import { count, sum, avg, min, max, countDistinct } from 'drizzle-orm';
-import {
-  countN,
-  sumN,
-  avgN,
-  sumDistinctN,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { countN, sumN, avgN, sumDistinctN } from '@duckdbfan/drizzle-duckdb';
 
 // Basic aggregates
 const stats = await db
@@ -184,7 +179,7 @@ import {
   median,
   rowNumber,
   lag,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 const [stats] = await db
   .select({
@@ -201,7 +196,7 @@ const [stats] = await db
 ### Grouped measures with the OLAP builder
 
 ```typescript
-import { olap, sumN } from '@leonardovida-md/drizzle-neo-duckdb';
+import { olap, sumN } from '@duckdbfan/drizzle-duckdb';
 
 const rows = await olap(db)
   .from(orders)

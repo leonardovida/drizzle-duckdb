@@ -91,7 +91,7 @@ bunx duckdb-introspect --url md: --all-databases --out ./schema.ts
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, introspect } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, introspect } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('./my-database.duckdb');
 const connection = await instance.connect();
@@ -129,7 +129,7 @@ interface IntrospectOptions {
   // Use duckDbJson for JSON columns (default: true)
   mapJsonAsDuckDbJson?: boolean;
 
-  // Custom import path for helpers (default: '@leonardovida-md/drizzle-neo-duckdb/helpers')
+  // Custom import path for helpers (default: '@duckdbfan/drizzle-duckdb/helpers')
   importBasePath?: string;
 }
 ```
@@ -188,7 +188,7 @@ import {
   duckDbList,
   duckDbStruct,
   duckDbTimestamp,
-} from '@leonardovida-md/drizzle-neo-duckdb/helpers';
+} from '@duckdbfan/drizzle-duckdb/helpers';
 
 export const analyticsSchema = pgSchema('analytics');
 
@@ -281,7 +281,7 @@ bunx duckdb-introspect --url ./app.duckdb --out ./src/db/schema.ts
 ```typescript
 // src/db/index.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema.ts';
 
 const instance = await DuckDBInstance.create('./app.duckdb');

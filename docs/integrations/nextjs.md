@@ -7,7 +7,7 @@ nav_order: 1
 
 # Next.js Integration
 
-This guide covers how to use `@leonardovida-md/drizzle-neo-duckdb` with Next.js applications.
+This guide covers how to use `@duckdbfan/drizzle-duckdb` with Next.js applications.
 
 ## Configuration
 
@@ -62,7 +62,7 @@ The simplest approach uses connection strings with automatic pooling:
 
 ```typescript
 // lib/db.ts
-import { drizzle, DuckDBDatabase } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, DuckDBDatabase } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 let db: Awaited<ReturnType<typeof drizzle<typeof schema>>> | null = null;
@@ -115,10 +115,7 @@ For more control, create the pool manually:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  drizzle,
-  createDuckDBConnectionPool,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
@@ -294,7 +291,7 @@ In serverless environments, connections may not be properly cleaned up between i
 ```typescript
 // lib/db.ts
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 export async function withDb<T>(
   callback: (db: ReturnType<typeof drizzle>) => Promise<T>
@@ -340,7 +337,7 @@ export const users = pgTable('users', {
 **`lib/db.ts`**:
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 let db: Awaited<ReturnType<typeof drizzle<typeof schema>>> | null = null;

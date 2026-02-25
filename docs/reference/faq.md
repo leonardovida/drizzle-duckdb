@@ -117,7 +117,7 @@ DuckDB is optimized for OLAP (analytical) workloads, not OLTP (transactional).
 ### How do I use DuckDB's STRUCT type?
 
 ```typescript
-import { duckDbStruct } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbStruct } from '@duckdbfan/drizzle-duckdb';
 
 const users = pgTable('users', {
   address: duckDbStruct<{
@@ -205,7 +205,7 @@ while (true) {
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { createDuckDBConnectionPool } from '@leonardovida-md/drizzle-neo-duckdb';
+import { createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create(':memory:');
 const pool = createDuckDBConnectionPool(instance, {
@@ -250,7 +250,7 @@ See the [Next.js guide]({{ '/integrations/nextjs' | relative_url }}) for full se
 Yes! Bun is the recommended runtime:
 
 ```bash
-bun add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 See the [Bun guide]({{ '/integrations/bun' | relative_url }}) for details.
@@ -280,7 +280,7 @@ DuckDB has its own JSON type. Replace:
 import { json } from 'drizzle-orm/pg-core';
 
 // After
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 ```
 
 ### Why doesn't my transaction rollback work as expected?

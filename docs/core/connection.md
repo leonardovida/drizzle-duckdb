@@ -14,7 +14,7 @@ Learn how to connect to DuckDB databases in different scenarios.
 The simplest way to connect uses a connection string with automatic pooling:
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 // In-memory with auto-pooling (4 connections)
 const db = await drizzle(':memory:');
@@ -46,7 +46,7 @@ This creates a connection pool automatically, which is critical for MotherDuck p
 Perfect for testing and temporary data processing:
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle(':memory:');
 ```
@@ -190,7 +190,7 @@ const usersWithPosts = await db.query.users.findMany({
 ```typescript
 // db.ts
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api';
-import { drizzle, DuckDBDatabase } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, DuckDBDatabase } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 let instance: DuckDBInstance | null = null;
@@ -272,10 +272,7 @@ For more control, create the pool manually:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  drizzle,
-  createDuckDBConnectionPool,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('./app.duckdb');
 const pool = createDuckDBConnectionPool(instance, { size: 4 });

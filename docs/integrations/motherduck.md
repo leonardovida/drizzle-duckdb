@@ -22,7 +22,7 @@ nav_order: 2
 The async `drizzle()` entrypoint creates a pool automatically and exposes `db.close()` to clean up:
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle({
   connection: {
@@ -44,7 +44,7 @@ If you need to manage the instance and connection directly, use the lower level 
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: process.env.MOTHERDUCK_TOKEN,
@@ -84,7 +84,7 @@ MotherDuck provides sample datasets. Here's an example querying the NYC taxi dat
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 
 const instance = await DuckDBInstance.create('md:', {
@@ -214,7 +214,7 @@ await db.execute(sql`
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 
 async function getAnalytics() {

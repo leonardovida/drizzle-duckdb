@@ -15,20 +15,20 @@ These settings provide immediate performance improvements for most workloads:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
-import { createDuckDBConnectionPool } from '@leonardovida-md/drizzle-neo-duckdb/pool';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
+import { createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create(':memory:');
 
 // Option 1: Single connection with prepared statement cache
 const connection = await instance.connect();
-const db = drizzle(connection, {
+const dbSingle = drizzle(connection, {
   prepareCache: { size: 64 },
 });
 
 // Option 2: Connection pool for concurrent workloads
 const pool = createDuckDBConnectionPool(instance, { size: 8 });
-const db = drizzle({ client: pool, prepareCache: { size: 64 } });
+const dbPooled = drizzle({ client: pool, prepareCache: { size: 64 } });
 ```
 
 ## Prepared Statement Caching
@@ -77,12 +77,12 @@ Use connection pooling for applications with concurrent database access.
 ### Basic Pool Setup
 
 ```typescript
-import { createDuckDBConnectionPool } from '@leonardovida-md/drizzle-neo-duckdb/pool';
+import { createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
 
 const pool = createDuckDBConnectionPool(instance, {
   size: 8, // Number of connections
   acquireTimeout: 30000, // Max wait time (ms)
-  maxWaiters: 100, // Max queued requests
+  maxWaitingRequests: 100, // Max queued requests
 });
 
 const db = drizzle({ client: pool, prepareCache: { size: 64 } });
@@ -92,7 +92,7 @@ const db = drizzle({ client: pool, prepareCache: { size: 64 } });
 
 ```typescript
 // Optimized presets for MotherDuck instance types
-const pool = createDuckDBConnectionPool(instance, { preset: 'standard' });
+const db = await drizzle('md:', { pool: 'standard' });
 ```
 
 | Preset     | Pool Size | Use Case             |
@@ -134,12 +134,14 @@ For queries returning many rows, use streaming to avoid memory pressure.
 ### Batch Streaming
 
 ```typescript
+import { sql } from 'drizzle-orm';
+
 // Stream 100,000 rows per batch
-for await (const batch of db.$client.executeInBatches(query, params, {
+for await (const rows of db.executeBatches(sql`SELECT * FROM large_table`, {
   rowsPerChunk: 100000,
 })) {
-  // Process batch.rows (array of objects)
-  for (const row of batch.rows) {
+  // Process each chunk of mapped rows
+  for (const row of rows) {
     processRow(row);
   }
 }
@@ -151,10 +153,12 @@ For maximum performance with large datasets:
 
 ```typescript
 // Stream raw arrays (no object mapping overhead)
-for await (const batch of db.$client.executeInBatchesRaw(query, params)) {
-  // batch.columns: string[]
-  // batch.rows: unknown[][]
-  for (const row of batch.rows) {
+for await (const chunk of db.executeBatchesRaw(
+  sql`SELECT id, name FROM users`
+)) {
+  // chunk.columns: string[]
+  // chunk.rows: unknown[][]
+  for (const row of chunk.rows) {
     const id = row[0];
     const name = row[1];
   }
@@ -166,7 +170,7 @@ for await (const batch of db.$client.executeInBatchesRaw(query, params)) {
 For interop with analytical tools:
 
 ```typescript
-const arrow = await db.$client.executeArrow(query, params);
+const arrow = await db.executeArrow(sql`SELECT * FROM large_table`);
 // Returns Arrow table for zero-copy analytics
 ```
 
@@ -209,7 +213,7 @@ import {
   duckDbArray,
   duckDbJson,
   duckDbStruct,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 // Faster: pre-wrapped DuckDB value
 await db.insert(table).values({
@@ -265,10 +269,7 @@ When migrating from PostgreSQL, consider these performance differences:
 PostgreSQL array operators (`@>`, `<@`, `&&`) are automatically rewritten to DuckDB functions. For best performance, use DuckDB-native array functions directly:
 
 ```typescript
-import {
-  arrayContains,
-  arrayOverlaps,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { arrayHasAll, arrayHasAny } from '@duckdbfan/drizzle-duckdb';
 
 // Automatic rewrite (works but has parsing overhead on first execution)
 const result = await db
@@ -280,7 +281,13 @@ const result = await db
 const result = await db
   .select()
   .from(posts)
-  .where(arrayContains(posts.tags, ['featured']));
+  .where(arrayHasAll(posts.tags, ['featured']));
+
+// Overlap check with native helper
+const overlapping = await db
+  .select()
+  .from(posts)
+  .where(arrayHasAny(posts.tags, ['featured', 'trending']));
 ```
 
 ### JSON Columns
@@ -288,7 +295,7 @@ const result = await db
 Use `duckDbJson()` instead of Postgres `json`/`jsonb`:
 
 ```typescript
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 
 const table = pgTable('events', {
   id: integer('id').primaryKey(),
@@ -324,15 +331,15 @@ const result = await db
 
 ## Monitoring Performance
 
-### Query Transformation Cache
+### Query Timing
 
-The SQL transformer caches query rewrites. Monitor cache effectiveness:
+Track representative query latency in your runtime environment:
 
 ```typescript
-import { getTransformCacheStats } from '@leonardovida-md/drizzle-neo-duckdb';
-
-const stats = getTransformCacheStats();
-console.log(`Transform cache: ${stats.size}/${stats.maxSize} entries`);
+const startedAt = Date.now();
+await db.select().from(users).limit(1000);
+const elapsedMs = Date.now() - startedAt;
+console.log(`Query took ${elapsedMs}ms`);
 ```
 
 ### Warm-Up Critical Queries
@@ -361,7 +368,7 @@ await warmUp(db);
 - [ ] Create indexes for frequently-queried columns
 - [ ] Use `duckDbJson()` instead of Postgres `json`/`jsonb`
 - [ ] Warm up caches at application startup
-- [ ] Monitor cache hit rates in production
+- [ ] Track query latency and pool queue behavior in production
 
 ## Troubleshooting Slow Queries
 

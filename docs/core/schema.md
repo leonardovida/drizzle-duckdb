@@ -67,7 +67,7 @@ import {
   duckDbBlob,
   duckDbInet,
   duckDbInterval,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 ```
 
 See [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}) for detailed usage.
@@ -261,7 +261,7 @@ import {
   duckDbList,
   duckDbStruct,
   duckDbTimestamp,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 // Users table
 export const users = pgTable('users', {

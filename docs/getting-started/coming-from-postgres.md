@@ -34,7 +34,7 @@ const users = pgTable('users', {
 });
 
 // After (DuckDB)
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 
 const users = pgTable('users', {
   settings: duckDbJson<{ theme: string }>('settings'),
@@ -54,7 +54,7 @@ const events = pgTable('events', {
 });
 
 // After (DuckDB) - recommended
-import { duckDbTimestamp } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbTimestamp } from '@duckdbfan/drizzle-duckdb';
 
 const events = pgTable('events', {
   createdAt: duckDbTimestamp('created_at', { withTimezone: true }),
@@ -91,7 +91,7 @@ import { arrayContains } from 'drizzle-orm/pg-core';
 .where(arrayContains(products.tags, ['sale']))
 
 // After (DuckDB) - explicit
-import { duckDbArrayContains } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 
 .where(duckDbArrayContains(products.tags, ['sale']))
 ```
@@ -128,7 +128,7 @@ const users = pgTable('users', {
 
 ```typescript
 // Replace json/jsonb imports
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 
 const users = pgTable('users', {
   // Change this
@@ -182,7 +182,7 @@ const db = drizzle(pool);
 
 // After (DuckDB)
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('./my-database.duckdb');
 const connection = await instance.connect();

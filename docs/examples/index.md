@@ -132,7 +132,7 @@ Each example follows a similar pattern:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 // 1. Define schema
 const users = pgTable('users', { ... });
