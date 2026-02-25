@@ -9,30 +9,35 @@ nav_order: 1
 
 Install Drizzle DuckDB and its peer dependency.
 
+{: .warning }
+
+> Install `@duckdbfan/drizzle-duckdb`.
+> The previous package `@leonardovida-md/drizzle-neo-duckdb` is in deprecation and receives updates only through May 2, 2026.
+
 ## Package Installation
 
 **Using bun:**
 
 ```bash
-bun add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 **Using npm:**
 
 ```bash
-npm install @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 **Using pnpm:**
 
 ```bash
-pnpm add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 **Using yarn:**
 
 ```bash
-yarn add @leonardovida-md/drizzle-neo-duckdb @duckdb/node-api
+yarn add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
 Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB 1.4.4.
@@ -64,7 +69,7 @@ Create a test file to verify everything works:
 ```typescript
 // test.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 
 async function test() {

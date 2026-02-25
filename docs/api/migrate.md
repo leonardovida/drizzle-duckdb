@@ -46,7 +46,7 @@ Either a string path to the migrations folder, or a configuration object:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('./my-database.duckdb');
 const connection = await instance.connect();
@@ -153,7 +153,7 @@ try {
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 async function main() {

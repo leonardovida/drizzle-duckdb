@@ -67,7 +67,7 @@ const table = pgTable('example', {
 **Solution:** Use `duckDbJson()` instead:
 
 ```typescript
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 
 const table = pgTable('example', {
   data: duckDbJson('data'), // Works!
@@ -197,7 +197,7 @@ This transformation happens automatically for all queries.
 **Recommendation:** Use the explicit DuckDB-native helpers for clarity:
 
 ```typescript
-import { arrayHasAll, arrayHasAny, duckDbArrayContains } from '@leonardovida-md/drizzle-neo-duckdb';
+import { arrayHasAll, arrayHasAny, duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 
 // DuckDB-native (recommended)
 .where(arrayHasAll(products.tags, ['a', 'b']))

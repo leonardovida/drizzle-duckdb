@@ -192,10 +192,7 @@ For timeouts, queue limits, and connection recycling, build the pool manually:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  createDuckDBConnectionPool,
-  drizzle,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: process.env.MOTHERDUCK_TOKEN,
@@ -288,7 +285,7 @@ const result = await introspect(db, {
   includeViews: true,
   useCustomTimeTypes: true,
   mapJsonAsDuckDbJson: true,
-  importBasePath: '@leonardovida-md/drizzle-neo-duckdb/helpers',
+  importBasePath: '@duckdbfan/drizzle-duckdb/helpers',
 });
 ```
 
@@ -356,9 +353,9 @@ Map JSON columns to `duckDbJson`.
 
 Base path for local type imports.
 
-| Type     | Default                                         | Description           |
-| -------- | ----------------------------------------------- | --------------------- |
-| `string` | `'@leonardovida-md/drizzle-neo-duckdb/helpers'` | Import path for types |
+| Type     | Default                               | Description           |
+| -------- | ------------------------------------- | --------------------- |
+| `string` | `'@duckdbfan/drizzle-duckdb/helpers'` | Import path for types |
 
 ## Environment Variables
 

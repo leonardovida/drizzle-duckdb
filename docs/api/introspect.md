@@ -40,7 +40,7 @@ interface IntrospectOptions {
   // Map JSON columns to duckDbJson (default: true)
   mapJsonAsDuckDbJson?: boolean;
 
-  // Base import path for local types (default: '@leonardovida-md/drizzle-neo-duckdb/helpers')
+  // Base import path for local types (default: '@duckdbfan/drizzle-duckdb/helpers')
   importBasePath?: string;
 }
 ```
@@ -75,7 +75,7 @@ interface IntrospectedTable {
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, introspect } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, introspect } from '@duckdbfan/drizzle-duckdb';
 import { writeFileSync } from 'fs';
 
 const instance = await DuckDBInstance.create('./my-database.duckdb');
@@ -148,7 +148,7 @@ import {
   duckDbList,
   duckDbJson,
   duckDbTimestamp,
-} from '@leonardovida-md/drizzle-neo-duckdb/helpers';
+} from '@duckdbfan/drizzle-duckdb/helpers';
 
 export const mainSchema = pgSchema('main');
 
@@ -220,7 +220,7 @@ bunx duckdb-introspect \
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, introspect } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, introspect } from '@duckdbfan/drizzle-duckdb';
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 

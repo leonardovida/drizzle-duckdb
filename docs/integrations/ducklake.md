@@ -14,7 +14,7 @@ DuckLake stores DuckDB tables on object storage while keeping metadata in a cata
 Create a DuckLake catalog backed by a local DuckDB file and point data to a directory:
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle(':memory:', {
   ducklake: {
@@ -37,7 +37,7 @@ CREATE DATABASE my_lake TYPE DUCKLAKE;
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle({
   connection: {
@@ -60,10 +60,7 @@ If you have a direct connection, call `configureDuckLake` before using Drizzle:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  configureDuckLake,
-  drizzle,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { configureDuckLake, drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create(':memory:');
 const connection = await instance.connect();

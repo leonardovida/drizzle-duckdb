@@ -33,7 +33,7 @@ function duckDbArrayContains(
 ### Usage
 
 ```typescript
-import { duckDbArrayContains } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 
 const products = pgTable('products', {
   id: integer('id').primaryKey(),
@@ -70,7 +70,7 @@ function duckDbArrayContained(
 ### Usage
 
 ```typescript
-import { duckDbArrayContained } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArrayContained } from '@duckdbfan/drizzle-duckdb';
 
 // Find products whose tags are ALL within the allowed set
 const allowedTags = ['electronics', 'sale', 'featured', 'new'];
@@ -104,7 +104,7 @@ function duckDbArrayOverlaps(
 ### Usage
 
 ```typescript
-import { duckDbArrayOverlaps } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArrayOverlaps } from '@duckdbfan/drizzle-duckdb';
 
 // Find products with at least ONE of these tags
 const results = await db
@@ -173,7 +173,7 @@ import {
   duckDbList,
   duckDbArrayContains,
   duckDbArrayOverlaps,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
 import { and } from 'drizzle-orm';
 

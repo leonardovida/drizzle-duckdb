@@ -34,7 +34,7 @@ This example demonstrates Drizzle DuckDB with MotherDuck cloud database, queryin
 Use the async `drizzle()` entrypoint for automatic pooling (default pool size: 4). This avoids serializing concurrent requests when hitting MotherDuck from an API or script.
 
 ```typescript
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const motherDuckToken = process.env.MOTHERDUCK_TOKEN;
 if (!motherDuckToken) {
@@ -55,10 +55,7 @@ Want fine-grained pool control (timeouts, queue limits, recycling)? Build the po
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import {
-  createDuckDBConnectionPool,
-  drizzle,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: motherDuckToken,

@@ -10,6 +10,11 @@ nav_exclude: true
 
 DuckDB dialect for Drizzle ORM with full TypeScript inference, DuckDB-native types, and Postgres-compatible schema definitions.
 
+{: .warning }
+
+> Install `@duckdbfan/drizzle-duckdb`.
+> The previous package `@leonardovida-md/drizzle-neo-duckdb` is in deprecation and receives updates only through May 2, 2026.
+
 [Get Started]({{ '/getting-started/' | relative_url }}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/leonardovida/drizzle-duckdb){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [LLM Context (llms.txt)]({{ '/llms.txt' | relative_url }}){: .btn .fs-5 .mb-4 .mb-md-0 }
@@ -32,7 +37,7 @@ DuckDB dialect for Drizzle ORM with full TypeScript inference, DuckDB-native typ
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { integer, text, pgTable } from 'drizzle-orm/pg-core';
 
 // Connect to DuckDB

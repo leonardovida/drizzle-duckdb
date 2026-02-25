@@ -41,7 +41,7 @@ footer_content: 'Released under the Apache 2.0 License. Copyright 2025-present.'
 # External links
 aux_links:
   GitHub: https://github.com/leonardovida/drizzle-duckdb
-  npm: https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb
+  npm: https://www.npmjs.com/package/@duckdbfan/drizzle-duckdb
 aux_links_new_tab: true
 
 # Features

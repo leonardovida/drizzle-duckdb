@@ -14,12 +14,7 @@ Utilities to keep aggregates and window logic inside DuckDB while returning JS-f
 DuckDB returns DECIMAL aggregates as strings. Use the numeric helpers to coerce to `number` when that's acceptable:
 
 ```typescript
-import {
-  sumN,
-  avgN,
-  countN,
-  sumDistinctN,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+import { sumN, avgN, countN, sumDistinctN } from '@duckdbfan/drizzle-duckdb';
 
 await db
   .select({
@@ -34,7 +29,7 @@ await db
 ## Percentiles and median
 
 ```typescript
-import { percentileCont, median } from '@leonardovida-md/drizzle-neo-duckdb';
+import { percentileCont, median } from '@duckdbfan/drizzle-duckdb';
 
 await db
   .select({
@@ -53,7 +48,7 @@ import {
   denseRank,
   lag,
   lead,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 await db
   .select({
@@ -70,7 +65,7 @@ await db
 ## any_value for non-aggregated selections
 
 ```typescript
-import { anyValue, sumN } from '@leonardovida-md/drizzle-neo-duckdb';
+import { anyValue, sumN } from '@duckdbfan/drizzle-duckdb';
 
 await db
   .select({
@@ -85,7 +80,7 @@ await db
 ## OLAP builder (grouped measures)
 
 ```typescript
-import { olap, sumN } from '@leonardovida-md/drizzle-neo-duckdb';
+import { olap, sumN } from '@duckdbfan/drizzle-duckdb';
 
 const query = olap(db)
   .from(orders)

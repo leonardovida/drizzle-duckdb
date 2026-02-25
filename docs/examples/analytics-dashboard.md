@@ -39,7 +39,7 @@ import {
   duckDbMap,
   duckDbJson,
   duckDbTimestamp,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 // Users with JSON metadata and list of tags
 const users = pgTable('users', {
@@ -118,7 +118,7 @@ Create tables with sequences for auto-increment. Pick a connection style:
 ```typescript
 // Single connection (matches the checked-in script)
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create(':memory:');
 const connection = await instance.connect();
@@ -127,7 +127,7 @@ const db = drizzle(connection);
 
 ```typescript
 // Auto-pooling for concurrent workloads (default pool size: 4, memory preset)
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle(':memory:', { pool: 'memory' });
 ```
@@ -214,7 +214,7 @@ Find users by tags using DuckDB array helpers:
 import {
   duckDbArrayContains,
   duckDbArrayOverlaps,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 
 // Find users with BOTH 'premium' AND 'newsletter' tags
 const premiumNewsletterUsers = await db

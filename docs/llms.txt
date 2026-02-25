@@ -9,14 +9,16 @@ Drizzle DuckDB is a DuckDB dialect adapter for Drizzle ORM. It provides type-saf
 ## Installation
 
 ```bash
-npm install @leonardovida-md/drizzle-neo-duckdb drizzle-orm @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
+
+Package note: use `@duckdbfan/drizzle-duckdb` for new installs. `@leonardovida-md/drizzle-neo-duckdb` is deprecated and receives updates only through May 2, 2026.
 
 ## Quick Start
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
 
 const users = pgTable('users', {
@@ -43,7 +45,7 @@ const allUsers = await db.select().from(users);
 ## Important Notes
 
 - Do NOT use Postgres json or jsonb columns - use duckDbJson() instead
-- DuckDB doesn't support SAVEPOINT for nested transactions
+- Current DuckDB 1.4.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
 - Array operators are automatically rewritten to DuckDB functions
 
 ## Documentation
@@ -55,7 +57,7 @@ const allUsers = await db.select().from(users);
 
 ## DuckDB-Specific Column Types
 
-Import from '@leonardovida-md/drizzle-neo-duckdb':
+Import from '@duckdbfan/drizzle-duckdb':
 
 - duckDbList - Variable length arrays (LIST)
 - duckDbArray - Fixed length arrays (ARRAY)
@@ -78,7 +80,7 @@ Import from '@leonardovida-md/drizzle-neo-duckdb':
 ## Migrations
 
 ```typescript
-import { migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { migrate } from '@duckdbfan/drizzle-duckdb';
 
 await migrate(db, {
   migrationsFolder: './drizzle',
@@ -89,7 +91,7 @@ await migrate(db, {
 ## Schema Introspection
 
 ```typescript
-import { introspect } from '@leonardovida-md/drizzle-neo-duckdb';
+import { introspect } from '@duckdbfan/drizzle-duckdb';
 
 const result = await introspect(db, {
   schemas: ['main'],
@@ -112,7 +114,7 @@ const db = drizzle(connection);
 ## Links
 
 - GitHub: https://github.com/leonardovida/drizzle-duckdb
-- npm: https://www.npmjs.com/package/@leonardovida-md/drizzle-neo-duckdb
+- npm: https://www.npmjs.com/package/@duckdbfan/drizzle-duckdb
 - Documentation: https://leonardovida.github.io/drizzle-duckdb/
 - DuckDB: https://duckdb.org/
 - Drizzle ORM: https://orm.drizzle.team/

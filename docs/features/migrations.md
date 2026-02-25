@@ -13,7 +13,7 @@ Drizzle DuckDB supports running SQL migration files against your DuckDB database
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
 
 const instance = await DuckDBInstance.create('./my-database.duckdb');
 const connection = await instance.connect();
@@ -167,7 +167,7 @@ await migrate(db, './drizzle');
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, migrate } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 
 async function runMigrations() {

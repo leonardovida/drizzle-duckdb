@@ -25,7 +25,7 @@ import { json, jsonb } from 'drizzle-orm/pg-core';
 const table = pgTable('t', { data: json('data') }); // Error!
 
 // Correct
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb';
 const table = pgTable('t', { data: duckDbJson('data') });
 ```
 
@@ -40,7 +40,7 @@ const table = pgTable('t', { data: duckDbJson('data') });
 **Solution**: Array operators are automatically rewritten via AST transformation. For clarity, you can also use explicit helpers:
 
 ```typescript
-import { duckDbArrayContains } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 
 // Explicit and clear
 .where(duckDbArrayContains(products.tags, ['a', 'b']))
@@ -132,7 +132,7 @@ const nextConfig = {
 When sharing generated schemas with client components (e.g., drizzle-zod or tRPC inputs), import column helpers from the browser-safe subpath to avoid bundling the native binding:
 
 ```ts
-import { duckDbJson } from '@leonardovida-md/drizzle-neo-duckdb/helpers';
+import { duckDbJson } from '@duckdbfan/drizzle-duckdb/helpers';
 ```
 
 ### "Native Node.js APIs not supported" Error

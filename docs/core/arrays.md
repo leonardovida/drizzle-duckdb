@@ -16,7 +16,7 @@ DuckDB has two array-like types:
 ### LIST (Variable Length)
 
 ```typescript
-import { duckDbList } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbList } from '@duckdbfan/drizzle-duckdb';
 
 const users = pgTable('users', {
   tags: duckDbList<string>('tags', 'TEXT'),
@@ -27,7 +27,7 @@ const users = pgTable('users', {
 ### ARRAY (Fixed Length)
 
 ```typescript
-import { duckDbArray } from '@leonardovida-md/drizzle-neo-duckdb';
+import { duckDbArray } from '@duckdbfan/drizzle-duckdb';
 
 const users = pgTable('users', {
   rgb: duckDbArray<number>('rgb', 'INTEGER', 3),
@@ -60,7 +60,7 @@ import {
   duckDbArrayContains,
   duckDbArrayContained,
   duckDbArrayOverlaps,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 ```
 
 #### duckDbArrayContains

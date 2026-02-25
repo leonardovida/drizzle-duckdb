@@ -37,7 +37,7 @@ export const posts = pgTable('posts', {
 ```typescript
 // db.ts
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import * as schema from './schema';
 
 // In-memory database
@@ -167,7 +167,7 @@ const [deleted] = await db.delete(users).where(eq(users.id, 1)).returning();
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
 import { eq, sql } from 'drizzle-orm';
 

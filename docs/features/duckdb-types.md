@@ -24,7 +24,7 @@ import {
   duckDbBlob,
   duckDbInet,
   duckDbInterval,
-} from '@leonardovida-md/drizzle-neo-duckdb';
+} from '@duckdbfan/drizzle-duckdb';
 ```
 
 ## LIST (Variable Length Array)
