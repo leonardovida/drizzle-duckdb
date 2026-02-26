@@ -32,3 +32,4 @@ coverage
 *.log
 test/.tmp
 .cursor
+.codex/rules/
