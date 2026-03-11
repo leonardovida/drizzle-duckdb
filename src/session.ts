@@ -272,10 +272,7 @@ export class DuckDBSession<
     );
   };
 
-  executeBatches<T extends RowData = RowData>(
-    query: SQL,
-    options: ExecuteInBatchesOptions = {}
-  ): AsyncGenerator<GenericRowData<T>[], void, void> {
+  private prepareQueryExecution(query: SQL): { sql: string; params: unknown[] } {
     this.dialect.resetPgJsonFlag();
     const builtQuery = this.dialect.sqlToQuery(query);
     this.dialect.assertNoPgJsonColumns();
@@ -287,10 +284,18 @@ export class DuckDBSession<
     });
 
     this.logger.logQuery(builtQuery.sql, params);
+    return { sql: builtQuery.sql, params };
+  }
+
+  executeBatches<T extends RowData = RowData>(
+    query: SQL,
+    options: ExecuteInBatchesOptions = {}
+  ): AsyncGenerator<GenericRowData<T>[], void, void> {
+    const { sql: queryString, params } = this.prepareQueryExecution(query);
 
     return executeInBatches(
       this.client,
-      builtQuery.sql,
+      queryString,
       params,
       options
     ) as AsyncGenerator<GenericRowData<T>[], void, void>;
@@ -300,35 +305,13 @@ export class DuckDBSession<
     query: SQL,
     options: ExecuteInBatchesOptions = {}
   ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-    this.dialect.resetPgJsonFlag();
-    const builtQuery = this.dialect.sqlToQuery(query);
-    this.dialect.assertNoPgJsonColumns();
-    const params = prepareParams(builtQuery.params, {
-      rejectStringArrayLiterals: this.rejectStringArrayLiterals,
-      warnOnStringArrayLiteral: this.rejectStringArrayLiterals
-        ? undefined
-        : () => this.warnOnStringArrayLiteral(builtQuery.sql),
-    });
-
-    this.logger.logQuery(builtQuery.sql, params);
-
-    return executeInBatchesRaw(this.client, builtQuery.sql, params, options);
+    const { sql: queryString, params } = this.prepareQueryExecution(query);
+    return executeInBatchesRaw(this.client, queryString, params, options);
   }
 
   async executeArrow(query: SQL): Promise<unknown> {
-    this.dialect.resetPgJsonFlag();
-    const builtQuery = this.dialect.sqlToQuery(query);
-    this.dialect.assertNoPgJsonColumns();
-    const params = prepareParams(builtQuery.params, {
-      rejectStringArrayLiterals: this.rejectStringArrayLiterals,
-      warnOnStringArrayLiteral: this.rejectStringArrayLiterals
-        ? undefined
-        : () => this.warnOnStringArrayLiteral(builtQuery.sql),
-    });
-
-    this.logger.logQuery(builtQuery.sql, params);
-
-    return executeArrowOnClient(this.client, builtQuery.sql, params);
+    const { sql: queryString, params } = this.prepareQueryExecution(query);
+    return executeArrowOnClient(this.client, queryString, params);
   }
 
   markRollbackOnly(): void {
