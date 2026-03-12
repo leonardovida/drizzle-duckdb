@@ -235,14 +235,7 @@ async function materializeResultRows(result: {
   deduplicatedColumnNames?: () => string[];
 }): Promise<MaterializedRows> {
   const rows = (await result.getRowsJS()) ?? [];
-  const baseColumns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? result.deduplicatedColumnNames()
-      : result.columnNames();
-  const columns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? baseColumns
-      : deduplicateColumns(baseColumns);
+  const columns = resolveResultColumns(result);
 
   return { columns, rows };
 }
@@ -254,6 +247,18 @@ type StreamResultLike = {
   close?: () => Promise<void> | void;
   cancel?: () => Promise<void> | void;
 };
+
+type ResultColumnsLike = {
+  columnNames: () => string[];
+  deduplicatedColumnNames?: () => string[];
+};
+
+function resolveResultColumns(result: ResultColumnsLike): string[] {
+  if (typeof result.deduplicatedColumnNames === 'function') {
+    return result.deduplicatedColumnNames();
+  }
+  return deduplicateColumns(result.columnNames());
+}
 
 async function closeStreamResult(result: StreamResultLike): Promise<void> {
   try {
@@ -431,14 +436,7 @@ export async function* executeInBatches(
       : undefined;
 
   const result = (await client.stream(query, values)) as StreamResultLike;
-  const rawColumns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? result.deduplicatedColumnNames()
-      : result.columnNames();
-  const columns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? rawColumns
-      : deduplicateColumns(rawColumns);
+  const columns = resolveResultColumns(result);
 
   let buffer: RowData[] = [];
 
@@ -489,14 +487,7 @@ export async function* executeInBatchesRaw(
       : undefined;
 
   const result = (await client.stream(query, values)) as StreamResultLike;
-  const rawColumns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? result.deduplicatedColumnNames()
-      : result.columnNames();
-  const columns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? rawColumns
-      : deduplicateColumns(rawColumns);
+  const columns = resolveResultColumns(result);
 
   let buffer: unknown[][] = [];
 

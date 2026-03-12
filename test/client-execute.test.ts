@@ -10,14 +10,23 @@ function makeClient(options: {
   arrowValue?: unknown;
   fallbackValue?: unknown;
   rows?: unknown[][];
+  columns?: string[];
+  deduplicatedColumns?: string[];
   onStreamClose?: () => void;
 }): DuckDBClientLike {
   const {
     arrowValue,
     fallbackValue = {},
     rows = [[1], [2], [3]],
+    columns = ['id'],
     onStreamClose,
   } = options;
+  const deduplicatedColumns = Object.prototype.hasOwnProperty.call(
+    options,
+    'deduplicatedColumns'
+  )
+    ? options.deduplicatedColumns
+    : ['id'];
 
   return {
     async run(_query: string, _values?: unknown[]) {
@@ -28,7 +37,11 @@ function makeClient(options: {
     },
     async stream(_query: string, _values?: unknown[]) {
       return {
-        deduplicatedColumnNames: () => ['id'],
+        columnNames: () => columns,
+        deduplicatedColumnNames:
+          deduplicatedColumns === undefined
+            ? undefined
+            : () => deduplicatedColumns,
         async *yieldRowsJs() {
           yield rows;
         },
@@ -111,5 +124,20 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(closeCalls).toBe(1);
+  });
+
+  test('deduplicates fallback column names when node-api does not provide them', async () => {
+    const client = makeClient({
+      rows: [[1, 2]],
+      columns: ['id', 'id'],
+      deduplicatedColumns: undefined,
+    });
+    const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
+
+    for await (const chunk of executeInBatchesRaw(client, 'select', [])) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks[0]?.columns).toEqual(['id', 'id_1']);
   });
 });
