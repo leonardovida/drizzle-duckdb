@@ -272,7 +272,10 @@ export class DuckDBSession<
     );
   };
 
-  private prepareQueryExecution(query: SQL): { sql: string; params: unknown[] } {
+  private prepareQueryExecution(query: SQL): {
+    sql: string;
+    params: unknown[];
+  } {
     this.dialect.resetPgJsonFlag();
     const builtQuery = this.dialect.sqlToQuery(query);
     this.dialect.assertNoPgJsonColumns();
