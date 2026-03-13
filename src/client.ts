@@ -244,9 +244,11 @@ function resolveResultColumns(result: ResultColumnsLike): string[] {
     : deduplicateColumns(baseColumns);
 }
 
-async function materializeResultRows(result: {
-  getRowsJS: () => Promise<unknown[][] | undefined>;
-} & ResultColumnsLike): Promise<MaterializedRows> {
+async function materializeResultRows(
+  result: {
+    getRowsJS: () => Promise<unknown[][] | undefined>;
+  } & ResultColumnsLike
+): Promise<MaterializedRows> {
   const rows = (await result.getRowsJS()) ?? [];
   const columns = resolveResultColumns(result);
 
