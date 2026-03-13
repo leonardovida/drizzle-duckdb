@@ -44,6 +44,11 @@ type PreparedStatementCache = {
   entries: Map<string, PreparedCacheEntry>;
 };
 
+type ResultColumnsLike = {
+  columnNames: () => string[];
+  deduplicatedColumnNames?: () => string[];
+};
+
 const PREPARED_CACHE = Symbol.for('drizzle-duckdb:prepared-cache');
 
 export interface PrepareParamsOptions {
@@ -229,36 +234,32 @@ async function getOrPrepareStatement(
   return statement;
 }
 
-async function materializeResultRows(result: {
-  getRowsJS: () => Promise<unknown[][] | undefined>;
-  columnNames: () => string[];
-  deduplicatedColumnNames?: () => string[];
-}): Promise<MaterializedRows> {
+function resolveResultColumns(result: ResultColumnsLike): string[] {
+  const baseColumns =
+    typeof result.deduplicatedColumnNames === 'function'
+      ? result.deduplicatedColumnNames()
+      : result.columnNames();
+  return typeof result.deduplicatedColumnNames === 'function'
+    ? baseColumns
+    : deduplicateColumns(baseColumns);
+}
+
+async function materializeResultRows(
+  result: {
+    getRowsJS: () => Promise<unknown[][] | undefined>;
+  } & ResultColumnsLike
+): Promise<MaterializedRows> {
   const rows = (await result.getRowsJS()) ?? [];
   const columns = resolveResultColumns(result);
 
   return { columns, rows };
 }
 
-type StreamResultLike = {
+type StreamResultLike = ResultColumnsLike & {
   yieldRowsJs: () => AsyncIterable<unknown[][]>;
-  columnNames: () => string[];
-  deduplicatedColumnNames?: () => string[];
   close?: () => Promise<void> | void;
   cancel?: () => Promise<void> | void;
 };
-
-type ResultColumnsLike = {
-  columnNames: () => string[];
-  deduplicatedColumnNames?: () => string[];
-};
-
-function resolveResultColumns(result: ResultColumnsLike): string[] {
-  if (typeof result.deduplicatedColumnNames === 'function') {
-    return result.deduplicatedColumnNames();
-  }
-  return deduplicateColumns(result.columnNames());
-}
 
 async function closeStreamResult(result: StreamResultLike): Promise<void> {
   try {
