@@ -108,6 +108,40 @@ describe('executeInBatches', () => {
 });
 
 describe('executeInBatchesRaw', () => {
+  test('uses deduplicatedColumnNames when provided', async () => {
+    const client = makeClient({
+      rows: [[1, 2]],
+      columns: ['id', 'id'],
+      deduplicatedColumns: ['id', 'id_1'],
+    });
+    const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
+
+    for await (const chunk of executeInBatchesRaw(client, 'select', [], {
+      rowsPerChunk: 10,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([{ columns: ['id', 'id_1'], rows: [[1, 2]] }]);
+  });
+
+  test('deduplicates columnNames when deduplicatedColumnNames is unavailable', async () => {
+    const client = makeClient({
+      rows: [[1, 2]],
+      columns: ['id', 'id'],
+      deduplicatedColumns: undefined,
+    });
+    const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
+
+    for await (const chunk of executeInBatchesRaw(client, 'select', [], {
+      rowsPerChunk: 10,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([{ columns: ['id', 'id_1'], rows: [[1, 2]] }]);
+  });
+
   test('closes stream when consumer exits early', async () => {
     let closeCalls = 0;
     const client = makeClient({
