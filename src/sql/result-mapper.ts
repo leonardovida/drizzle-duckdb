@@ -80,10 +80,13 @@ export function normalizeTimestampString(
   }
   if (typeof value === 'string') {
     const normalized = value.replace('T', ' ');
+    const hasTimezoneSuffix = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/.test(
+      normalized.trim()
+    );
     if (withTimezone) {
-      return normalized.includes('+') ? normalized : `${normalized}+00`;
+      return hasTimezoneSuffix ? normalized : `${normalized}+00`;
     }
-    return normalized.replace(/\+00$/, '');
+    return normalized.replace(/(?:Z|[+-]\d{2}(?::?\d{2})?)$/, '');
   }
   return value;
 }

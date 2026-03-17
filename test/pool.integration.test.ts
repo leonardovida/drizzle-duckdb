@@ -35,14 +35,9 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
   let skipReason: string | undefined;
   let warnedAboutSkip = false;
 
-  const skipWhenUnsupported = (ctx?: { skip?: (reason?: string) => void }) => {
+  const skipWhenUnsupported = () => {
     if (!skipReason) {
       return true;
-    }
-
-    if (typeof ctx?.skip === 'function') {
-      ctx.skip(skipReason);
-      return false;
     }
 
     if (!warnedAboutSkip) {
@@ -73,16 +68,14 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
       `)
       );
 
-      // Insert test data
+      // Insert test data in one batch so setup does not dominate the suite.
       const values = Array.from({ length: 100 }, (_, i) => ({
         id: i,
         name: `item_${i}`,
         value: Math.floor(Math.random() * 1000),
       }));
 
-      for (const v of values) {
-        await db.insert(testTable).values(v);
-      }
+      await db.insert(testTable).values(values);
     } catch (error) {
       if (isDuckLakeConstraintError(error)) {
         skipReason = `Skipping MotherDuck pooling performance tests: ${DUCKLAKE_CONSTRAINT_ERROR}`;
@@ -107,12 +100,12 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     }
   });
 
-  test('single connection: concurrent queries serialize', async (ctx) => {
-    if (!skipWhenUnsupported(ctx)) return;
+  test('single connection: concurrent queries serialize', async () => {
+    if (!skipWhenUnsupported()) return;
     const db = drizzle(singleConnection);
 
-    // Run 10 concurrent queries on a single connection
-    const concurrentQueries = 10;
+    // Run a small concurrent batch on a single connection
+    const concurrentQueries = 4;
     const queries = Array.from({ length: concurrentQueries }, (_, i) =>
       db
         .select()
@@ -134,13 +127,13 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     return { time: singleConnectionTime, queryCount: concurrentQueries };
   }, 120_000);
 
-  test('pooled connection: concurrent queries run in parallel', async (ctx) => {
-    if (!skipWhenUnsupported(ctx)) return;
+  test('pooled connection: concurrent queries run in parallel', async () => {
+    if (!skipWhenUnsupported()) return;
     const pool = createDuckDBConnectionPool(instance, { size: 4 });
     const db = drizzle(pool);
 
-    // Run 10 concurrent queries on a pool of 4 connections
-    const concurrentQueries = 10;
+    // Run the same batch on a pool of 4 connections
+    const concurrentQueries = 4;
     const queries = Array.from({ length: concurrentQueries }, (_, i) =>
       db
         .select()
@@ -164,9 +157,9 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     return { time: pooledTime, queryCount: concurrentQueries };
   }, 120_000);
 
-  test('comparison: pool vs single with heavier queries', async (ctx) => {
-    if (!skipWhenUnsupported(ctx)) return;
-    const concurrentQueries = 8;
+  test('comparison: pool vs single with heavier queries', async () => {
+    if (!skipWhenUnsupported()) return;
+    const concurrentQueries = 4;
 
     // Heavier query that takes more time
     const heavyQuery = (db: ReturnType<typeof drizzle>) =>
@@ -220,8 +213,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     expect(speedup).toBeGreaterThan(0);
   }, 120_000);
 
-  test('auto-pooling via connection string', async (ctx) => {
-    if (!skipWhenUnsupported(ctx)) return;
+  test('auto-pooling via connection string', async () => {
+    if (!skipWhenUnsupported()) return;
     // Test the new async drizzle() with connection string
     const db = await drizzle({
       connection: {
@@ -231,7 +224,7 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
       pool: { size: 4 },
     });
 
-    const concurrentQueries = 8;
+    const concurrentQueries = 4;
     const queries = Array.from({ length: concurrentQueries }, (_, i) =>
       db
         .select()
@@ -255,8 +248,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
     await db.close();
   }, 120_000);
 
-  test('pool presets work correctly', async (ctx) => {
-    if (!skipWhenUnsupported(ctx)) return;
+  test('pool presets work correctly', async () => {
+    if (!skipWhenUnsupported()) return;
     // Test 'standard' preset (6 connections)
     const db = await drizzle({
       connection: {

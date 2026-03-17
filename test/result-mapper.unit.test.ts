@@ -109,8 +109,18 @@ describe('normalizeTimestampString', () => {
     expect(result).toBe('2024-03-01 12:30:45+00');
   });
 
+  test('preserves existing negative offsets in string (withTimezone: true)', () => {
+    const result = normalizeTimestampString('2024-03-01T12:30:45-05:00', true);
+    expect(result).toBe('2024-03-01 12:30:45-05:00');
+  });
+
   test('removes +00 suffix (withTimezone: false)', () => {
     const result = normalizeTimestampString('2024-03-01 12:30:45+00', false);
+    expect(result).toBe('2024-03-01 12:30:45');
+  });
+
+  test('removes negative offsets from strings when withTimezone is false', () => {
+    const result = normalizeTimestampString('2024-03-01T12:30:45-05:00', false);
     expect(result).toBe('2024-03-01 12:30:45');
   });
 
