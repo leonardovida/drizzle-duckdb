@@ -3,6 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { closeClientConnection, closeDuckDbInstance } from '../client.ts';
 import { drizzle } from '../index.ts';
 import { configureDuckLake, type DuckLakeConfig } from '../ducklake.ts';
 import { introspect } from '../introspect.ts';
@@ -252,17 +253,8 @@ async function main() {
       console.log(`Wrote metadata to ${options.outMeta}`);
     }
   } finally {
-    if (
-      'closeSync' in connection &&
-      typeof connection.closeSync === 'function'
-    ) {
-      connection.closeSync();
-    }
-    if ('closeSync' in instance && typeof instance.closeSync === 'function') {
-      instance.closeSync();
-    } else if ('close' in instance && typeof instance.close === 'function') {
-      await instance.close();
-    }
+    await closeClientConnection(connection);
+    await closeDuckDbInstance(instance);
   }
 }
 

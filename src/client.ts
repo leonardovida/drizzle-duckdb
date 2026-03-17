@@ -2,6 +2,7 @@ import {
   listValue,
   timestampValue,
   type DuckDBConnection,
+  type DuckDBInstance,
   type DuckDBPreparedStatement,
   type DuckDBValue,
 } from '@duckdb/node-api';
@@ -47,6 +48,15 @@ type PreparedStatementCache = {
 type ResultColumnsLike = {
   columnNames: () => string[];
   deduplicatedColumnNames?: () => string[];
+};
+
+type ClosableResource = {
+  close?: () => Promise<void> | void;
+  closeSync?: () => void;
+};
+
+type DisconnectableResource = ClosableResource & {
+  disconnectSync?: () => void;
 };
 
 const PREPARED_CACHE = Symbol.for('drizzle-duckdb:prepared-cache');
@@ -352,21 +362,31 @@ export async function closeClientConnection(
 ): Promise<void> {
   clearPreparedCache(connection);
 
-  if ('close' in connection && typeof connection.close === 'function') {
-    await connection.close();
+  await closeDuckDbResource(connection as DisconnectableResource, true);
+}
+
+export async function closeDuckDbInstance(
+  instance: DuckDBInstance
+): Promise<void> {
+  await closeDuckDbResource(instance as ClosableResource);
+}
+
+async function closeDuckDbResource(
+  resource: DisconnectableResource,
+  allowDisconnectSync = false
+): Promise<void> {
+  if (typeof resource.close === 'function') {
+    await resource.close();
     return;
   }
 
-  if ('closeSync' in connection && typeof connection.closeSync === 'function') {
-    connection.closeSync();
+  if (typeof resource.closeSync === 'function') {
+    resource.closeSync();
     return;
   }
 
-  if (
-    'disconnectSync' in connection &&
-    typeof connection.disconnectSync === 'function'
-  ) {
-    connection.disconnectSync();
+  if (allowDisconnectSync && typeof resource.disconnectSync === 'function') {
+    resource.disconnectSync();
   }
 }
 
