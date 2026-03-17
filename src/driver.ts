@@ -28,7 +28,11 @@ import type {
   ExecuteInBatchesOptions,
   RowData,
 } from './client.ts';
-import { closeClientConnection, isPool } from './client.ts';
+import {
+  closeClientConnection,
+  closeDuckDbInstance,
+  isPool,
+} from './client.ts';
 import {
   createDuckDBConnectionPool,
   type DuckDBPoolConfig,
@@ -376,15 +380,7 @@ export class DuckDBDatabase<
 
     try {
       if (this.$instance) {
-        const maybeClosable = this.$instance as unknown as {
-          close?: () => Promise<void> | void;
-          closeSync?: () => void;
-        };
-        if (typeof maybeClosable.close === 'function') {
-          await maybeClosable.close();
-        } else if (typeof maybeClosable.closeSync === 'function') {
-          maybeClosable.closeSync();
-        }
+        await closeDuckDbInstance(this.$instance);
       }
     } catch (error) {
       if (!firstError) {
