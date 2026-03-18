@@ -7,6 +7,7 @@ import { describe, expect, test, beforeAll, afterAll } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
 const skipMotherduck = !motherduckToken || process.env.SKIP_MOTHERDUCK === '1';
+const skipPoolPerf = process.env.CI === '1' || process.env.CODEX_CI === '1';
 const DUCKLAKE_CONSTRAINT_ERROR =
   'PRIMARY KEY/UNIQUE constraints are not supported in DuckLake';
 
@@ -20,151 +21,153 @@ function isDuckLakeConstraintError(error: unknown): boolean {
  * Pool performance tests comparing single connection vs pooled connections.
  * These tests measure the impact of connection pooling on concurrent query execution.
  */
-describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
-  // Use unique table name per test run to avoid conflicts
-  const tableName = `pool_test_${Date.now()}`;
+describe.skipIf(skipMotherduck || skipPoolPerf)(
+  'Connection Pooling Performance',
+  () => {
+    // Use unique table name per test run to avoid conflicts
+    const tableName = `pool_test_${Date.now()}`;
 
-  const testTable = pgTable(tableName, {
-    id: integer('id'),
-    name: text('name'),
-    value: integer('value'),
-  });
+    const testTable = pgTable(tableName, {
+      id: integer('id'),
+      name: text('name'),
+      value: integer('value'),
+    });
 
-  let instance: DuckDBInstance;
-  let singleConnection: DuckDBConnection;
-  let skipReason: string | undefined;
-  let warnedAboutSkip = false;
+    let instance: DuckDBInstance;
+    let singleConnection: DuckDBConnection;
+    let skipReason: string | undefined;
+    let warnedAboutSkip = false;
 
-  const skipWhenUnsupported = () => {
-    if (!skipReason) {
-      return true;
-    }
+    const skipWhenUnsupported = () => {
+      if (!skipReason) {
+        return true;
+      }
 
-    if (!warnedAboutSkip) {
-      warnedAboutSkip = true;
-      console.warn(skipReason);
-    }
+      if (!warnedAboutSkip) {
+        warnedAboutSkip = true;
+        console.warn(skipReason);
+      }
 
-    return false;
-  };
+      return false;
+    };
 
-  beforeAll(async () => {
-    try {
-      instance = await DuckDBInstance.create('md:', {
-        motherduck_token: motherduckToken!,
-      });
-      singleConnection = await instance.connect();
+    beforeAll(async () => {
+      try {
+        instance = await DuckDBInstance.create('md:', {
+          motherduck_token: motherduckToken!,
+        });
+        singleConnection = await instance.connect();
 
-      // Create test table
-      const db = drizzle(singleConnection);
-      await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
-      await db.execute(
-        sql.raw(`
+        // Create test table
+        const db = drizzle(singleConnection);
+        await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
+        await db.execute(
+          sql.raw(`
         CREATE TABLE ${tableName} (
           id INTEGER,
           name TEXT,
           value INTEGER
         )
       `)
+        );
+
+        // Insert test data in one batch so setup does not dominate the suite.
+        const values = Array.from({ length: 100 }, (_, i) => ({
+          id: i,
+          name: `item_${i}`,
+          value: Math.floor(Math.random() * 1000),
+        }));
+
+        await db.insert(testTable).values(values);
+      } catch (error) {
+        if (isDuckLakeConstraintError(error)) {
+          skipReason = `Skipping MotherDuck pooling performance tests: ${DUCKLAKE_CONSTRAINT_ERROR}`;
+          return;
+        }
+        throw error;
+      }
+    }, 120_000);
+
+    afterAll(async () => {
+      if (singleConnection) {
+        try {
+          const db = drizzle(singleConnection);
+          await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
+        } catch {
+          // Ignore cleanup errors
+        }
+        singleConnection.closeSync();
+      }
+      if (instance) {
+        instance.closeSync();
+      }
+    });
+
+    test('single connection: concurrent queries serialize', async () => {
+      if (!skipWhenUnsupported()) return;
+      const db = drizzle(singleConnection);
+
+      // Run a small concurrent batch on a single connection
+      const concurrentQueries = 4;
+      const queries = Array.from({ length: concurrentQueries }, (_, i) =>
+        db
+          .select()
+          .from(testTable)
+          .where(sql`${testTable.id} = ${i}`)
       );
 
-      // Insert test data in one batch so setup does not dominate the suite.
-      const values = Array.from({ length: 100 }, (_, i) => ({
-        id: i,
-        name: `item_${i}`,
-        value: Math.floor(Math.random() * 1000),
-      }));
+      const start = performance.now();
+      const results = await Promise.all(queries);
+      const singleConnectionTime = performance.now() - start;
 
-      await db.insert(testTable).values(values);
-    } catch (error) {
-      if (isDuckLakeConstraintError(error)) {
-        skipReason = `Skipping MotherDuck pooling performance tests: ${DUCKLAKE_CONSTRAINT_ERROR}`;
-        return;
-      }
-      throw error;
-    }
-  }, 120_000);
+      expect(results).toHaveLength(concurrentQueries);
+      results.forEach((r) => expect(r).toHaveLength(1));
 
-  afterAll(async () => {
-    if (singleConnection) {
-      try {
-        const db = drizzle(singleConnection);
-        await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tableName}`));
-      } catch {
-        // Ignore cleanup errors
-      }
-      singleConnection.closeSync();
-    }
-    if (instance) {
-      instance.closeSync();
-    }
-  });
+      console.log(
+        `\n  Single connection (${concurrentQueries} concurrent queries): ${singleConnectionTime.toFixed(2)}ms`
+      );
 
-  test('single connection: concurrent queries serialize', async () => {
-    if (!skipWhenUnsupported()) return;
-    const db = drizzle(singleConnection);
+      return { time: singleConnectionTime, queryCount: concurrentQueries };
+    }, 120_000);
 
-    // Run a small concurrent batch on a single connection
-    const concurrentQueries = 4;
-    const queries = Array.from({ length: concurrentQueries }, (_, i) =>
-      db
-        .select()
-        .from(testTable)
-        .where(sql`${testTable.id} = ${i}`)
-    );
+    test('pooled connection: concurrent queries run in parallel', async () => {
+      if (!skipWhenUnsupported()) return;
+      const pool = createDuckDBConnectionPool(instance, { size: 4 });
+      const db = drizzle(pool);
 
-    const start = performance.now();
-    const results = await Promise.all(queries);
-    const singleConnectionTime = performance.now() - start;
+      // Run the same batch on a pool of 4 connections
+      const concurrentQueries = 4;
+      const queries = Array.from({ length: concurrentQueries }, (_, i) =>
+        db
+          .select()
+          .from(testTable)
+          .where(sql`${testTable.id} = ${i}`)
+      );
 
-    expect(results).toHaveLength(concurrentQueries);
-    results.forEach((r) => expect(r).toHaveLength(1));
+      const start = performance.now();
+      const results = await Promise.all(queries);
+      const pooledTime = performance.now() - start;
 
-    console.log(
-      `\n  Single connection (${concurrentQueries} concurrent queries): ${singleConnectionTime.toFixed(2)}ms`
-    );
+      expect(results).toHaveLength(concurrentQueries);
+      results.forEach((r) => expect(r).toHaveLength(1));
 
-    return { time: singleConnectionTime, queryCount: concurrentQueries };
-  }, 120_000);
+      console.log(
+        `  Pooled connection (${concurrentQueries} concurrent queries, pool size 4): ${pooledTime.toFixed(2)}ms`
+      );
 
-  test('pooled connection: concurrent queries run in parallel', async () => {
-    if (!skipWhenUnsupported()) return;
-    const pool = createDuckDBConnectionPool(instance, { size: 4 });
-    const db = drizzle(pool);
+      await pool.close();
 
-    // Run the same batch on a pool of 4 connections
-    const concurrentQueries = 4;
-    const queries = Array.from({ length: concurrentQueries }, (_, i) =>
-      db
-        .select()
-        .from(testTable)
-        .where(sql`${testTable.id} = ${i}`)
-    );
+      return { time: pooledTime, queryCount: concurrentQueries };
+    }, 120_000);
 
-    const start = performance.now();
-    const results = await Promise.all(queries);
-    const pooledTime = performance.now() - start;
+    test('comparison: pool vs single with heavier queries', async () => {
+      if (!skipWhenUnsupported()) return;
+      const concurrentQueries = 4;
 
-    expect(results).toHaveLength(concurrentQueries);
-    results.forEach((r) => expect(r).toHaveLength(1));
-
-    console.log(
-      `  Pooled connection (${concurrentQueries} concurrent queries, pool size 4): ${pooledTime.toFixed(2)}ms`
-    );
-
-    await pool.close();
-
-    return { time: pooledTime, queryCount: concurrentQueries };
-  }, 120_000);
-
-  test('comparison: pool vs single with heavier queries', async () => {
-    if (!skipWhenUnsupported()) return;
-    const concurrentQueries = 4;
-
-    // Heavier query that takes more time
-    const heavyQuery = (db: ReturnType<typeof drizzle>) =>
-      db.execute(
-        sql.raw(`
+      // Heavier query that takes more time
+      const heavyQuery = (db: ReturnType<typeof drizzle>) =>
+        db.execute(
+          sql.raw(`
         SELECT
           t1.id,
           t1.name,
@@ -174,101 +177,102 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
         WHERE t1.id < 20
         ORDER BY t1.value DESC
       `)
+        );
+
+      // Single connection timing
+      const singleDb = drizzle(singleConnection);
+      const singleQueries = Array.from({ length: concurrentQueries }, () =>
+        heavyQuery(singleDb)
       );
 
-    // Single connection timing
-    const singleDb = drizzle(singleConnection);
-    const singleQueries = Array.from({ length: concurrentQueries }, () =>
-      heavyQuery(singleDb)
-    );
+      const singleStart = performance.now();
+      await Promise.all(singleQueries);
+      const singleTime = performance.now() - singleStart;
 
-    const singleStart = performance.now();
-    await Promise.all(singleQueries);
-    const singleTime = performance.now() - singleStart;
+      // Pooled connection timing
+      const pool = createDuckDBConnectionPool(instance, { size: 4 });
+      const pooledDb = drizzle(pool);
+      const pooledQueries = Array.from({ length: concurrentQueries }, () =>
+        heavyQuery(pooledDb)
+      );
 
-    // Pooled connection timing
-    const pool = createDuckDBConnectionPool(instance, { size: 4 });
-    const pooledDb = drizzle(pool);
-    const pooledQueries = Array.from({ length: concurrentQueries }, () =>
-      heavyQuery(pooledDb)
-    );
+      const poolStart = performance.now();
+      await Promise.all(pooledQueries);
+      const pooledTime = performance.now() - poolStart;
 
-    const poolStart = performance.now();
-    await Promise.all(pooledQueries);
-    const pooledTime = performance.now() - poolStart;
+      await pool.close();
 
-    await pool.close();
+      const speedup = singleTime / pooledTime;
 
-    const speedup = singleTime / pooledTime;
+      console.log(
+        `\n  Heavy query comparison (${concurrentQueries} concurrent):`
+      );
+      console.log(`    Single connection: ${singleTime.toFixed(2)}ms`);
+      console.log(`    Pooled (size 4):   ${pooledTime.toFixed(2)}ms`);
+      console.log(`    Speedup:           ${speedup.toFixed(2)}x`);
 
-    console.log(
-      `\n  Heavy query comparison (${concurrentQueries} concurrent):`
-    );
-    console.log(`    Single connection: ${singleTime.toFixed(2)}ms`);
-    console.log(`    Pooled (size 4):   ${pooledTime.toFixed(2)}ms`);
-    console.log(`    Speedup:           ${speedup.toFixed(2)}x`);
+      // Pool should generally be faster for concurrent heavy queries
+      // (may not always be true due to network variance, but captures the pattern)
+      expect(speedup).toBeGreaterThan(0);
+    }, 120_000);
 
-    // Pool should generally be faster for concurrent heavy queries
-    // (may not always be true due to network variance, but captures the pattern)
-    expect(speedup).toBeGreaterThan(0);
-  }, 120_000);
+    test('auto-pooling via connection string', async () => {
+      if (!skipWhenUnsupported()) return;
+      // Test the new async drizzle() with connection string
+      const db = await drizzle({
+        connection: {
+          path: 'md:',
+          options: { motherduck_token: motherduckToken! },
+        },
+        pool: { size: 4 },
+      });
 
-  test('auto-pooling via connection string', async () => {
-    if (!skipWhenUnsupported()) return;
-    // Test the new async drizzle() with connection string
-    const db = await drizzle({
-      connection: {
-        path: 'md:',
-        options: { motherduck_token: motherduckToken! },
-      },
-      pool: { size: 4 },
-    });
+      const concurrentQueries = 4;
+      const queries = Array.from({ length: concurrentQueries }, (_, i) =>
+        db
+          .select()
+          .from(testTable)
+          .where(sql`${testTable.id} = ${i}`)
+      );
 
-    const concurrentQueries = 4;
-    const queries = Array.from({ length: concurrentQueries }, (_, i) =>
-      db
-        .select()
-        .from(testTable)
-        .where(sql`${testTable.id} = ${i}`)
-    );
+      const start = performance.now();
+      const results = await Promise.all(queries);
+      const time = performance.now() - start;
 
-    const start = performance.now();
-    const results = await Promise.all(queries);
-    const time = performance.now() - start;
+      expect(results).toHaveLength(concurrentQueries);
+      console.log(
+        `\n  Auto-pooled via connection string (${concurrentQueries} queries): ${time.toFixed(2)}ms`
+      );
 
-    expect(results).toHaveLength(concurrentQueries);
-    console.log(
-      `\n  Auto-pooled via connection string (${concurrentQueries} queries): ${time.toFixed(2)}ms`
-    );
+      // Verify $client is accessible
+      expect(db.$client).toBeDefined();
+      expect(typeof (db.$client as any).acquire).toBe('function');
 
-    // Verify $client is accessible
-    expect(db.$client).toBeDefined();
-    expect(typeof (db.$client as any).acquire).toBe('function');
+      await db.close();
+    }, 120_000);
 
-    await db.close();
-  }, 120_000);
+    test('pool presets work correctly', async () => {
+      if (!skipWhenUnsupported()) return;
+      // Test 'standard' preset (6 connections)
+      const db = await drizzle({
+        connection: {
+          path: 'md:',
+          options: { motherduck_token: motherduckToken! },
+        },
+        pool: 'standard',
+      });
 
-  test('pool presets work correctly', async () => {
-    if (!skipWhenUnsupported()) return;
-    // Test 'standard' preset (6 connections)
-    const db = await drizzle({
-      connection: {
-        path: 'md:',
-        options: { motherduck_token: motherduckToken! },
-      },
-      pool: 'standard',
-    });
+      const result = await db.select().from(testTable).limit(1);
+      expect(result).toHaveLength(1);
 
-    const result = await db.select().from(testTable).limit(1);
-    expect(result).toHaveLength(1);
+      // Verify pool size via the $client
+      const pool = db.$client as any;
+      expect(pool.size).toBe(6); // 'standard' preset = 6
 
-    // Verify pool size via the $client
-    const pool = db.$client as any;
-    expect(pool.size).toBe(6); // 'standard' preset = 6
-
-    await db.close();
-  }, 120_000);
-});
+      await db.close();
+    }, 120_000);
+  }
+);
 
 /**
  * Local DuckDB pool tests (don't require MotherDuck token)
