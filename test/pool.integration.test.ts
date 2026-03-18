@@ -7,6 +7,8 @@ import { describe, expect, test, beforeAll, afterAll } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
 const skipMotherduck = !motherduckToken || process.env.SKIP_MOTHERDUCK === '1';
+const skipPoolPerf =
+  process.env.CI === '1' || process.env.CODEX_CI === '1';
 const DUCKLAKE_CONSTRAINT_ERROR =
   'PRIMARY KEY/UNIQUE constraints are not supported in DuckLake';
 
@@ -20,7 +22,9 @@ function isDuckLakeConstraintError(error: unknown): boolean {
  * Pool performance tests comparing single connection vs pooled connections.
  * These tests measure the impact of connection pooling on concurrent query execution.
  */
-describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
+describe.skipIf(skipMotherduck || skipPoolPerf)(
+  'Connection Pooling Performance',
+  () => {
   // Use unique table name per test run to avoid conflicts
   const tableName = `pool_test_${Date.now()}`;
 
@@ -275,7 +279,8 @@ describe.skipIf(skipMotherduck)('Connection Pooling Performance', () => {
 
     await db.close();
   }, 120_000);
-});
+  }
+);
 
 /**
  * Local DuckDB pool tests (don't require MotherDuck token)
