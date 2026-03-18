@@ -88,6 +88,21 @@ describe('executeInBatches', () => {
     expect(chunks).toEqual([[{ id: 1 }, { id: 2 }], [{ id: 3 }]]);
   });
 
+  test('falls back to the default chunk size for non-positive rowsPerChunk', async () => {
+    const client = makeClient({
+      rows: [[1], [2], [3]],
+    });
+    const chunks: Array<Array<{ id: number }>> = [];
+
+    for await (const chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: 0,
+    })) {
+      chunks.push(chunk as Array<{ id: number }>);
+    }
+
+    expect(chunks).toEqual([[{ id: 1 }, { id: 2 }, { id: 3 }]]);
+  });
+
   test('closes stream when consumer exits early', async () => {
     let closeCalls = 0;
     const client = makeClient({

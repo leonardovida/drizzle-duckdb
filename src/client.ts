@@ -152,6 +152,12 @@ function toNodeApiValue(value: unknown): DuckDBValue {
   return value as DuckDBValue;
 }
 
+function toNodeApiValues(params: unknown[]): DuckDBValue[] | undefined {
+  return params.length > 0
+    ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
+    : undefined;
+}
+
 function deduplicateColumns(columns: string[]): string[] {
   const counts = new Map<string, number>();
   let hasDuplicates = false;
@@ -300,10 +306,7 @@ async function materializeRows(
     }
   }
 
-  const values =
-    params.length > 0
-      ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
-      : undefined;
+  const values = toNodeApiValues(params);
 
   const connection = client as DuckDBConnection;
 
@@ -428,6 +431,14 @@ export interface ExecuteBatchesRawChunk {
   rows: unknown[][];
 }
 
+function resolveRowsPerChunk(
+  options: ExecuteInBatchesOptions | undefined
+): number {
+  return options?.rowsPerChunk && options.rowsPerChunk > 0
+    ? options.rowsPerChunk
+    : 100_000;
+}
+
 /**
  * Stream results from DuckDB in batches to avoid fully materializing rows in JS.
  */
@@ -447,14 +458,8 @@ export async function* executeInBatches(
     }
   }
 
-  const rowsPerChunk =
-    options.rowsPerChunk && options.rowsPerChunk > 0
-      ? options.rowsPerChunk
-      : 100_000;
-  const values =
-    params.length > 0
-      ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
-      : undefined;
+  const rowsPerChunk = resolveRowsPerChunk(options);
+  const values = toNodeApiValues(params);
 
   const result = (await client.stream(query, values)) as StreamResultLike;
   const columns = resolveResultColumns(result);
@@ -497,15 +502,8 @@ export async function* executeInBatchesRaw(
     }
   }
 
-  const rowsPerChunk =
-    options.rowsPerChunk && options.rowsPerChunk > 0
-      ? options.rowsPerChunk
-      : 100_000;
-
-  const values =
-    params.length > 0
-      ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
-      : undefined;
+  const rowsPerChunk = resolveRowsPerChunk(options);
+  const values = toNodeApiValues(params);
 
   const result = (await client.stream(query, values)) as StreamResultLike;
   const columns = resolveResultColumns(result);
@@ -549,10 +547,7 @@ export async function executeArrowOnClient(
     }
   }
 
-  const values =
-    params.length > 0
-      ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
-      : undefined;
+  const values = toNodeApiValues(params);
   const result = await client.run(query, values);
 
   // Runtime detection for Arrow API support (optional method, not in base type)
