@@ -261,6 +261,14 @@ describe('needsTransformation', () => {
       false
     );
   });
+
+  it('returns false for identifiers that only contain keywords as substrings', () => {
+    expect(
+      needsTransformation(
+        'SELECT updated_at FROM users WHERE deleted_at IS NULL'
+      )
+    ).toBe(false);
+  });
 });
 
 describe('transformation cache', () => {

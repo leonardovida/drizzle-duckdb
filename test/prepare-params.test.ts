@@ -12,6 +12,16 @@ test('prepareParams coerces Postgres array literals', () => {
   expect(warn).toHaveBeenCalledTimes(1);
 });
 
+test('prepareParams coerces Postgres array literals with leading newlines', () => {
+  const warn = vi.fn();
+  const result = prepareParams(['\n{1,2,3}'], {
+    warnOnStringArrayLiteral: warn,
+  });
+
+  expect(result[0]).toEqual([1, 2, 3]);
+  expect(warn).toHaveBeenCalledTimes(1);
+});
+
 test('prepareParams rejects string literals when configured', () => {
   expect(() =>
     prepareParams(['{hello,world}'], { rejectStringArrayLiterals: true })
