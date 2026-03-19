@@ -61,8 +61,17 @@ function getCachedOrTransform(
 
 const DEBUG_ENV = 'DRIZZLE_DUCKDB_DEBUG_AST';
 
+const ARRAY_OPERATOR_PATTERN = /@>|<@|&&/;
+const JOIN_PATTERN = /\bjoin\b/i;
+const UNION_PATTERN = /\bunion\b/i;
+const INTERSECT_PATTERN = /\bintersect\b/i;
+const EXCEPT_PATTERN = /\bexcept\b/i;
+const GENERATE_SERIES_PATTERN = /\bgenerate_series\b/i;
+const UPDATE_PATTERN = /\bupdate\b/i;
+const DELETE_PATTERN = /\bdelete\b/i;
+
 function hasJoin(query: string): boolean {
-  return /\bjoin\b/i.test(query);
+  return JOIN_PATTERN.test(query);
 }
 
 function debugLog(message: string, payload?: unknown): void {
@@ -74,14 +83,14 @@ function debugLog(message: string, payload?: unknown): void {
 
 export function transformSQL(query: string): TransformResult {
   const needsArrayTransform =
-    query.includes('@>') || query.includes('<@') || query.includes('&&');
+    ARRAY_OPERATOR_PATTERN.test(query);
   const needsJoinTransform =
-    hasJoin(query) || /\bupdate\b/i.test(query) || /\bdelete\b/i.test(query);
+    hasJoin(query) || UPDATE_PATTERN.test(query) || DELETE_PATTERN.test(query);
   const needsUnionTransform =
-    /\bunion\b/i.test(query) ||
-    /\bintersect\b/i.test(query) ||
-    /\bexcept\b/i.test(query);
-  const needsGenerateSeriesTransform = /\bgenerate_series\b/i.test(query);
+    UNION_PATTERN.test(query) ||
+    INTERSECT_PATTERN.test(query) ||
+    EXCEPT_PATTERN.test(query);
+  const needsGenerateSeriesTransform = GENERATE_SERIES_PATTERN.test(query);
 
   if (
     !needsArrayTransform &&
@@ -149,18 +158,15 @@ export function getTransformCacheStats(): { size: number; maxSize: number } {
 }
 
 export function needsTransformation(query: string): boolean {
-  const lower = query.toLowerCase();
   return (
-    query.includes('@>') ||
-    query.includes('<@') ||
-    query.includes('&&') ||
-    lower.includes('join') ||
-    lower.includes('union') ||
-    lower.includes('intersect') ||
-    lower.includes('except') ||
-    lower.includes('generate_series') ||
-    lower.includes('update') ||
-    lower.includes('delete')
+    ARRAY_OPERATOR_PATTERN.test(query) ||
+    JOIN_PATTERN.test(query) ||
+    UNION_PATTERN.test(query) ||
+    INTERSECT_PATTERN.test(query) ||
+    EXCEPT_PATTERN.test(query) ||
+    GENERATE_SERIES_PATTERN.test(query) ||
+    UPDATE_PATTERN.test(query) ||
+    DELETE_PATTERN.test(query)
   );
 }
 

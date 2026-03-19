@@ -86,29 +86,19 @@ export function prepareParams(
 ): unknown[] {
   return params.map((param) => {
     if (typeof param === 'string' && param.length > 0) {
-      const firstChar = param[0];
-      const maybeArrayLiteral =
-        firstChar === '{' ||
-        firstChar === '[' ||
-        firstChar === ' ' ||
-        firstChar === '\t';
+      const trimmed = param.trim();
 
-      if (maybeArrayLiteral) {
-        const trimmed =
-          firstChar === '{' || firstChar === '[' ? param : param.trim();
-
-        if (trimmed && isPgArrayLiteral(trimmed)) {
-          if (options.rejectStringArrayLiterals) {
-            throw new Error(
-              'Stringified array literals are not supported. Use duckDbList()/duckDbArray() or pass native arrays.'
-            );
-          }
-
-          if (options.warnOnStringArrayLiteral) {
-            options.warnOnStringArrayLiteral();
-          }
-          return parsePgArrayLiteral(trimmed);
+      if (trimmed && isPgArrayLiteral(trimmed)) {
+        if (options.rejectStringArrayLiterals) {
+          throw new Error(
+            'Stringified array literals are not supported. Use duckDbList()/duckDbArray() or pass native arrays.'
+          );
         }
+
+        if (options.warnOnStringArrayLiteral) {
+          options.warnOnStringArrayLiteral();
+        }
+        return parsePgArrayLiteral(trimmed);
       }
     }
     return param;
