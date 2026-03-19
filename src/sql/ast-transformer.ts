@@ -82,8 +82,7 @@ function debugLog(message: string, payload?: unknown): void {
 }
 
 export function transformSQL(query: string): TransformResult {
-  const needsArrayTransform =
-    ARRAY_OPERATOR_PATTERN.test(query);
+  const needsArrayTransform = ARRAY_OPERATOR_PATTERN.test(query);
   const needsJoinTransform =
     hasJoin(query) || UPDATE_PATTERN.test(query) || DELETE_PATTERN.test(query);
   const needsUnionTransform =
