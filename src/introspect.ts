@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { RowData } from './client.ts';
 import type { DuckDBDatabase } from './driver.ts';
 
@@ -180,23 +180,37 @@ async function resolveSchemas(
     .filter((name) => !SYSTEM_SCHEMAS.has(name));
 }
 
+function buildOptionalEqualityFilter(
+  columnName: string,
+  value: string | null
+): SQL {
+  return value ? sql`${sql.raw(columnName)} = ${value}` : sql`1 = 1`;
+}
+
+function buildSchemaFilter(columnName: string, schemas: string[]): SQL {
+  if (schemas.length === 0) {
+    return sql`1 = 0`;
+  }
+
+  const schemaFragments = schemas.map((schema) => sql`${schema}`);
+  return sql`${sql.raw(columnName)} IN (${sql.join(
+    schemaFragments,
+    sql.raw(', ')
+  )})`;
+}
+
 async function loadTables(
   db: DuckDBDatabase,
   database: string | null,
   schemas: string[],
   includeViews: boolean
 ): Promise<DuckDbTableRow[]> {
-  const schemaFragments = schemas.map((schema) => sql`${schema}`);
-  const databaseFilter = database
-    ? sql`table_catalog = ${database}`
-    : sql`1 = 1`;
-
   return await db.execute<DuckDbTableRow>(
     sql`
       SELECT table_schema as schema_name, table_name, table_type
       FROM information_schema.tables
-      WHERE ${databaseFilter}
-      AND table_schema IN (${sql.join(schemaFragments, sql.raw(', '))})
+      WHERE ${buildOptionalEqualityFilter('table_catalog', database)}
+      AND ${buildSchemaFilter('table_schema', schemas)}
       AND ${includeViews ? sql`1 = 1` : sql`table_type = 'BASE TABLE'`}
       ORDER BY table_schema, table_name
     `
@@ -208,11 +222,6 @@ async function loadColumns(
   database: string | null,
   schemas: string[]
 ): Promise<DuckDbColumnRow[]> {
-  const schemaFragments = schemas.map((schema) => sql`${schema}`);
-  const databaseFilter = database
-    ? sql`database_name = ${database}`
-    : sql`1 = 1`;
-
   return await db.execute<DuckDbColumnRow>(
     sql`
       SELECT
@@ -228,8 +237,8 @@ async function loadColumns(
         numeric_scale,
         internal
       FROM duckdb_columns()
-      WHERE ${databaseFilter}
-      AND schema_name IN (${sql.join(schemaFragments, sql.raw(', '))})
+      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY schema_name, table_name, column_index
     `
   );
@@ -240,11 +249,6 @@ async function loadConstraints(
   database: string | null,
   schemas: string[]
 ): Promise<DuckDbConstraintRow[]> {
-  const schemaFragments = schemas.map((schema) => sql`${schema}`);
-  const databaseFilter = database
-    ? sql`database_name = ${database}`
-    : sql`1 = 1`;
-
   return await db.execute<DuckDbConstraintRow>(
     sql`
       SELECT
@@ -257,8 +261,8 @@ async function loadConstraints(
         referenced_table,
         referenced_column_names
       FROM duckdb_constraints()
-      WHERE ${databaseFilter}
-      AND schema_name IN (${sql.join(schemaFragments, sql.raw(', '))})
+      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY schema_name, table_name, constraint_index
     `
   );
@@ -269,11 +273,6 @@ async function loadIndexes(
   database: string | null,
   schemas: string[]
 ): Promise<DuckDbIndexRow[]> {
-  const schemaFragments = schemas.map((schema) => sql`${schema}`);
-  const databaseFilter = database
-    ? sql`database_name = ${database}`
-    : sql`1 = 1`;
-
   return await db.execute<DuckDbIndexRow>(
     sql`
       SELECT
@@ -283,8 +282,8 @@ async function loadIndexes(
         is_unique,
         expressions
       FROM duckdb_indexes()
-      WHERE ${databaseFilter}
-      AND schema_name IN (${sql.join(schemaFragments, sql.raw(', '))})
+      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY schema_name, table_name, index_name
     `
   );
