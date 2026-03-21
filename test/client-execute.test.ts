@@ -12,6 +12,7 @@ function makeClient(options: {
   rows?: unknown[][];
   columns?: string[];
   deduplicatedColumns?: string[];
+  onDeduplicatedColumns?: () => void;
   onStreamClose?: () => void;
 }): DuckDBClientLike {
   const {
@@ -41,7 +42,10 @@ function makeClient(options: {
         deduplicatedColumnNames:
           deduplicatedColumns === undefined
             ? undefined
-            : () => deduplicatedColumns,
+            : () => {
+                options.onDeduplicatedColumns?.();
+                return deduplicatedColumns;
+              },
         async *yieldRowsJs() {
           yield rows;
         },
@@ -124,10 +128,14 @@ describe('executeInBatches', () => {
 
 describe('executeInBatchesRaw', () => {
   test('uses deduplicatedColumnNames when provided', async () => {
+    let calls = 0;
     const client = makeClient({
       rows: [[1, 2]],
       columns: ['id', 'id'],
       deduplicatedColumns: ['id', 'id_1'],
+      onDeduplicatedColumns: () => {
+        calls += 1;
+      },
     });
     const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
 
@@ -138,6 +146,7 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(chunks).toEqual([{ columns: ['id', 'id_1'], rows: [[1, 2]] }]);
+    expect(calls).toBe(1);
   });
 
   test('deduplicates columnNames when deduplicatedColumnNames is unavailable', async () => {
