@@ -30,6 +30,22 @@ describe('DuckLake helpers', () => {
     );
   });
 
+  test('buildDuckLakeAttachSql escapes identifiers and skips blank strings', () => {
+    const sql = buildDuckLakeAttachSql({
+      catalog: "md:meta'db",
+      alias: 'lake"name',
+      attachOptions: {
+        dataPath: '',
+        metadataCatalog: "cat'alog",
+        readOnly: false,
+      },
+    });
+
+    expect(sql).toBe(
+      `ATTACH 'ducklake:md:meta''db' AS "lake""name" (METADATA_CATALOG='cat''alog', READ_ONLY=false)`
+    );
+  });
+
   test('isDuckDbFileCatalog detects local file catalogs', () => {
     expect(isDuckDbFileCatalog('./ducklake.duckdb')).toBe(true);
     expect(isDuckDbFileCatalog('ducklake:./ducklake.duckdb')).toBe(true);
