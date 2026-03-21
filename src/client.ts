@@ -241,13 +241,11 @@ async function getOrPrepareStatement(
 }
 
 function resolveResultColumns(result: ResultColumnsLike): string[] {
-  const baseColumns =
-    typeof result.deduplicatedColumnNames === 'function'
-      ? result.deduplicatedColumnNames()
-      : result.columnNames();
-  return typeof result.deduplicatedColumnNames === 'function'
-    ? baseColumns
-    : deduplicateColumns(baseColumns);
+  if (typeof result.deduplicatedColumnNames === 'function') {
+    return result.deduplicatedColumnNames();
+  }
+
+  return deduplicateColumns(result.columnNames());
 }
 
 async function materializeResultRows(
