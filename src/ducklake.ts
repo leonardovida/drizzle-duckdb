@@ -43,6 +43,16 @@ export interface DuckLakePoolResolution {
 }
 
 const DEFAULT_ALIAS = 'ducklake';
+const DUCKLAKE_ATTACH_OPTION_NAMES = {
+  createIfNotExists: 'CREATE_IF_NOT_EXISTS',
+  dataInliningRowLimit: 'DATA_INLINING_ROW_LIMIT',
+  dataPath: 'DATA_PATH',
+  encrypted: 'ENCRYPTED',
+  metaParameterName: 'META_PARAMETER_NAME',
+  metadataCatalog: 'METADATA_CATALOG',
+  overrideDataPath: 'OVERRIDE_DATA_PATH',
+  readOnly: 'READ_ONLY',
+} as const satisfies Record<keyof DuckLakeAttachOptions, string>;
 
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
@@ -91,53 +101,34 @@ function optionValueToSql(value: string | number | boolean): string {
   return quoteString(value);
 }
 
+function buildDuckLakeAttachOptionsSql(
+  attachOptions?: DuckLakeAttachOptions
+): string[] {
+  if (!attachOptions) {
+    return [];
+  }
+
+  const options: string[] = [];
+
+  for (const [key, optionName] of Object.entries(
+    DUCKLAKE_ATTACH_OPTION_NAMES
+  ) as [keyof DuckLakeAttachOptions, string][]) {
+    const value = attachOptions[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value === 'string' && value.length === 0) {
+      continue;
+    }
+    options.push(`${optionName}=${optionValueToSql(value)}`);
+  }
+
+  return options;
+}
+
 export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
   const normalized = normalizeDuckLakeConfig(config);
-  const options: string[] = [];
-  const attachOptions = normalized.attachOptions;
-
-  if (attachOptions) {
-    if (attachOptions.createIfNotExists !== undefined) {
-      options.push(
-        `CREATE_IF_NOT_EXISTS=${optionValueToSql(
-          attachOptions.createIfNotExists
-        )}`
-      );
-    }
-    if (attachOptions.dataInliningRowLimit !== undefined) {
-      options.push(
-        `DATA_INLINING_ROW_LIMIT=${optionValueToSql(
-          attachOptions.dataInliningRowLimit
-        )}`
-      );
-    }
-    if (attachOptions.dataPath) {
-      options.push(`DATA_PATH=${optionValueToSql(attachOptions.dataPath)}`);
-    }
-    if (attachOptions.encrypted !== undefined) {
-      options.push(`ENCRYPTED=${optionValueToSql(attachOptions.encrypted)}`);
-    }
-    if (attachOptions.metaParameterName) {
-      options.push(
-        `META_PARAMETER_NAME=${optionValueToSql(
-          attachOptions.metaParameterName
-        )}`
-      );
-    }
-    if (attachOptions.metadataCatalog) {
-      options.push(
-        `METADATA_CATALOG=${optionValueToSql(attachOptions.metadataCatalog)}`
-      );
-    }
-    if (attachOptions.overrideDataPath !== undefined) {
-      options.push(
-        `OVERRIDE_DATA_PATH=${optionValueToSql(attachOptions.overrideDataPath)}`
-      );
-    }
-    if (attachOptions.readOnly !== undefined) {
-      options.push(`READ_ONLY=${optionValueToSql(attachOptions.readOnly)}`);
-    }
-  }
+  const options = buildDuckLakeAttachOptionsSql(normalized.attachOptions);
 
   const attachSql = [
     `ATTACH ${quoteString(normalized.catalog)} AS ${quoteIdentifier(
