@@ -12,6 +12,7 @@ import {
   type AnyDuckDBValueWrapper,
 } from './value-wrappers.ts';
 import type { PreparedStatementCacheConfig } from './options.ts';
+import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
 
 export type DuckDBClientLike = DuckDBConnection | DuckDBConnectionPool;
 export type RowData = Record<string, unknown>;
@@ -64,20 +65,6 @@ const PREPARED_CACHE = Symbol.for('drizzle-duckdb:prepared-cache');
 export interface PrepareParamsOptions {
   rejectStringArrayLiterals?: boolean;
   warnOnStringArrayLiteral?: () => void;
-}
-
-function isPgArrayLiteral(value: string): boolean {
-  return value.startsWith('{') && value.endsWith('}');
-}
-
-function parsePgArrayLiteral(value: string): unknown {
-  const json = value.replace(/{/g, '[').replace(/}/g, ']');
-
-  try {
-    return JSON.parse(json);
-  } catch {
-    return value;
-  }
 }
 
 export function prepareParams(

@@ -15,6 +15,9 @@ import {
   type JsonValueWrapper,
   type TimestampValueWrapper,
 } from './value-wrappers-core.ts';
+import { coerceArrayString as parseArrayString } from './array-literals.ts';
+
+export { coerceArrayString } from './array-literals.ts';
 
 type IntColType =
   | 'SMALLINT'
@@ -65,27 +68,25 @@ type StructColType = `STRUCT (${string})`;
 
 type Primitive = AnyColType | ListColType | ArrayColType | StructColType;
 
-export function coerceArrayString(value: string): unknown[] | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
+type ArrayDriverValue =
+  | unknown[]
+  | string
+  | ListValueWrapper
+  | ArrayValueWrapper;
+
+function coerceArrayDriverValue<TData>(value: ArrayDriverValue): TData[] {
+  if (Array.isArray(value)) {
+    return value as TData[];
   }
-  if (trimmed.startsWith('[')) {
-    try {
-      return JSON.parse(trimmed) as unknown[];
-    } catch {
-      return undefined;
+
+  if (typeof value === 'string') {
+    const parsed = parseArrayString(value);
+    if (parsed !== undefined) {
+      return parsed as TData[];
     }
   }
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    try {
-      const json = trimmed.replace(/{/g, '[').replace(/}/g, ']');
-      return JSON.parse(json) as unknown[];
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
+
+  return value as unknown as TData[];
 }
 
 export function formatLiteral(value: unknown, typeHint?: string): string {
@@ -185,16 +186,7 @@ export const duckDbList = <TData = unknown>(
       return wrapList(value, elementType);
     },
     fromDriver(value: unknown[] | string | ListValueWrapper): TData[] {
-      if (Array.isArray(value)) {
-        return value as TData[];
-      }
-      if (typeof value === 'string') {
-        const parsed = coerceArrayString(value);
-        if (parsed !== undefined) {
-          return parsed as TData[];
-        }
-      }
-      return value as unknown as TData[];
+      return coerceArrayDriverValue(value);
     },
   })(name);
 
@@ -216,16 +208,7 @@ export const duckDbArray = <TData = unknown>(
       return wrapArray(value, elementType, fixedLength);
     },
     fromDriver(value: unknown[] | string | ArrayValueWrapper): TData[] {
-      if (Array.isArray(value)) {
-        return value as TData[];
-      }
-      if (typeof value === 'string') {
-        const parsed = coerceArrayString(value);
-        if (parsed !== undefined) {
-          return parsed as TData[];
-        }
-      }
-      return value as unknown as TData[];
+      return coerceArrayDriverValue(value);
     },
   })(name);
 

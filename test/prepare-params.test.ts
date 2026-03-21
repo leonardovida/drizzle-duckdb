@@ -36,3 +36,12 @@ test('prepareParams leaves plain strings untouched', () => {
   expect(result).toEqual(input);
   expect(warn).not.toHaveBeenCalled();
 });
+
+test('prepareParams preserves unparsable Postgres array literals', () => {
+  const warn = vi.fn();
+  const input = ['{hello,world}'];
+  const result = prepareParams(input, { warnOnStringArrayLiteral: warn });
+
+  expect(result).toEqual(input);
+  expect(warn).toHaveBeenCalledTimes(1);
+});
