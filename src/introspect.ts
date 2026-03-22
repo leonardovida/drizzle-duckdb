@@ -108,8 +108,7 @@ type ImportBuckets = {
   local: Set<string>;
 };
 
-export const DEFAULT_IMPORT_BASE =
-  '@duckdbfan/drizzle-duckdb/helpers';
+export const DEFAULT_IMPORT_BASE = '@duckdbfan/drizzle-duckdb/helpers';
 
 export async function introspect(
   db: DuckDBDatabase,

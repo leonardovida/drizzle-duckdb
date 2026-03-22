@@ -3,7 +3,7 @@
  *
  * Demonstrates the simplest way to connect to MotherDuck with automatic pooling.
  */
-import { drizzle } from '@leonardovida-md/drizzle-neo-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { sql } from 'drizzle-orm';
 import {
   doublePrecision,
