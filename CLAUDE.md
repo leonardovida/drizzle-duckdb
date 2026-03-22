@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is `@leonardovida-md/drizzle-neo-duckdb`, a DuckDB dialect adapter for drizzle-orm. It builds on Drizzle's Postgres driver surface but targets DuckDB, providing query building, migrations, and type inference for DuckDB's Node runtime (`@duckdb/node-api`).
+This is `@duckdbfan/drizzle-duckdb`, a DuckDB dialect adapter for drizzle-orm. It builds on Drizzle's Postgres driver surface but targets DuckDB, providing query building, migrations, and type inference for DuckDB's Node runtime (`@duckdb/node-api`). The legacy package name `@leonardovida-md/drizzle-neo-duckdb` remains published for backward compatibility.
 
 ## Commands
 

@@ -3,9 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 describe('client-safe helpers entry', () => {
   it('uses helpers import base for introspection', async () => {
     const { DEFAULT_IMPORT_BASE } = await import('../src/introspect.ts');
-    expect(DEFAULT_IMPORT_BASE).toBe(
-      '@leonardovida-md/drizzle-neo-duckdb/helpers'
-    );
+    expect(DEFAULT_IMPORT_BASE).toBe('@duckdbfan/drizzle-duckdb/helpers');
   });
 
   it('helpers entry stays free of native binding imports', async () => {
