@@ -120,7 +120,9 @@ export function createDuckDBConnectionPool(
     return nextMeta;
   };
 
-  const dropConnection = async (connection: DuckDBConnection): Promise<void> => {
+  const dropConnection = async (
+    connection: DuckDBConnection
+  ): Promise<void> => {
     await closeClientConnection(connection);
     decrementTotal();
     metadata.delete(connection);
