@@ -37,7 +37,7 @@ test('generated schema type-checks with tsc', async () => {
   fs.mkdirSync(tmpDir, { recursive: true });
   const schemaPath = path.join(tmpDir, 'tc-schema.ts');
 
-  const importBasePath = '@leonardovida-md/drizzle-neo-duckdb';
+  const importBasePath = '@duckdbfan/drizzle-duckdb';
 
   const result = await introspect(db, {
     schemas: ['tc'],
@@ -59,7 +59,7 @@ test('generated schema type-checks with tsc', async () => {
       // baseUrl is required for TS to apply `paths` mappings below
       baseUrl: '.',
       paths: {
-        '@leonardovida-md/drizzle-neo-duckdb': [
+        '@duckdbfan/drizzle-duckdb': [
           path.relative(tmpDir, path.join(process.cwd(), 'src', 'index.ts')),
           path.relative(tmpDir, path.join(process.cwd(), 'dist', 'index.d.ts')),
         ],

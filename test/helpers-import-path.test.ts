@@ -4,7 +4,7 @@ describe('client-safe helpers entry', () => {
   it('uses helpers import base for introspection', async () => {
     const { DEFAULT_IMPORT_BASE } = await import('../src/introspect.ts');
     expect(DEFAULT_IMPORT_BASE).toBe(
-      '@leonardovida-md/drizzle-neo-duckdb/helpers'
+      '@duckdbfan/drizzle-duckdb/helpers'
     );
   });
 

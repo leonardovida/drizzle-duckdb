@@ -109,7 +109,7 @@ type ImportBuckets = {
 };
 
 export const DEFAULT_IMPORT_BASE =
-  '@leonardovida-md/drizzle-neo-duckdb/helpers';
+  '@duckdbfan/drizzle-duckdb/helpers';
 
 export async function introspect(
   db: DuckDBDatabase,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
  * Publishes the package under both npm scopes:
- * - @leonardovida-md/drizzle-neo-duckdb (original)
- * - @duckdbfan/drizzle-duckdb (new)
+ * - @duckdbfan/drizzle-duckdb (canonical)
+ * - @leonardovida-md/drizzle-neo-duckdb (legacy)
  *
  * Usage: bun run publish:dual [--dry-run]
  */
@@ -11,8 +11,8 @@ import { $ } from 'bun';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const PACKAGE_JSON_PATH = new URL('../package.json', import.meta.url).pathname;
-const ORIGINAL_NAME = '@leonardovida-md/drizzle-neo-duckdb';
-const NEW_NAME = '@duckdbfan/drizzle-duckdb';
+const CANONICAL_NAME = '@duckdbfan/drizzle-duckdb';
+const LEGACY_NAME = '@leonardovida-md/drizzle-neo-duckdb';
 
 const dryRun = process.argv.includes('--dry-run');
 
@@ -44,41 +44,46 @@ async function publish(name: string) {
 }
 
 async function main() {
+  let originalPkg: Record<string, unknown> | undefined;
+  let publishFailed = false;
+
   if (dryRun) {
     console.log('Running in dry-run mode (no actual publishing)\n');
   }
 
-  // Read original package.json
-  const originalPkg = await readPackageJson();
-  const version = originalPkg.version;
+  try {
+    originalPkg = await readPackageJson();
+    const version = originalPkg.version;
 
-  console.log(`Publishing version ${version} to both scopes...`);
+    console.log(`Publishing version ${version} to both scopes...`);
 
-  // Ensure we're built
-  console.log('\nBuilding...');
-  if (!dryRun) {
-    await $`bun run build`.quiet();
+    // Ensure we're built
+    console.log('\nBuilding...');
+    if (!dryRun) {
+      await $`bun run build`.quiet();
+    }
+
+    // Publish the canonical package first.
+    await writePackageJson({ ...originalPkg, name: CANONICAL_NAME });
+    const canonicalResult = await publish(CANONICAL_NAME);
+
+    // Publish the legacy package name for backwards compatibility.
+    await writePackageJson({ ...originalPkg, name: LEGACY_NAME });
+    const legacyResult = await publish(LEGACY_NAME);
+
+    console.log('\n--- Summary ---');
+    console.log(`${CANONICAL_NAME}: ${canonicalResult ? 'success' : 'failed'}`);
+    console.log(`${LEGACY_NAME}: ${legacyResult ? 'success' : 'failed'}`);
+
+    publishFailed = !canonicalResult || !legacyResult;
+  } finally {
+    if (originalPkg) {
+      await writePackageJson(originalPkg);
+    }
   }
 
-  // Publish under original name first
-  const pkg1 = { ...originalPkg, name: ORIGINAL_NAME };
-  await writePackageJson(pkg1);
-  const result1 = await publish(ORIGINAL_NAME);
-
-  // Publish under new name
-  const pkg2 = { ...originalPkg, name: NEW_NAME };
-  await writePackageJson(pkg2);
-  const result2 = await publish(NEW_NAME);
-
-  // Restore original package.json (keep original name as canonical)
-  await writePackageJson(originalPkg);
-
-  console.log('\n--- Summary ---');
-  console.log(`${ORIGINAL_NAME}: ${result1 ? 'success' : 'failed'}`);
-  console.log(`${NEW_NAME}: ${result2 ? 'success' : 'failed'}`);
-
-  if (!result1 || !result2) {
-    process.exit(1);
+  if (publishFailed) {
+    throw new Error('One or more publish steps failed');
   }
 }
 
