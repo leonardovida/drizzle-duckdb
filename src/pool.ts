@@ -55,6 +55,25 @@ export interface DuckDBConnectionPoolOptions {
   setup?: (connection: DuckDBConnection) => Promise<void>;
 }
 
+type ConnectionMetadata = {
+  createdAt: number;
+  lastUsedAt: number;
+};
+
+type PooledConnection = {
+  connection: DuckDBConnection;
+  createdAt: number;
+  lastUsedAt: number;
+};
+
+type WaitingRequest = {
+  resolve: (conn: DuckDBConnection) => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
+const POOL_CLOSED_MESSAGE = 'DuckDB connection pool is closed';
+
 export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
@@ -65,27 +84,52 @@ export function createDuckDBConnectionPool(
   const maxLifetimeMs = options.maxLifetimeMs;
   const idleTimeoutMs = options.idleTimeoutMs;
   const setup = options.setup;
-  const metadata = new WeakMap<
-    DuckDBConnection,
-    { createdAt: number; lastUsedAt: number }
-  >();
-
-  type PooledConnection = {
-    connection: DuckDBConnection;
-    createdAt: number;
-    lastUsedAt: number;
-  };
+  const metadata = new WeakMap<DuckDBConnection, ConnectionMetadata>();
 
   const idle: PooledConnection[] = [];
-  const waiting: Array<{
-    resolve: (conn: DuckDBConnection) => void;
-    reject: (error: Error) => void;
-    timeoutId: ReturnType<typeof setTimeout>;
-  }> = [];
+  const waiting: WaitingRequest[] = [];
   let total = 0;
   let closed = false;
   // Track pending acquires to handle race conditions during close
   let pendingAcquires = 0;
+
+  const decrementTotal = (): void => {
+    total = Math.max(0, total - 1);
+  };
+
+  const createMetadata = (now: number): ConnectionMetadata => ({
+    createdAt: now,
+    lastUsedAt: now,
+  });
+
+  const readMetadata = (
+    connection: DuckDBConnection,
+    now: number
+  ): ConnectionMetadata => metadata.get(connection) ?? createMetadata(now);
+
+  const markConnectionUsed = (
+    connection: DuckDBConnection,
+    meta: ConnectionMetadata,
+    lastUsedAt: number
+  ): ConnectionMetadata => {
+    const nextMeta = {
+      createdAt: meta.createdAt,
+      lastUsedAt,
+    };
+    metadata.set(connection, nextMeta);
+    return nextMeta;
+  };
+
+  const dropConnection = async (connection: DuckDBConnection): Promise<void> => {
+    await closeClientConnection(connection);
+    decrementTotal();
+    metadata.delete(connection);
+  };
+
+  const rejectWaiter = (waiter: WaitingRequest): void => {
+    clearTimeout(waiter.timeoutId);
+    waiter.reject(new Error(POOL_CLOSED_MESSAGE));
+  };
 
   const shouldRecycle = (conn: PooledConnection, now: number): boolean => {
     if (maxLifetimeMs !== undefined && now - conn.createdAt >= maxLifetimeMs) {
@@ -99,29 +143,31 @@ export function createDuckDBConnectionPool(
 
   const acquire = async (): Promise<DuckDBConnection> => {
     if (closed) {
-      throw new Error('DuckDB connection pool is closed');
+      throw new Error(POOL_CLOSED_MESSAGE);
     }
 
     while (idle.length > 0) {
       const pooled = idle.pop() as PooledConnection;
       const now = Date.now();
       if (shouldRecycle(pooled, now)) {
-        await closeClientConnection(pooled.connection);
-        total = Math.max(0, total - 1);
-        metadata.delete(pooled.connection);
+        await dropConnection(pooled.connection);
         continue;
       }
-      pooled.lastUsedAt = now;
-      metadata.set(pooled.connection, {
-        createdAt: pooled.createdAt,
-        lastUsedAt: pooled.lastUsedAt,
-      });
+      markConnectionUsed(
+        pooled.connection,
+        {
+          createdAt: pooled.createdAt,
+          lastUsedAt: pooled.lastUsedAt,
+        },
+        now
+      );
       return pooled.connection;
     }
 
     if (total < size) {
       pendingAcquires += 1;
       total += 1;
+      let slotReleased = false;
       try {
         const connection = await DuckDBConnection.create(instance);
         if (setup) {
@@ -134,15 +180,17 @@ export function createDuckDBConnectionPool(
         }
         // Check if pool was closed during async connection creation
         if (closed) {
-          await closeClientConnection(connection);
-          total -= 1;
-          throw new Error('DuckDB connection pool is closed');
+          await dropConnection(connection);
+          slotReleased = true;
+          throw new Error(POOL_CLOSED_MESSAGE);
         }
         const now = Date.now();
-        metadata.set(connection, { createdAt: now, lastUsedAt: now });
+        metadata.set(connection, createMetadata(now));
         return connection;
       } catch (error) {
-        total -= 1;
+        if (!slotReleased) {
+          decrementTotal();
+        }
         throw error;
       } finally {
         pendingAcquires -= 1;
@@ -179,28 +227,19 @@ export function createDuckDBConnectionPool(
     if (waiter) {
       clearTimeout(waiter.timeoutId);
       const now = Date.now();
-      const meta =
-        metadata.get(connection) ??
-        ({ createdAt: now, lastUsedAt: now } as {
-          createdAt: number;
-          lastUsedAt: number;
-        });
+      const meta = readMetadata(connection, now);
 
       const expired =
         maxLifetimeMs !== undefined && now - meta.createdAt >= maxLifetimeMs;
 
       if (closed) {
-        await closeClientConnection(connection);
-        total = Math.max(0, total - 1);
-        metadata.delete(connection);
-        waiter.reject(new Error('DuckDB connection pool is closed'));
+        await dropConnection(connection);
+        waiter.reject(new Error(POOL_CLOSED_MESSAGE));
         return;
       }
 
       if (expired) {
-        await closeClientConnection(connection);
-        total = Math.max(0, total - 1);
-        metadata.delete(connection);
+        await dropConnection(connection);
         try {
           const replacement = await acquire();
           waiter.resolve(replacement);
@@ -210,36 +249,28 @@ export function createDuckDBConnectionPool(
         return;
       }
 
-      meta.lastUsedAt = now;
-      metadata.set(connection, meta);
+      markConnectionUsed(connection, meta, now);
       waiter.resolve(connection);
       return;
     }
 
     if (closed) {
-      await closeClientConnection(connection);
-      metadata.delete(connection);
-      total = Math.max(0, total - 1);
+      await dropConnection(connection);
       return;
     }
 
     const now = Date.now();
-    const existingMeta =
-      metadata.get(connection) ??
-      ({ createdAt: now, lastUsedAt: now } as {
-        createdAt: number;
-        lastUsedAt: number;
-      });
-    existingMeta.lastUsedAt = now;
-    metadata.set(connection, existingMeta);
+    const existingMeta = markConnectionUsed(
+      connection,
+      readMetadata(connection, now),
+      now
+    );
 
     if (
       maxLifetimeMs !== undefined &&
       now - existingMeta.createdAt >= maxLifetimeMs
     ) {
-      await closeClientConnection(connection);
-      total -= 1;
-      metadata.delete(connection);
+      await dropConnection(connection);
       return;
     }
 
@@ -256,8 +287,7 @@ export function createDuckDBConnectionPool(
     // Clear all waiting requests with their timeouts
     const waiters = waiting.splice(0, waiting.length);
     for (const waiter of waiters) {
-      clearTimeout(waiter.timeoutId);
-      waiter.reject(new Error('DuckDB connection pool is closed'));
+      rejectWaiter(waiter);
     }
 
     // Close all idle connections (use allSettled to ensure all are attempted)

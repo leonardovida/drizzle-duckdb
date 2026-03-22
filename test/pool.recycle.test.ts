@@ -30,6 +30,37 @@ describe('Pool recycling and resilience', () => {
     expect(createSpy).toHaveBeenCalledTimes(2);
   });
 
+  test('setup failure does not reduce capacity', async () => {
+    const conn1 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+    const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+
+    const createSpy = vi
+      .spyOn(DuckDBConnection, 'create')
+      .mockResolvedValueOnce(conn1)
+      .mockResolvedValueOnce(conn2);
+
+    const setup = vi.fn(async () => undefined);
+    setup.mockRejectedValueOnce(new Error('setup failed'));
+    setup.mockResolvedValueOnce(undefined);
+
+    const pool = createDuckDBConnectionPool({} as any, {
+      size: 1,
+      setup,
+    });
+
+    await expect(pool.acquire()).rejects.toThrow(/setup failed/);
+    expect(conn1.closeSync).toHaveBeenCalled();
+
+    const conn = await pool.acquire();
+    expect(conn).toBe(conn2);
+
+    await pool.release(conn);
+    await pool.close();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(setup).toHaveBeenCalledTimes(2);
+  });
+
   test('maxLifetimeMs recycles connections instead of reusing them', async () => {
     const conn1 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
     const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
