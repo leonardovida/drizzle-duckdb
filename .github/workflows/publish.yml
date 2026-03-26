@@ -3,13 +3,14 @@ name: Publish
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   publish:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -33,15 +34,7 @@ jobs:
       - name: Build package
         run: bun run build
 
-      - name: Publish to npm (@leonardovida-md/drizzle-neo-duckdb)
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to npm (@duckdbfan/drizzle-duckdb)
-        run: |
-          jq '.name = "@duckdbfan/drizzle-duckdb"' package.json > package.tmp.json
-          mv package.tmp.json package.json
-          npm publish --access public
+      - name: Publish packages
+        run: bun run publish:dual
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
