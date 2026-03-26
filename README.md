@@ -19,10 +19,7 @@ Works with local DuckDB files, in-memory databases, and [MotherDuck](https://mot
 
 > **Status:** Experimental. Core query building, migrations, and type inference work well. Some DuckDB-specific types and edge cases are still being refined.
 
-> **Note:** The main NPM package is now `@duckdbfan/drizzle-duckdb`.
-> The previous package `@leonardovida-md/drizzle-neo-duckdb` remains published but will be deprecated.
-> Updates will land in both packages through May 2, 2026.
-> After that date, only `@duckdbfan/drizzle-duckdb` will receive updates.
+> **Note:** The npm package is `@duckdbfan/drizzle-duckdb`.
 
 Docs tip: every docs page has a **Markdown (raw)** button for LLM-friendly source.
 
@@ -40,7 +37,7 @@ npm install @duckdbfan/drizzle-duckdb @duckdb/node-api
 pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
-Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB 1.4.4.
+Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.1-r.1`. The repo now develops against `1.5.1-r.1`, and `1.4.4-r.1` remains supported.
 
 ## Quick Start
 

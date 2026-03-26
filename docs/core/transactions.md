@@ -94,7 +94,7 @@ try {
 
 > **DuckDB Limitation**
 >
-> DuckDB 1.4.x does **not** support `SAVEPOINT`. The driver will try once per dialect instance; after the syntax error it marks savepoints unsupported and nested calls reuse the outer transaction.
+> DuckDB 1.4.x and 1.5.x currently do **not** support `SAVEPOINT`. The driver will try once per dialect instance. After the syntax error, it marks savepoints unsupported and nested calls reuse the outer transaction.
 
 ### What Happens with Nested Transactions
 

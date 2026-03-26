@@ -12,7 +12,6 @@ Install Drizzle DuckDB and its peer dependency.
 {: .warning }
 
 > Install `@duckdbfan/drizzle-duckdb`.
-> The previous package `@leonardovida-md/drizzle-neo-duckdb` is in deprecation and receives updates only through May 2, 2026.
 
 ## Package Installation
 
@@ -40,7 +39,7 @@ pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 yarn add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
-Recommended client version is `@duckdb/node-api@1.4.4-r.1`, which bundles DuckDB 1.4.4.
+Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.1-r.1`. The repo now develops against `1.5.1-r.1`, and `1.4.4-r.1` remains supported.
 
 ## Requirements
 
