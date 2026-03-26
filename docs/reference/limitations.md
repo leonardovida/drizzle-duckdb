@@ -11,26 +11,27 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 
 ## Feature Support Matrix
 
-| Feature              | Status  | Notes                                                                      |
-| -------------------- | ------- | -------------------------------------------------------------------------- |
-| Select queries       | Full    | All standard select operations work                                        |
-| Insert/Update/Delete | Full    | Including `.returning()`                                                   |
-| Joins                | Full    | All join types supported; same-name columns auto-qualified                 |
-| Subqueries           | Full    |                                                                            |
-| CTEs (WITH clauses)  | Full    | Join column ambiguity auto-resolved                                        |
-| Aggregations         | Full    |                                                                            |
-| Transactions         | Partial | No savepoints (driver probes once, then falls back)                        |
-| Concurrent queries   | Partial | One query per connection; use pooling for parallelism                      |
-| Prepared statements  | Partial | No statement caching; no named statements                                  |
-| JSON/JSONB columns   | None    | Use `duckDbJson()` instead                                                 |
-| Streaming results    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks |
-| Relational queries   | Full    | With schema configuration                                                  |
+| Feature                              | Status  | Notes                                                                                                               |
+| ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| Select queries                       | Full    | All standard select operations work                                                                                 |
+| Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                            |
+| Joins                                | Full    | All join types supported; same-name columns auto-qualified                                                          |
+| Subqueries                           | Full    |                                                                                                                     |
+| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                                 |
+| Aggregations                         | Full    |                                                                                                                     |
+| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                                   |
+| Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                               |
+| Prepared statements                  | Partial | No statement caching; no named statements                                                                           |
+| JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                          |
+| `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5 types exist, but `@duckdb/node-api` cannot yet materialize raw values reliably. Cast in the query first. |
+| Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                          |
+| Relational queries                   | Full    | With schema configuration                                                                                           |
 
 ## Transactions
 
 ### No Savepoint Support
 
-DuckDB 1.4.x doesn't support `SAVEPOINT`, which means nested transactions behave differently. The driver attempts a savepoint once per dialect instance; after a syntax error it marks savepoints unsupported and reuses the outer transaction for nested calls.
+DuckDB 1.4.x and 1.5.x currently reject `SAVEPOINT`, which means nested transactions behave differently. The driver attempts a savepoint once per dialect instance. After a syntax error, it marks savepoints unsupported and reuses the outer transaction for nested calls.
 
 ```typescript
 // In Postgres: inner rollback only affects inner transaction
@@ -48,6 +49,24 @@ await db.transaction(async (tx) => {
 ```
 
 **Workaround:** Structure your code to avoid nested transactions, or handle rollback logic at the outer level. The driver will attempt a savepoint once per dialect instance; current DuckDB builds reject the syntax, so nested calls fall back to the outer transaction and mark it for rollback on errors.
+
+## DuckDB 1.5 Core Types
+
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.1-r.1` still throws a low-level conversion error when those raw values are materialized into JavaScript.
+
+Use explicit projections when querying those columns:
+
+```typescript
+await db.execute(sql`
+  select
+    cast(data as varchar) as data_text,
+    variant_extract(data, 'name') as name,
+    ST_AsText(geom) as geom_wkt
+  from my_table
+`);
+```
+
+Until the Node API exposes JS conversions for those types, this driver does not provide first-class column helpers for raw `VARIANT` or `GEOMETRY` values.
 
 ## JSON Columns
 

@@ -12,7 +12,7 @@ Drizzle DuckDB is a DuckDB dialect adapter for Drizzle ORM. It provides type-saf
 npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
-Package note: use `@duckdbfan/drizzle-duckdb` for new installs. `@leonardovida-md/drizzle-neo-duckdb` is deprecated and receives updates only through May 2, 2026.
+Package note: use `@duckdbfan/drizzle-duckdb`.
 
 ## Quick Start
 
@@ -45,7 +45,8 @@ const allUsers = await db.select().from(users);
 ## Important Notes
 
 - Do NOT use Postgres json or jsonb columns - use duckDbJson() instead
-- Current DuckDB 1.4.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
+- Current DuckDB 1.4.x and 1.5.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
+- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`, but raw JS materialization for those types is still limited by `@duckdb/node-api`. Cast them before selecting, for example with `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)`.
 - Array operators are automatically rewritten to DuckDB functions
 
 ## Documentation

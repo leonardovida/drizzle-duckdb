@@ -11,15 +11,15 @@ If you're already using Drizzle with Postgres, here's what you need to know to s
 
 ## Key Differences
 
-| Feature                  | Drizzle Postgres      | Drizzle DuckDB                                                         |
-| ------------------------ | --------------------- | ---------------------------------------------------------------------- |
-| JSON columns             | `json()`, `jsonb()`   | `duckDbJson()` only                                                    |
-| Nested transactions      | `SAVEPOINT` supported | DuckDB 1.4.x has no savepoints; driver probes once then reuses outer   |
-| Array operators          | `@>`, `<@`, `&&`      | Auto-rewritten or use helpers                                          |
-| Default schema           | `public`              | `main`                                                                 |
-| Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                 |
-| Result streaming         | Supported             | Chunked via `executeBatches()` / `executeArrow()`; no cursor streaming |
-| Prepared statement cache | Yes                   | No                                                                     |
+| Feature                  | Drizzle Postgres      | Drizzle DuckDB                                                                  |
+| ------------------------ | --------------------- | ------------------------------------------------------------------------------- |
+| JSON columns             | `json()`, `jsonb()`   | `duckDbJson()` only                                                             |
+| Nested transactions      | `SAVEPOINT` supported | DuckDB 1.4.x and 1.5.x have no savepoints; driver probes once then reuses outer |
+| Array operators          | `@>`, `<@`, `&&`      | Auto-rewritten or use helpers                                                   |
+| Default schema           | `public`              | `main`                                                                          |
+| Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                          |
+| Result streaming         | Supported             | Chunked via `executeBatches()` / `executeArrow()`; no cursor streaming          |
+| Prepared statement cache | Yes                   | No                                                                              |
 
 ## Required Changes
 
@@ -140,7 +140,7 @@ const users = pgTable('users', {
 
 ### No Savepoints (driver auto-detects)
 
-DuckDB 1.4.x doesn't support `SAVEPOINT`. The driver will try once, mark it unsupported if the backend errors, and then reuse the outer transaction for all nested calls:
+DuckDB 1.4.x and 1.5.x currently reject `SAVEPOINT`. The driver will try once, mark it unsupported if the backend errors, and then reuse the outer transaction for all nested calls:
 
 ```typescript
 // This behaves DIFFERENTLY than Postgres!

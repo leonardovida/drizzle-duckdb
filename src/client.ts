@@ -51,6 +51,12 @@ type ResultColumnsLike = {
   deduplicatedColumnNames?: () => string[];
 };
 
+type ResultTypeMetadataLike = ResultColumnsLike & {
+  columnCount?: number;
+  columnName?: (columnIndex: number) => string;
+  columnTypeId?: (columnIndex: number) => number;
+};
+
 type ClosableResource = {
   close?: () => Promise<void> | void;
   closeSync?: () => void;
@@ -235,18 +241,77 @@ function resolveResultColumns(result: ResultColumnsLike): string[] {
   return deduplicateColumns(result.columnNames());
 }
 
+function isUnsupportedNodeApiTypeError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes('Unexpected type id: 0')
+  );
+}
+
+function findUnsupportedNodeApiColumns(
+  result: ResultTypeMetadataLike
+): string[] {
+  if (
+    typeof result.columnCount !== 'number' ||
+    typeof result.columnName !== 'function' ||
+    typeof result.columnTypeId !== 'function'
+  ) {
+    return [];
+  }
+
+  const unsupportedColumns: string[] = [];
+  for (
+    let columnIndex = 0;
+    columnIndex < result.columnCount;
+    columnIndex += 1
+  ) {
+    if (result.columnTypeId(columnIndex) === 0) {
+      unsupportedColumns.push(result.columnName(columnIndex));
+    }
+  }
+
+  return unsupportedColumns;
+}
+
+function wrapUnsupportedNodeApiTypeError(
+  result: ResultTypeMetadataLike,
+  error: unknown
+): Error {
+  if (!isUnsupportedNodeApiTypeError(error)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  const unsupportedColumns = findUnsupportedNodeApiColumns(result);
+  const columnsText =
+    unsupportedColumns.length > 0
+      ? ` for column${
+          unsupportedColumns.length === 1 ? '' : 's'
+        } ${unsupportedColumns.map((column) => `"${column}"`).join(', ')}`
+      : '';
+
+  const wrapped = new Error(
+    `DuckDB returned a column type that @duckdb/node-api cannot materialize to JavaScript${columnsText}. This currently affects some DuckDB 1.5 types, including VARIANT and GEOMETRY. Cast those columns to a supported representation before selecting them, for example CAST(col AS VARCHAR), variant_extract(...), ST_AsText(...), or ST_AsWKB(...).`
+  );
+  (wrapped as Error & { cause?: unknown }).cause = error;
+  return wrapped;
+}
+
 async function materializeResultRows(
   result: {
     getRowsJS: () => Promise<unknown[][] | undefined>;
-  } & ResultColumnsLike
+  } & ResultTypeMetadataLike
 ): Promise<MaterializedRows> {
-  const rows = (await result.getRowsJS()) ?? [];
+  let rows: unknown[][];
+  try {
+    rows = (await result.getRowsJS()) ?? [];
+  } catch (error) {
+    throw wrapUnsupportedNodeApiTypeError(result, error);
+  }
   const columns = resolveResultColumns(result);
 
   return { columns, rows };
 }
 
-type StreamResultLike = ResultColumnsLike & {
+type StreamResultLike = ResultTypeMetadataLike & {
   yieldRowsJs: () => AsyncIterable<unknown[][]>;
   close?: () => Promise<void> | void;
   cancel?: () => Promise<void> | void;
@@ -442,15 +507,19 @@ export async function* executeInBatches(
   let buffer: RowData[] = [];
 
   try {
-    for await (const chunk of result.yieldRowsJs()) {
-      const objects = mapRowsToObjects(columns, chunk);
-      for (const row of objects) {
-        buffer.push(row);
-        if (buffer.length >= rowsPerChunk) {
-          yield buffer;
-          buffer = [];
+    try {
+      for await (const chunk of result.yieldRowsJs()) {
+        const objects = mapRowsToObjects(columns, chunk);
+        for (const row of objects) {
+          buffer.push(row);
+          if (buffer.length >= rowsPerChunk) {
+            yield buffer;
+            buffer = [];
+          }
         }
       }
+    } catch (error) {
+      throw wrapUnsupportedNodeApiTypeError(result, error);
     }
 
     if (buffer.length > 0) {
@@ -486,14 +555,18 @@ export async function* executeInBatchesRaw(
   let buffer: unknown[][] = [];
 
   try {
-    for await (const chunk of result.yieldRowsJs()) {
-      for (const row of chunk) {
-        buffer.push(row as unknown[]);
-        if (buffer.length >= rowsPerChunk) {
-          yield { columns, rows: buffer };
-          buffer = [];
+    try {
+      for await (const chunk of result.yieldRowsJs()) {
+        for (const row of chunk) {
+          buffer.push(row as unknown[]);
+          if (buffer.length >= rowsPerChunk) {
+            yield { columns, rows: buffer };
+            buffer = [];
+          }
         }
       }
+    } catch (error) {
+      throw wrapUnsupportedNodeApiTypeError(result, error);
     }
 
     if (buffer.length > 0) {
@@ -536,5 +609,12 @@ export async function executeArrowOnClient(
   }
 
   // Fallback: return column-major JS arrays to avoid per-row object creation.
-  return result.getColumnsObjectJS();
+  try {
+    return await result.getColumnsObjectJS();
+  } catch (error) {
+    throw wrapUnsupportedNodeApiTypeError(
+      result as unknown as ResultTypeMetadataLike,
+      error
+    );
+  }
 }
