@@ -9,6 +9,7 @@
   "scripts": {
     "build": "bun build --target=node ./src/index.ts --outfile=./dist/index.mjs --packages=external && bun build --target=node ./src/helpers.ts --outfile=./dist/helpers.mjs --packages=external && bun build --target=node ./src/bin/duckdb-introspect.ts --outfile=./dist/duckdb-introspect.mjs --packages=external && bun run build:declarations",
     "build:declarations": "tsc --emitDeclarationOnly --project tsconfig.types.json",
+    "publish:dual": "bun run scripts/publish-dual.ts",
     "test": "vitest",
     "t": "vitest --watch --ui",
     "bench": "vitest bench --run test/perf --pool=threads --poolOptions.threads.singleThread=true --no-file-parallelism",

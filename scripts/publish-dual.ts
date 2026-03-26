@@ -1,93 +1,121 @@
 #!/usr/bin/env bun
-/**
- * Publishes the package under both npm scopes:
- * - @duckdbfan/drizzle-duckdb (canonical)
- * - @leonardovida-md/drizzle-neo-duckdb (legacy)
- *
- * Usage: bun run publish:dual [--dry-run]
- */
 
 import { $ } from 'bun';
 import { readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-const PACKAGE_JSON_PATH = new URL('../package.json', import.meta.url).pathname;
-const CANONICAL_NAME = '@duckdbfan/drizzle-duckdb';
-const LEGACY_NAME = '@leonardovida-md/drizzle-neo-duckdb';
+type PackageJson = Record<string, unknown> & {
+  name?: string;
+  version?: string;
+};
+
+type PublishResult = 'dry-run' | 'published' | 'skipped';
+
+type ExecFileError = Error & {
+  code?: number | string;
+  stderr?: string;
+  stdout?: string;
+};
+
+const PACKAGE_JSON_PATH = new URL('../package.json', import.meta.url);
+const execFileAsync = promisify(execFile);
+
+const targets = [
+  '@duckdbfan/drizzle-duckdb',
+  '@leonardovida-md/drizzle-neo-duckdb',
+] as const;
 
 const dryRun = process.argv.includes('--dry-run');
 
-async function readPackageJson() {
-  const content = await readFile(PACKAGE_JSON_PATH, 'utf-8');
+async function readPackageJson(): Promise<PackageJson> {
+  const content = await readFile(PACKAGE_JSON_PATH, 'utf8');
   return JSON.parse(content);
 }
 
-async function writePackageJson(pkg: Record<string, unknown>) {
+async function writePackageJson(pkg: PackageJson) {
   await writeFile(PACKAGE_JSON_PATH, JSON.stringify(pkg, null, 2) + '\n');
 }
 
-async function publish(name: string) {
-  console.log(`\nPublishing as ${name}...`);
+async function isPublishedVersion(name: string, version: string) {
+  try {
+    const { stdout } = await execFileAsync(
+      'npm',
+      ['view', `${name}@${version}`, 'version'],
+      { env: process.env }
+    );
+
+    return stdout.trim() === version;
+  } catch (error) {
+    const execError = error as ExecFileError;
+    const stderr = execError.stderr ?? '';
+
+    if (
+      stderr.includes('E404') ||
+      stderr.includes('No match found for version') ||
+      stderr.includes('404')
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function publishTarget(
+  originalPkg: PackageJson,
+  targetName: string,
+  version: string
+) {
+  if (await isPublishedVersion(targetName, version)) {
+    console.log(`Skipping ${targetName}@${version}, already published`);
+    return 'skipped' satisfies PublishResult;
+  }
+
+  await writePackageJson({
+    ...originalPkg,
+    name: targetName,
+  });
 
   if (dryRun) {
-    console.log('  [dry-run] Would run: bun publish --access public');
-    return true;
+    console.log(`[dry-run] Would publish ${targetName}@${version}`);
+    return 'dry-run' satisfies PublishResult;
   }
 
-  try {
-    await $`bun publish --access public`.quiet();
-    console.log(`  Published ${name}`);
-    return true;
-  } catch (error) {
-    console.error(`  Failed to publish ${name}:`, error);
-    return false;
-  }
+  console.log(`Publishing ${targetName}@${version}`);
+  await $`npm publish --access public`;
+  return 'published' satisfies PublishResult;
 }
 
 async function main() {
-  let originalPkg: Record<string, unknown> | undefined;
-  let publishFailed = false;
+  const originalPkg = await readPackageJson();
+  const version = originalPkg.version;
+
+  if (!version) {
+    throw new Error('package.json is missing a version');
+  }
 
   if (dryRun) {
-    console.log('Running in dry-run mode (no actual publishing)\n');
+    console.log('Running dual publish in dry-run mode');
   }
+
+  const results = new Map<string, PublishResult>();
 
   try {
-    originalPkg = await readPackageJson();
-    const version = originalPkg.version;
-
-    console.log(`Publishing version ${version} to both scopes...`);
-
-    // Ensure we're built
-    console.log('\nBuilding...');
-    if (!dryRun) {
-      await $`bun run build`.quiet();
+    for (const targetName of targets) {
+      const result = await publishTarget(originalPkg, targetName, version);
+      results.set(targetName, result);
     }
-
-    // Publish the canonical package first.
-    await writePackageJson({ ...originalPkg, name: CANONICAL_NAME });
-    const canonicalResult = await publish(CANONICAL_NAME);
-
-    // Publish the legacy package name for backwards compatibility.
-    await writePackageJson({ ...originalPkg, name: LEGACY_NAME });
-    const legacyResult = await publish(LEGACY_NAME);
-
-    console.log('\n--- Summary ---');
-    console.log(`${CANONICAL_NAME}: ${canonicalResult ? 'success' : 'failed'}`);
-    console.log(`${LEGACY_NAME}: ${legacyResult ? 'success' : 'failed'}`);
-
-    publishFailed = !canonicalResult || !legacyResult;
   } finally {
-    if (originalPkg) {
-      await writePackageJson(originalPkg);
-    }
+    await writePackageJson(originalPkg);
   }
 
-  if (publishFailed) {
-    throw new Error('One or more publish steps failed');
+  console.log('\nPublish summary:');
+
+  for (const targetName of targets) {
+    const result = results.get(targetName);
+    console.log(`- ${targetName}@${version}: ${result}`);
   }
 }
 
-main().catch((err) => {
-  console.error('Publish failed:', err);
-  process.exit(1);
-});
+await main();
