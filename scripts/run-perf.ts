@@ -89,7 +89,7 @@ async function runVitest(
     'vitest',
     'bench',
     '--pool=threads',
-    '--poolOptions.threads.singleThread=true',
+    '--maxWorkers=1',
     '--no-file-parallelism',
     '--outputJson',
     outputJson,
