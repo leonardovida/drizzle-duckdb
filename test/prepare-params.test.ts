@@ -33,6 +33,7 @@ test('prepareParams leaves plain strings untouched', () => {
   const input = ['plain string', '{ not an array', 123];
   const result = prepareParams(input, { warnOnStringArrayLiteral: warn });
 
+  expect(result).toBe(input);
   expect(result).toEqual(input);
   expect(warn).not.toHaveBeenCalled();
 });
@@ -42,6 +43,7 @@ test('prepareParams preserves unparsable Postgres array literals', () => {
   const input = ['{hello,world}'];
   const result = prepareParams(input, { warnOnStringArrayLiteral: warn });
 
+  expect(result).toBe(input);
   expect(result).toEqual(input);
   expect(warn).toHaveBeenCalledTimes(1);
 });

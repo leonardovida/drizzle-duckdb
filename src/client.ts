@@ -77,7 +77,10 @@ export function prepareParams(
   params: unknown[],
   options: PrepareParamsOptions = {}
 ): unknown[] {
-  return params.map((param) => {
+  let preparedParams = params;
+
+  for (let index = 0; index < params.length; index += 1) {
+    const param = params[index];
     if (typeof param === 'string' && param.length > 0) {
       const trimmed = param.trim();
 
@@ -91,11 +94,18 @@ export function prepareParams(
         if (options.warnOnStringArrayLiteral) {
           options.warnOnStringArrayLiteral();
         }
-        return parsePgArrayLiteral(trimmed);
+        const nextValue = parsePgArrayLiteral(trimmed);
+        if (nextValue !== param) {
+          if (preparedParams === params) {
+            preparedParams = params.slice();
+          }
+          preparedParams[index] = nextValue;
+        }
       }
     }
-    return param;
-  });
+  }
+
+  return preparedParams;
 }
 
 /**
@@ -391,13 +401,20 @@ function clearPreparedCache(connection: DuckDBConnection): void {
 }
 
 function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
-  return rows.map((vals) => {
-    const obj: Record<string, unknown> = {};
-    columns.forEach((col, idx) => {
-      obj[col] = vals[idx];
-    });
-    return obj;
-  }) as RowData[];
+  const mappedRows: RowData[] = new Array(rows.length);
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const values = rows[rowIndex] as unknown[];
+    const row: RowData = {};
+
+    for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+      row[columns[columnIndex] as string] = values[columnIndex];
+    }
+
+    mappedRows[rowIndex] = row;
+  }
+
+  return mappedRows;
 }
 
 export async function closeClientConnection(
