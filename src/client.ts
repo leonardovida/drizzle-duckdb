@@ -479,6 +479,53 @@ function resolveRowsPerChunk(
     : 100_000;
 }
 
+async function* streamRawBatches(
+  client: DuckDBClientLike,
+  query: string,
+  params: unknown[],
+  options: ExecuteInBatchesOptions = {}
+): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
+  if (isPool(client)) {
+    const connection = await client.acquire();
+    try {
+      yield* streamRawBatches(connection, query, params, options);
+      return;
+    } finally {
+      await client.release(connection);
+    }
+  }
+
+  const rowsPerChunk = resolveRowsPerChunk(options);
+  const values = toNodeApiValues(params);
+
+  const result = (await client.stream(query, values)) as StreamResultLike;
+  const columns = resolveResultColumns(result);
+
+  let rows: unknown[][] = [];
+
+  try {
+    try {
+      for await (const chunk of result.yieldRowsJs()) {
+        for (const row of chunk) {
+          rows.push(row as unknown[]);
+          if (rows.length >= rowsPerChunk) {
+            yield { columns, rows };
+            rows = [];
+          }
+        }
+      }
+    } catch (error) {
+      throw wrapUnsupportedNodeApiTypeError(result, error);
+    }
+
+    if (rows.length > 0) {
+      yield { columns, rows };
+    }
+  } finally {
+    await closeStreamResult(result);
+  }
+}
+
 /**
  * Stream results from DuckDB in batches to avoid fully materializing rows in JS.
  */
@@ -488,45 +535,8 @@ export async function* executeInBatches(
   params: unknown[],
   options: ExecuteInBatchesOptions = {}
 ): AsyncGenerator<RowData[], void, void> {
-  if (isPool(client)) {
-    const connection = await client.acquire();
-    try {
-      yield* executeInBatches(connection, query, params, options);
-      return;
-    } finally {
-      await client.release(connection);
-    }
-  }
-
-  const rowsPerChunk = resolveRowsPerChunk(options);
-  const values = toNodeApiValues(params);
-
-  const result = (await client.stream(query, values)) as StreamResultLike;
-  const columns = resolveResultColumns(result);
-
-  let buffer: RowData[] = [];
-
-  try {
-    try {
-      for await (const chunk of result.yieldRowsJs()) {
-        const objects = mapRowsToObjects(columns, chunk);
-        for (const row of objects) {
-          buffer.push(row);
-          if (buffer.length >= rowsPerChunk) {
-            yield buffer;
-            buffer = [];
-          }
-        }
-      }
-    } catch (error) {
-      throw wrapUnsupportedNodeApiTypeError(result, error);
-    }
-
-    if (buffer.length > 0) {
-      yield buffer;
-    }
-  } finally {
-    await closeStreamResult(result);
+  for await (const chunk of streamRawBatches(client, query, params, options)) {
+    yield mapRowsToObjects(chunk.columns, chunk.rows);
   }
 }
 
@@ -536,45 +546,7 @@ export async function* executeInBatchesRaw(
   params: unknown[],
   options: ExecuteInBatchesOptions = {}
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-  if (isPool(client)) {
-    const connection = await client.acquire();
-    try {
-      yield* executeInBatchesRaw(connection, query, params, options);
-      return;
-    } finally {
-      await client.release(connection);
-    }
-  }
-
-  const rowsPerChunk = resolveRowsPerChunk(options);
-  const values = toNodeApiValues(params);
-
-  const result = (await client.stream(query, values)) as StreamResultLike;
-  const columns = resolveResultColumns(result);
-
-  let buffer: unknown[][] = [];
-
-  try {
-    try {
-      for await (const chunk of result.yieldRowsJs()) {
-        for (const row of chunk) {
-          buffer.push(row as unknown[]);
-          if (buffer.length >= rowsPerChunk) {
-            yield { columns, rows: buffer };
-            buffer = [];
-          }
-        }
-      }
-    } catch (error) {
-      throw wrapUnsupportedNodeApiTypeError(result, error);
-    }
-
-    if (buffer.length > 0) {
-      yield { columns, rows: buffer };
-    }
-  } finally {
-    await closeStreamResult(result);
-  }
+  yield* streamRawBatches(client, query, params, options);
 }
 
 /**
