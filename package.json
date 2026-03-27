@@ -12,7 +12,7 @@
     "publish:dual": "bun run scripts/publish-dual.ts",
     "test": "bun x vitest run",
     "t": "bun x vitest --watch --ui",
-    "bench": "bun x vitest bench --run test/perf --pool=threads --poolOptions.threads.singleThread=true --no-file-parallelism",
+    "bench": "bun x vitest bench --run test/perf --pool=threads --maxWorkers=1 --no-file-parallelism",
     "perf:run": "bun run scripts/run-perf.ts",
     "perf:compare": "bun run scripts/compare-perf.ts"
   },
