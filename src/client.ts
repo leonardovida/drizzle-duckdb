@@ -391,13 +391,20 @@ function clearPreparedCache(connection: DuckDBConnection): void {
 }
 
 function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
-  return rows.map((vals) => {
-    const obj: Record<string, unknown> = {};
-    columns.forEach((col, idx) => {
-      obj[col] = vals[idx];
-    });
-    return obj;
-  }) as RowData[];
+  const mappedRows: RowData[] = new Array(rows.length);
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const values = rows[rowIndex] as unknown[];
+    const row: RowData = {};
+
+    for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+      row[columns[columnIndex] as string] = values[columnIndex];
+    }
+
+    mappedRows[rowIndex] = row;
+  }
+
+  return mappedRows;
 }
 
 export async function closeClientConnection(
