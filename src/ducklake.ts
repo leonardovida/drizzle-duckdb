@@ -177,11 +177,22 @@ export function wrapDuckLakePool(
   const wrapped: DuckDBConnectionPool & { size?: number } = {
     async acquire() {
       const connection = await pool.acquire();
-      if (!configuredConnections.has(connection)) {
+      if (configuredConnections.has(connection)) {
+        return connection;
+      }
+
+      try {
         await configureDuckLake(connection, config);
         configuredConnections.add(connection);
+        return connection;
+      } catch (error) {
+        try {
+          await pool.release(connection);
+        } catch {
+          // Preserve the original configuration error when cleanup also fails.
+        }
+        throw error;
       }
-      return connection;
     },
     release(connection) {
       return pool.release(connection);
