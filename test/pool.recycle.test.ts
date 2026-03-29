@@ -117,4 +117,23 @@ describe('Pool recycling and resilience', () => {
 
     expect(createSpy).toHaveBeenCalledTimes(2);
   });
+
+  test('close() shuts down leased connections and ignores late release', async () => {
+    const conn = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+
+    vi.spyOn(DuckDBConnection, 'create').mockResolvedValue(conn);
+
+    const pool = createDuckDBConnectionPool({} as any, {
+      size: 1,
+    });
+
+    const leased = await pool.acquire();
+    expect(leased).toBe(conn);
+
+    await pool.close();
+    expect(conn.closeSync).toHaveBeenCalledTimes(1);
+
+    await pool.release(leased);
+    expect(conn.closeSync).toHaveBeenCalledTimes(1);
+  });
 });
