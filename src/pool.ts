@@ -85,6 +85,7 @@ export function createDuckDBConnectionPool(
   const metadata = new WeakMap<DuckDBConnection, ConnectionMetadata>();
 
   const idle: PooledConnection[] = [];
+  const leased = new Set<DuckDBConnection>();
   const waiting: WaitingRequest[] = [];
   let total = 0;
   let closed = false;
@@ -176,6 +177,7 @@ export function createDuckDBConnectionPool(
         continue;
       }
       markConnectionUsed(pooled.connection, pooled, now);
+      leased.add(pooled.connection);
       return pooled.connection;
     }
 
@@ -201,6 +203,7 @@ export function createDuckDBConnectionPool(
         }
         const now = Date.now();
         metadata.set(connection, createMetadata(now));
+        leased.add(connection);
         return connection;
       } catch (error) {
         if (!slotReleased) {
@@ -238,6 +241,10 @@ export function createDuckDBConnectionPool(
   };
 
   const release = async (connection: DuckDBConnection): Promise<void> => {
+    if (!leased.delete(connection)) {
+      return;
+    }
+
     const waiter = waiting.shift();
     if (waiter) {
       clearTimeout(waiter.timeoutId);
@@ -262,6 +269,7 @@ export function createDuckDBConnectionPool(
       }
 
       markConnectionUsed(connection, meta, now);
+      leased.add(connection);
       waiter.resolve(connection);
       return;
     }
@@ -302,6 +310,14 @@ export function createDuckDBConnectionPool(
     );
     total = Math.max(0, total - toClose.length);
     toClose.forEach((item) => metadata.delete(item.connection));
+
+    const active = Array.from(leased);
+    leased.clear();
+    await Promise.allSettled(
+      active.map((connection) => closeClientConnection(connection))
+    );
+    total = Math.max(0, total - active.length);
+    active.forEach((connection) => metadata.delete(connection));
 
     // Wait for pending acquires to complete (with a reasonable timeout)
     const maxWait = 5000;
