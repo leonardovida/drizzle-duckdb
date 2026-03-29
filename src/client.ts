@@ -77,7 +77,10 @@ export function prepareParams(
   params: unknown[],
   options: PrepareParamsOptions = {}
 ): unknown[] {
-  return params.map((param) => {
+  let preparedParams = params;
+
+  for (let index = 0; index < params.length; index += 1) {
+    const param = params[index];
     if (typeof param === 'string' && param.length > 0) {
       const trimmed = param.trim();
 
@@ -91,11 +94,18 @@ export function prepareParams(
         if (options.warnOnStringArrayLiteral) {
           options.warnOnStringArrayLiteral();
         }
-        return parsePgArrayLiteral(trimmed);
+        const nextValue = parsePgArrayLiteral(trimmed);
+        if (nextValue !== param) {
+          if (preparedParams === params) {
+            preparedParams = params.slice();
+          }
+          preparedParams[index] = nextValue;
+        }
       }
     }
-    return param;
-  });
+  }
+
+  return preparedParams;
 }
 
 /**
