@@ -89,6 +89,36 @@ describe('Pool recycling and resilience', () => {
     expect(createSpy).toHaveBeenCalledTimes(2);
   });
 
+  test('expired connections are replaced before resolving waiters', async () => {
+    const conn1 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+    const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+
+    const createSpy = vi
+      .spyOn(DuckDBConnection, 'create')
+      .mockResolvedValueOnce(conn1)
+      .mockResolvedValueOnce(conn2);
+
+    const pool = createDuckDBConnectionPool({} as any, {
+      size: 1,
+      maxLifetimeMs: 0,
+    });
+
+    const first = await pool.acquire();
+    expect(first).toBe(conn1);
+
+    const pendingAcquire = pool.acquire();
+    await pool.release(first);
+
+    const second = await pendingAcquire;
+    expect(second).toBe(conn2);
+    expect(conn1.closeSync).toHaveBeenCalled();
+
+    await pool.release(second);
+    await pool.close();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+  });
+
   test('idleTimeoutMs discards stale idle connections', async () => {
     const conn1 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
     const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;

@@ -60,10 +60,8 @@ type ConnectionMetadata = {
   lastUsedAt: number;
 };
 
-type PooledConnection = {
+type PooledConnection = ConnectionMetadata & {
   connection: DuckDBConnection;
-  createdAt: number;
-  lastUsedAt: number;
 };
 
 type WaitingRequest = {
@@ -134,15 +132,37 @@ export function createDuckDBConnectionPool(
     waiter.reject(new Error(POOL_CLOSED_MESSAGE));
   };
 
-  const shouldRecycle = (conn: PooledConnection, now: number): boolean => {
-    if (maxLifetimeMs !== undefined && now - conn.createdAt >= maxLifetimeMs) {
-      return true;
-    }
-    if (idleTimeoutMs !== undefined && now - conn.lastUsedAt >= idleTimeoutMs) {
+  const hasExceededMaxLifetime = (
+    meta: ConnectionMetadata,
+    now: number
+  ): boolean => {
+    if (maxLifetimeMs !== undefined && now - meta.createdAt >= maxLifetimeMs) {
       return true;
     }
     return false;
   };
+
+  const shouldRecycleIdleConnection = (
+    meta: ConnectionMetadata,
+    now: number
+  ): boolean => {
+    if (hasExceededMaxLifetime(meta, now)) {
+      return true;
+    }
+    if (idleTimeoutMs !== undefined && now - meta.lastUsedAt >= idleTimeoutMs) {
+      return true;
+    }
+    return false;
+  };
+
+  const toPooledConnection = (
+    connection: DuckDBConnection,
+    meta: ConnectionMetadata
+  ): PooledConnection => ({
+    connection,
+    createdAt: meta.createdAt,
+    lastUsedAt: meta.lastUsedAt,
+  });
 
   const acquire = async (): Promise<DuckDBConnection> => {
     if (closed) {
@@ -152,18 +172,11 @@ export function createDuckDBConnectionPool(
     while (idle.length > 0) {
       const pooled = idle.pop() as PooledConnection;
       const now = Date.now();
-      if (shouldRecycle(pooled, now)) {
+      if (shouldRecycleIdleConnection(pooled, now)) {
         await dropConnection(pooled.connection);
         continue;
       }
-      markConnectionUsed(
-        pooled.connection,
-        {
-          createdAt: pooled.createdAt,
-          lastUsedAt: pooled.lastUsedAt,
-        },
-        now
-      );
+      markConnectionUsed(pooled.connection, pooled, now);
       leased.add(pooled.connection);
       return pooled.connection;
     }
@@ -238,16 +251,13 @@ export function createDuckDBConnectionPool(
       const now = Date.now();
       const meta = readMetadata(connection, now);
 
-      const expired =
-        maxLifetimeMs !== undefined && now - meta.createdAt >= maxLifetimeMs;
-
       if (closed) {
         await dropConnection(connection);
         waiter.reject(new Error(POOL_CLOSED_MESSAGE));
         return;
       }
 
-      if (expired) {
+      if (hasExceededMaxLifetime(meta, now)) {
         await dropConnection(connection);
         try {
           const replacement = await acquire();
@@ -276,19 +286,12 @@ export function createDuckDBConnectionPool(
       now
     );
 
-    if (
-      maxLifetimeMs !== undefined &&
-      now - existingMeta.createdAt >= maxLifetimeMs
-    ) {
+    if (hasExceededMaxLifetime(existingMeta, now)) {
       await dropConnection(connection);
       return;
     }
 
-    idle.push({
-      connection,
-      createdAt: existingMeta.createdAt,
-      lastUsedAt: existingMeta.lastUsedAt,
-    });
+    idle.push(toPooledConnection(connection, existingMeta));
   };
 
   const close = async (): Promise<void> => {
