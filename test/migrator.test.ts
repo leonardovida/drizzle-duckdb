@@ -99,6 +99,21 @@ describe('Migrator Tests', () => {
     expect(result[0]?.name).toBe('users');
   });
 
+  test('migrate accepts a migrations folder string', async () => {
+    await db.execute(sql`DROP TABLE IF EXISTS users`);
+
+    await migrate(db, testMigrationsDir);
+
+    const result = await db.execute<{ name: string }>(sql`
+      SELECT table_name as name
+      FROM information_schema.tables
+      WHERE table_name = 'users'
+    `);
+
+    expect(result.length).toBe(1);
+    expect(result[0]?.name).toBe('users');
+  });
+
   test('migrate creates __drizzle_migrations table', async () => {
     // After the first migrate, the migrations table should exist
     const result = await db.execute<{ name: string }>(sql`

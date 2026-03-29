@@ -21,6 +21,7 @@ import {
 } from 'drizzle-orm';
 import type { QueryWithTypings } from 'drizzle-orm/sql/sql';
 
+import { normalizeMigrationConfig } from './migration-config.ts';
 import { transformSQL } from './sql/ast-transformer.ts';
 
 const enum SavepointSupport {
@@ -86,9 +87,7 @@ export class DuckDBDialect extends PgDialect {
     session: PgSession,
     config: MigrationConfig | string
   ): Promise<void> {
-    const migrationConfig: MigrationConfig =
-      typeof config === 'string' ? { migrationsFolder: config } : config;
-
+    const migrationConfig = normalizeMigrationConfig(config);
     const migrationsSchema = migrationConfig.migrationsSchema ?? 'drizzle';
     const migrationsTable =
       migrationConfig.migrationsTable ?? '__drizzle_migrations';
