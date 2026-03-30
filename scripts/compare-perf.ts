@@ -45,7 +45,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeActionBenchRow(row: unknown): NormalizedBenchRow {
-  if (!isRecord(row) || typeof row.name !== 'string' || typeof row.value !== 'number') {
+  if (
+    !isRecord(row) ||
+    typeof row.name !== 'string' ||
+    typeof row.value !== 'number'
+  ) {
     throw new Error('Invalid action-bench row');
   }
 
@@ -57,7 +61,11 @@ function normalizeActionBenchRow(row: unknown): NormalizedBenchRow {
 }
 
 function normalizeLegacyResult(row: unknown): NormalizedBenchRow {
-  if (!isRecord(row) || typeof row.name !== 'string' || typeof row.hz !== 'number') {
+  if (
+    !isRecord(row) ||
+    typeof row.name !== 'string' ||
+    typeof row.hz !== 'number'
+  ) {
     throw new Error('Invalid legacy perf row');
   }
 
@@ -119,8 +127,7 @@ export function compareBenchmarks(
       previous,
       next,
       percentChange: change,
-      isRegressionRisk:
-        typeof change === 'number' && change <= threshold * -1,
+      isRegressionRisk: typeof change === 'number' && change <= threshold * -1,
     };
   });
 }
@@ -183,7 +190,9 @@ export function parseArgs(argv: string[]): CliArgs {
 }
 
 async function main(): Promise<void> {
-  const { previousPath, nextPath, threshold } = parseArgs(process.argv.slice(2));
+  const { previousPath, nextPath, threshold } = parseArgs(
+    process.argv.slice(2)
+  );
   const previousRows = await loadNormalizedFile(previousPath);
   const nextRows = await loadNormalizedFile(nextPath);
   const comparison = compareBenchmarks(previousRows, nextRows, threshold);
