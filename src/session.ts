@@ -61,6 +61,32 @@ const VALID_TRANSACTION_ACCESS_MODES = new Set<string>([
   'read write',
 ]);
 
+interface QueryParamPreparationOptions {
+  logger: Logger;
+  queryString: string;
+  params: unknown[];
+  rejectStringArrayLiterals: boolean;
+  warnOnStringArrayLiteral?: (sql: string) => void;
+}
+
+function prepareQueryParams({
+  logger,
+  queryString,
+  params,
+  rejectStringArrayLiterals,
+  warnOnStringArrayLiteral,
+}: QueryParamPreparationOptions): unknown[] {
+  const preparedParams = prepareParams(params, {
+    rejectStringArrayLiterals,
+    warnOnStringArrayLiteral: rejectStringArrayLiterals
+      ? undefined
+      : () => warnOnStringArrayLiteral?.(queryString),
+  });
+
+  logger.logQuery(queryString, preparedParams);
+  return preparedParams;
+}
+
 export class DuckDBPreparedQuery<
   T extends PreparedQueryConfig,
 > extends PgPreparedQuery<T> {
@@ -88,16 +114,13 @@ export class DuckDBPreparedQuery<
     placeholderValues: Record<string, unknown> | undefined = {}
   ): Promise<T['execute']> {
     this.dialect.assertNoPgJsonColumns();
-    const params = prepareParams(
-      fillPlaceholders(this.params, placeholderValues),
-      {
-        rejectStringArrayLiterals: this.rejectStringArrayLiterals,
-        warnOnStringArrayLiteral: this.warnOnStringArrayLiteral
-          ? () => this.warnOnStringArrayLiteral?.(this.queryString)
-          : undefined,
-      }
-    );
-    this.logger.logQuery(this.queryString, params);
+    const params = prepareQueryParams({
+      logger: this.logger,
+      queryString: this.queryString,
+      params: fillPlaceholders(this.params, placeholderValues),
+      rejectStringArrayLiterals: this.rejectStringArrayLiterals,
+      warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
+    });
 
     const { fields, joinsNotNullableMap, customResultMapper } =
       this as typeof this & { joinsNotNullableMap?: Record<string, boolean> };
@@ -279,14 +302,13 @@ export class DuckDBSession<
     this.dialect.resetPgJsonFlag();
     const builtQuery = this.dialect.sqlToQuery(query);
     this.dialect.assertNoPgJsonColumns();
-    const params = prepareParams(builtQuery.params, {
+    const params = prepareQueryParams({
+      logger: this.logger,
+      queryString: builtQuery.sql,
+      params: builtQuery.params,
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
-      warnOnStringArrayLiteral: this.rejectStringArrayLiterals
-        ? undefined
-        : () => this.warnOnStringArrayLiteral(builtQuery.sql),
+      warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
     });
-
-    this.logger.logQuery(builtQuery.sql, params);
     return { sql: builtQuery.sql, params };
   }
 
