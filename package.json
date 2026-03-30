@@ -35,7 +35,7 @@
     "@vitest/ui": "4.1.2",
     "drizzle-orm": "0.40.1",
     "prettier": "^3.8.1",
-    "tinybench": "^2.9.0",
+    "tinybench": "6.0.0",
     "typescript": "6.0.2",
     "uuid": "13.0.0",
     "vitest": "4.1.2"
