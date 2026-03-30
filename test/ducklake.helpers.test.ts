@@ -1,9 +1,11 @@
-import { describe, expect, test } from 'vitest';
+import type { DuckDBConnection } from '@duckdb/node-api';
+import { describe, expect, test, vi } from 'vitest';
 import {
   buildDuckLakeAttachSql,
   isDuckDbFileCatalog,
   normalizeDuckLakeConfig,
   resolveDuckLakePoolSize,
+  wrapDuckLakePool,
 } from '../src/ducklake.ts';
 
 describe('DuckLake helpers', () => {
@@ -63,5 +65,24 @@ describe('DuckLake helpers', () => {
     });
     expect(resolution.poolSize).toBe(1);
     expect(resolution.isLocalCatalog).toBe(true);
+  });
+
+  test('wrapDuckLakePool releases the slot when configuration fails', async () => {
+    const connection = {
+      run: vi.fn(async () => {
+        throw new Error('setup failed');
+      }),
+    } as unknown as DuckDBConnection;
+    const pool = {
+      acquire: vi.fn(async () => connection),
+      release: vi.fn(async () => undefined),
+    };
+    const wrapped = wrapDuckLakePool(pool, {
+      catalog: 'md:meta_db',
+    });
+
+    await expect(wrapped.acquire()).rejects.toThrow('setup failed');
+    expect(pool.release).toHaveBeenCalledTimes(1);
+    expect(pool.release).toHaveBeenCalledWith(connection);
   });
 });
