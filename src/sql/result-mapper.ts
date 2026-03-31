@@ -21,6 +21,11 @@ type SQLInternal<T = unknown> = SQL<T> & {
   decoder: DriverValueDecoder<T, any>;
 };
 
+type SQLCarrier = {
+  getSQL?: () => SQL;
+  sql?: SQL;
+};
+
 type DecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>> =
   Parameters<TDecoder['mapFromDriverValue']>[0];
 
@@ -30,6 +35,27 @@ function toDecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>>(
 ): DecoderInput<TDecoder> {
   void decoder;
   return value as DecoderInput<TDecoder>;
+}
+
+function getFieldSql(field: SQLCarrier): SQLInternal | undefined {
+  if (field.sql && is(field.sql, SQL)) {
+    return field.sql as SQLInternal;
+  }
+
+  if (typeof field.getSQL === 'function') {
+    const sqlValue = field.getSQL();
+    if (is(sqlValue, SQL)) {
+      return sqlValue as SQLInternal;
+    }
+  }
+
+  return undefined;
+}
+
+function findColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
+  return sqlValue?.queryChunks.find((chunk: unknown) => is(chunk, Column)) as
+    | AnyColumn
+    | undefined;
 }
 
 export function normalizeInet(value: unknown): unknown {
@@ -227,12 +253,15 @@ export function mapResultRow<TResult>(
       } else if (is(field, SQL)) {
         decoder = (field as SQLInternal).decoder;
       } else {
-        const col = field.sql.queryChunks.find((chunk) => is(chunk, Column));
+        const fieldSql = getFieldSql(field as SQLCarrier);
+        const col = findColumnInSql(fieldSql);
 
         if (is(col, PgCustomColumn)) {
           decoder = col;
         } else {
-          decoder = (field.sql as SQLInternal).decoder;
+          decoder = fieldSql?.decoder ?? {
+            mapFromDriverValue: (value) => value,
+          };
         }
       }
       let node = acc;
@@ -269,7 +298,7 @@ export function mapResultRow<TResult>(
           is(field, SQL.Aliased) &&
           path.length === 2
         ) {
-          const col = field.sql.queryChunks.find((chunk) => is(chunk, Column));
+          const col = findColumnInSql(getFieldSql(field as SQLCarrier));
           const tableName = col?.table && getTableName(col?.table);
 
           if (!tableName) {
