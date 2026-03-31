@@ -39,6 +39,18 @@ import type { PreparedStatementCacheConfig } from './options.ts';
 
 export type { DuckDBClientLike, RowData } from './client.ts';
 
+type QueryMetadata = {
+  type: 'select' | 'update' | 'delete' | 'insert';
+  tables: string[];
+};
+
+type CacheConfig = {
+  enable?: boolean;
+  autoInvalidate?: boolean;
+  tag?: string;
+  config?: unknown;
+};
+
 function isSavepointSyntaxError(error: unknown): boolean {
   if (!(error instanceof Error) || !error.message) {
     return false;
@@ -105,9 +117,18 @@ export class DuckDBPreparedQuery<
       | undefined,
     private rejectStringArrayLiterals: boolean,
     private prepareCache: PreparedStatementCacheConfig | undefined,
+    queryMetadata?: QueryMetadata,
+    cacheConfig?: CacheConfig,
     private warnOnStringArrayLiteral?: (sql: string) => void
   ) {
-    super({ sql: queryString, params });
+    super(
+      ...([
+        { sql: queryString, params },
+        undefined,
+        queryMetadata,
+        cacheConfig,
+      ] as unknown as ConstructorParameters<typeof PgPreparedQuery>)
+    );
   }
 
   async execute(
@@ -203,7 +224,9 @@ export class DuckDBSession<
     fields: SelectedFieldsOrdered | undefined,
     name: string | undefined,
     isResponseInArrayMode: boolean,
-    customResultMapper?: (rows: unknown[][]) => T['execute']
+    customResultMapper?: (rows: unknown[][]) => T['execute'],
+    queryMetadata?: QueryMetadata,
+    cacheConfig?: CacheConfig
   ): PgPreparedQuery<T> {
     void name; // DuckDB doesn't support prepared statement names but the signature must match.
     return new DuckDBPreparedQuery(
@@ -217,6 +240,8 @@ export class DuckDBSession<
       customResultMapper,
       this.rejectStringArrayLiterals,
       this.prepareCache,
+      queryMetadata,
+      cacheConfig,
       this.rejectStringArrayLiterals ? undefined : this.warnOnStringArrayLiteral
     );
   }
