@@ -1,4 +1,3 @@
-import { is } from 'drizzle-orm/entity';
 import {
   PgSelectBase,
   PgSelectBuilder,
@@ -7,26 +6,16 @@ import {
   type TableLikeHasEmptySelection,
 } from 'drizzle-orm/pg-core/query-builders';
 import { PgColumn, PgTable, type PgSession } from 'drizzle-orm/pg-core';
-import { Subquery, ViewBaseConfig, type SQLWrapper } from 'drizzle-orm';
+import { Subquery, type SQLWrapper } from 'drizzle-orm';
 import { PgViewBase } from 'drizzle-orm/pg-core/view-base';
 import type {
   GetSelectTableName,
   GetSelectTableSelection,
 } from 'drizzle-orm/query-builders/select.types';
-import { SQL, type ColumnsSelection } from 'drizzle-orm/sql/sql';
-import { aliasFields } from './sql/selection.ts';
+import { SQL } from 'drizzle-orm/sql/sql';
+import { getSelectSourceFields } from './sql/selection.ts';
 import type { DuckDBDialect } from './dialect.ts';
-import { getTableColumns, type DrizzleTypeError } from 'drizzle-orm/utils';
-
-interface PgViewBaseInternal<
-  TName extends string = string,
-  TExisting extends boolean = boolean,
-  TSelectedFields extends ColumnsSelection = ColumnsSelection,
-> extends PgViewBase<TName, TExisting, TSelectedFields> {
-  [ViewBaseConfig]?: {
-    selectedFields: SelectedFields;
-  };
-}
+import type { DrizzleTypeError } from 'drizzle-orm/utils';
 
 export class DuckDBSelectBuilder<
   TSelection extends SelectedFields | undefined,
@@ -64,7 +53,7 @@ export class DuckDBSelectBuilder<
     this._distinct = config.distinct;
   }
 
-  from<TFrom extends PgTable | Subquery | PgViewBaseInternal | SQL>(
+  from<TFrom extends PgTable | Subquery | PgViewBase | SQL>(
     source: TableLikeHasEmptySelection<TFrom> extends true
       ? DrizzleTypeError<"Cannot reference a data-modifying statement subquery if it doesn't contain a `returning` clause">
       : TFrom
@@ -80,21 +69,8 @@ export class DuckDBSelectBuilder<
     let fields: SelectedFields;
     if (this._fields) {
       fields = this._fields;
-    } else if (is(src, Subquery)) {
-      fields = Object.fromEntries(
-        Object.keys(src._.selectedFields).map((key) => [
-          key,
-          src[
-            key as unknown as keyof typeof src
-          ] as unknown as SelectedFields[string],
-        ])
-      );
-    } else if (is(src, PgViewBase)) {
-      fields = src[ViewBaseConfig]?.selectedFields as SelectedFields;
-    } else if (is(src, SQL)) {
-      fields = {};
     } else {
-      fields = aliasFields(getTableColumns<PgTable>(src), !isPartialSelect);
+      fields = getSelectSourceFields(src, isPartialSelect);
     }
 
     return new PgSelectBase({
