@@ -1,5 +1,26 @@
-import { Column, SQL, getTableName, is, sql } from 'drizzle-orm';
-import type { SelectedFields } from 'drizzle-orm/pg-core';
+import {
+  Column,
+  SQL,
+  Subquery,
+  ViewBaseConfig,
+  getTableName,
+  is,
+  sql,
+} from 'drizzle-orm';
+import { PgTable, type SelectedFields } from 'drizzle-orm/pg-core';
+import { PgViewBase } from 'drizzle-orm/pg-core/view-base';
+import type { ColumnsSelection } from 'drizzle-orm/sql/sql';
+import { getTableColumns } from 'drizzle-orm/utils';
+
+interface PgViewBaseInternal<
+  TName extends string = string,
+  TExisting extends boolean = boolean,
+  TSelectedFields extends ColumnsSelection = ColumnsSelection,
+> extends PgViewBase<TName, TExisting, TSelectedFields> {
+  [ViewBaseConfig]?: {
+    selectedFields: SelectedFields;
+  };
+}
 
 function mapEntries(
   obj: Record<string, unknown>,
@@ -57,4 +78,30 @@ export function aliasFields(
   fullJoin = false
 ): SelectedFields {
   return mapEntries(fields, undefined, fullJoin) as SelectedFields;
+}
+
+export function getSelectSourceFields(
+  source: PgTable | Subquery | PgViewBaseInternal | SQL,
+  isPartialSelect: boolean
+): SelectedFields {
+  if (is(source, Subquery)) {
+    return Object.fromEntries(
+      Object.keys(source._.selectedFields).map((key) => [
+        key,
+        source[
+          key as unknown as keyof typeof source
+        ] as unknown as SelectedFields[string],
+      ])
+    );
+  }
+
+  if (is(source, PgViewBase)) {
+    return source[ViewBaseConfig]?.selectedFields as SelectedFields;
+  }
+
+  if (is(source, SQL)) {
+    return {};
+  }
+
+  return aliasFields(getTableColumns<PgTable>(source), !isPartialSelect);
 }
