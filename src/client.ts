@@ -515,9 +515,16 @@ export interface ExecuteBatchesRawChunk {
 function resolveRowsPerChunk(
   options: ExecuteInBatchesOptions | undefined
 ): number {
-  return options?.rowsPerChunk && options.rowsPerChunk > 0
-    ? options.rowsPerChunk
-    : 100_000;
+  const rowsPerChunk = options?.rowsPerChunk;
+  if (
+    typeof rowsPerChunk !== 'number' ||
+    !Number.isFinite(rowsPerChunk) ||
+    rowsPerChunk <= 0
+  ) {
+    return 100_000;
+  }
+
+  return Math.max(1, Math.floor(rowsPerChunk));
 }
 
 async function* streamRawBatches(

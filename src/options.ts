@@ -6,6 +6,14 @@ export interface PreparedStatementCacheConfig {
 
 const DEFAULT_PREPARED_CACHE_SIZE = 32;
 
+function normalizePositiveInteger(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
 export function resolvePrepareCacheOption(
   option?: PrepareCacheOption
 ): PreparedStatementCacheConfig | undefined {
@@ -16,10 +24,15 @@ export function resolvePrepareCacheOption(
   }
 
   if (typeof option === 'number') {
-    const size = Math.max(1, Math.floor(option));
-    return { size };
+    return {
+      size: normalizePositiveInteger(option, DEFAULT_PREPARED_CACHE_SIZE),
+    };
   }
 
-  const size = option.size ?? DEFAULT_PREPARED_CACHE_SIZE;
-  return { size: Math.max(1, Math.floor(size)) };
+  return {
+    size: normalizePositiveInteger(
+      option.size ?? DEFAULT_PREPARED_CACHE_SIZE,
+      DEFAULT_PREPARED_CACHE_SIZE
+    ),
+  };
 }

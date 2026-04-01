@@ -122,6 +122,35 @@ describe('executeInBatches', () => {
     expect(chunks).toEqual([[{ id: 1 }, { id: 2 }, { id: 3 }]]);
   });
 
+  test('rounds fractional rowsPerChunk down to an integer', async () => {
+    const client = makeClient({
+      rows: [[1], [2], [3]],
+    });
+    const chunks: Array<Array<{ id: number }>> = [];
+
+    for await (const chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: 1.9,
+    })) {
+      chunks.push(chunk as Array<{ id: number }>);
+    }
+
+    expect(chunks).toEqual([[{ id: 1 }], [{ id: 2 }], [{ id: 3 }]]);
+  });
+
+  test('falls back to the default chunk size for non-finite rowsPerChunk', async () => {
+    const rows = Array.from({ length: 100_001 }, (_, index) => [index + 1]);
+    const client = makeClient({ rows });
+    const chunkSizes: number[] = [];
+
+    for await (const chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: Number.POSITIVE_INFINITY,
+    })) {
+      chunkSizes.push(chunk.length);
+    }
+
+    expect(chunkSizes).toEqual([100_000, 1]);
+  });
+
   test('closes stream when consumer exits early', async () => {
     let closeCalls = 0;
     const client = makeClient({
