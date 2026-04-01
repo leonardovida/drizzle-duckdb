@@ -2,7 +2,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
 import { describe, expect, test, afterEach } from 'vitest';
 import { drizzle } from '../src/driver.ts';
-import { POOL_PRESETS } from '../src/pool.ts';
+import { POOL_PRESETS, resolvePoolSize } from '../src/pool.ts';
 import { DuckDBDatabase } from '../src/driver.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 import { DuckDBSession } from '../src/session.ts';
@@ -44,6 +44,15 @@ describe('Driver Factory Tests', () => {
 
     test('giga preset has size 16', () => {
       expect(POOL_PRESETS.giga).toBe(16);
+    });
+
+    test('floors fractional explicit pool sizes', () => {
+      expect(resolvePoolSize({ size: 2.9 })).toBe(2);
+    });
+
+    test('falls back when explicit pool sizes are not finite', () => {
+      expect(resolvePoolSize({ size: Number.POSITIVE_INFINITY })).toBe(4);
+      expect(resolvePoolSize({ size: Number.NaN })).toBe(4);
     });
   });
 

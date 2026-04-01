@@ -22,6 +22,16 @@ export const POOL_PRESETS: Record<PoolPreset, number> = {
   memory: 4, // In-memory testing
 };
 
+const DEFAULT_POOL_SIZE = 4;
+
+function normalizePoolSize(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_POOL_SIZE;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
 export interface DuckDBPoolConfig {
   /** Maximum concurrent connections. Defaults to 4. */
   size?: number;
@@ -35,9 +45,9 @@ export function resolvePoolSize(
   pool: DuckDBPoolConfig | PoolPreset | false | undefined
 ): number | false {
   if (pool === false) return false;
-  if (pool === undefined) return 4;
-  if (typeof pool === 'string') return POOL_PRESETS[pool];
-  return pool.size ?? 4;
+  if (pool === undefined) return DEFAULT_POOL_SIZE;
+  if (typeof pool === 'string') return POOL_PRESETS[pool] ?? DEFAULT_POOL_SIZE;
+  return normalizePoolSize(pool.size);
 }
 
 export interface DuckDBConnectionPoolOptions {
@@ -76,7 +86,7 @@ export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
 ): DuckDBConnectionPool & { size: number } {
-  const size = options.size && options.size > 0 ? options.size : 4;
+  const size = normalizePoolSize(options.size);
   const acquireTimeout = options.acquireTimeout ?? 30_000;
   const maxWaitingRequests = options.maxWaitingRequests ?? 100;
   const maxLifetimeMs = options.maxLifetimeMs;
