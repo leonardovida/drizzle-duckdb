@@ -76,6 +76,21 @@ describe('executeArrowOnClient', () => {
     const data = await executeArrowOnClient(client, 'select 1', []);
     expect(data).toBe(fallback);
   });
+
+  test('releases pooled connections after execution', async () => {
+    const connection = makeClient({ fallbackValue: { columns: true } });
+    let releaseCalls = 0;
+    const pool: DuckDBClientLike = {
+      acquire: async () => connection as any,
+      release: async () => {
+        releaseCalls += 1;
+      },
+    } as DuckDBClientLike;
+
+    await executeArrowOnClient(pool, 'select 1', []);
+
+    expect(releaseCalls).toBe(1);
+  });
 });
 
 describe('executeInBatches', () => {
@@ -197,5 +212,26 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(chunks[0]?.columns).toEqual(['id', 'id_1']);
+  });
+
+  test('releases pooled connections when the consumer exits early', async () => {
+    const connection = makeClient({
+      rows: [[1], [2], [3]],
+    });
+    let releaseCalls = 0;
+    const pool: DuckDBClientLike = {
+      acquire: async () => connection as any,
+      release: async () => {
+        releaseCalls += 1;
+      },
+    } as DuckDBClientLike;
+
+    for await (const _chunk of executeInBatchesRaw(pool, 'select', [], {
+      rowsPerChunk: 1,
+    })) {
+      break;
+    }
+
+    expect(releaseCalls).toBe(1);
   });
 });
