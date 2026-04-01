@@ -73,6 +73,39 @@ export interface PrepareParamsOptions {
   warnOnStringArrayLiteral?: () => void;
 }
 
+async function withConnection<T>(
+  client: DuckDBClientLike,
+  callback: (connection: DuckDBConnection) => Promise<T>
+): Promise<T> {
+  if (!isPool(client)) {
+    return await callback(client);
+  }
+
+  const connection = await client.acquire();
+  try {
+    return await callback(connection);
+  } finally {
+    await client.release(connection);
+  }
+}
+
+async function* withConnectionStream<T>(
+  client: DuckDBClientLike,
+  callback: (connection: DuckDBConnection) => AsyncGenerator<T, void, void>
+): AsyncGenerator<T, void, void> {
+  if (!isPool(client)) {
+    yield* callback(client);
+    return;
+  }
+
+  const connection = await client.acquire();
+  try {
+    yield* callback(connection);
+  } finally {
+    await client.release(connection);
+  }
+}
+
 export function prepareParams(
   params: unknown[],
   options: PrepareParamsOptions = {}
@@ -347,44 +380,35 @@ async function materializeRows(
   params: unknown[],
   options: ExecuteClientOptions = {}
 ): Promise<MaterializedRows> {
-  if (isPool(client)) {
-    const connection = await client.acquire();
-    try {
-      return await materializeRows(connection, query, params, options);
-    } finally {
-      await client.release(connection);
-    }
-  }
+  return await withConnection(client, async (connection) => {
+    const values = toNodeApiValues(params);
 
-  const values = toNodeApiValues(params);
-
-  const connection = client as DuckDBConnection;
-
-  if (options.prepareCache && typeof connection.prepare === 'function') {
-    const cache = getPreparedCache(connection, options.prepareCache.size);
-    try {
-      const statement = await getOrPrepareStatement(
-        connection,
-        query,
-        options.prepareCache
-      );
-      if (values) {
-        statement.bind(values as DuckDBValue[]);
-      } else {
-        statement.clearBindings?.();
+    if (options.prepareCache && typeof connection.prepare === 'function') {
+      const cache = getPreparedCache(connection, options.prepareCache.size);
+      try {
+        const statement = await getOrPrepareStatement(
+          connection,
+          query,
+          options.prepareCache
+        );
+        if (values) {
+          statement.bind(values as DuckDBValue[]);
+        } else {
+          statement.clearBindings?.();
+        }
+        const result = await statement.run();
+        cache.entries.delete(query);
+        cache.entries.set(query, { statement });
+        return await materializeResultRows(result);
+      } catch (error) {
+        evictCacheEntry(cache, query);
+        throw error;
       }
-      const result = await statement.run();
-      cache.entries.delete(query);
-      cache.entries.set(query, { statement });
-      return await materializeResultRows(result);
-    } catch (error) {
-      evictCacheEntry(cache, query);
-      throw error;
     }
-  }
 
-  const result = await connection.run(query, values);
-  return await materializeResultRows(result);
+    const result = await connection.run(query, values);
+    return await materializeResultRows(result);
+  });
 }
 
 function clearPreparedCache(connection: DuckDBConnection): void {
@@ -502,45 +526,43 @@ async function* streamRawBatches(
   params: unknown[],
   options: ExecuteInBatchesOptions = {}
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-  if (isPool(client)) {
-    const connection = await client.acquire();
-    try {
-      yield* streamRawBatches(connection, query, params, options);
-      return;
-    } finally {
-      await client.release(connection);
-    }
-  }
+  yield* withConnectionStream(
+    client,
+    async function* (connection): AsyncGenerator<ExecuteBatchesRawChunk> {
+      const rowsPerChunk = resolveRowsPerChunk(options);
+      const values = toNodeApiValues(params);
 
-  const rowsPerChunk = resolveRowsPerChunk(options);
-  const values = toNodeApiValues(params);
+      const result = (await connection.stream(
+        query,
+        values
+      )) as StreamResultLike;
+      const columns = resolveResultColumns(result);
 
-  const result = (await client.stream(query, values)) as StreamResultLike;
-  const columns = resolveResultColumns(result);
+      let rows: unknown[][] = [];
 
-  let rows: unknown[][] = [];
-
-  try {
-    try {
-      for await (const chunk of result.yieldRowsJs()) {
-        for (const row of chunk) {
-          rows.push(row as unknown[]);
-          if (rows.length >= rowsPerChunk) {
-            yield { columns, rows };
-            rows = [];
+      try {
+        try {
+          for await (const chunk of result.yieldRowsJs()) {
+            for (const row of chunk) {
+              rows.push(row as unknown[]);
+              if (rows.length >= rowsPerChunk) {
+                yield { columns, rows };
+                rows = [];
+              }
+            }
           }
+        } catch (error) {
+          throw wrapUnsupportedNodeApiTypeError(result, error);
         }
-      }
-    } catch (error) {
-      throw wrapUnsupportedNodeApiTypeError(result, error);
-    }
 
-    if (rows.length > 0) {
-      yield { columns, rows };
+        if (rows.length > 0) {
+          yield { columns, rows };
+        }
+      } finally {
+        await closeStreamResult(result);
+      }
     }
-  } finally {
-    await closeStreamResult(result);
-  }
+  );
 }
 
 /**
@@ -575,35 +597,28 @@ export async function executeArrowOnClient(
   query: string,
   params: unknown[]
 ): Promise<unknown> {
-  if (isPool(client)) {
-    const connection = await client.acquire();
-    try {
-      return await executeArrowOnClient(connection, query, params);
-    } finally {
-      await client.release(connection);
+  return await withConnection(client, async (connection) => {
+    const values = toNodeApiValues(params);
+    const result = await connection.run(query, values);
+
+    // Runtime detection for Arrow API support (optional method, not in base type)
+    const maybeArrow =
+      (result as unknown as { toArrow?: () => Promise<unknown> }).toArrow ??
+      (result as unknown as { getArrowTable?: () => Promise<unknown> })
+        .getArrowTable;
+
+    if (typeof maybeArrow === 'function') {
+      return await maybeArrow.call(result);
     }
-  }
 
-  const values = toNodeApiValues(params);
-  const result = await client.run(query, values);
-
-  // Runtime detection for Arrow API support (optional method, not in base type)
-  const maybeArrow =
-    (result as unknown as { toArrow?: () => Promise<unknown> }).toArrow ??
-    (result as unknown as { getArrowTable?: () => Promise<unknown> })
-      .getArrowTable;
-
-  if (typeof maybeArrow === 'function') {
-    return await maybeArrow.call(result);
-  }
-
-  // Fallback: return column-major JS arrays to avoid per-row object creation.
-  try {
-    return await result.getColumnsObjectJS();
-  } catch (error) {
-    throw wrapUnsupportedNodeApiTypeError(
-      result as unknown as ResultTypeMetadataLike,
-      error
-    );
-  }
+    // Fallback: return column-major JS arrays to avoid per-row object creation.
+    try {
+      return await result.getColumnsObjectJS();
+    } catch (error) {
+      throw wrapUnsupportedNodeApiTypeError(
+        result as unknown as ResultTypeMetadataLike,
+        error
+      );
+    }
+  });
 }
