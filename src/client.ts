@@ -383,7 +383,11 @@ async function executePreparedQuery(
   const cache = getPreparedCache(connection, cacheConfig.size);
 
   try {
-    const statement = await getOrPrepareStatement(connection, query, cacheConfig);
+    const statement = await getOrPrepareStatement(
+      connection,
+      query,
+      cacheConfig
+    );
     bindPreparedStatement(statement, values);
     const result = await statement.run();
     rememberPreparedStatement(cache, query, statement);
