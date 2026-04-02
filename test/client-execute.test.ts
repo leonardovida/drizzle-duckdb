@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
   executeArrowOnClient,
+  executeArraysOnClient,
   executeInBatches,
   executeInBatchesRaw,
+  executeOnClient,
   type DuckDBClientLike,
 } from '../src/client.ts';
 
@@ -34,6 +36,15 @@ function makeClient(options: {
       return {
         toArrow: arrowValue === undefined ? undefined : async () => arrowValue,
         getColumnsObjectJS: async () => fallbackValue,
+        getRowsJS: async () => rows,
+        columnNames: () => columns,
+        deduplicatedColumnNames:
+          deduplicatedColumns === undefined
+            ? undefined
+            : () => {
+                options.onDeduplicatedColumns?.();
+                return deduplicatedColumns;
+              },
       };
     },
     async stream(_query: string, _values?: unknown[]) {
@@ -170,13 +181,44 @@ describe('executeInBatches', () => {
   });
 });
 
+describe('executeOnClient', () => {
+  test('normalizes node-api duplicate column suffixes for object rows', async () => {
+    const client = makeClient({
+      rows: [[1, 2]],
+      columns: ['id', 'id'],
+      deduplicatedColumns: ['id', 'id:1'],
+    });
+
+    const rows = await executeOnClient(client, 'select', []);
+
+    expect(rows).toEqual([{ id: 1, id_1: 2 }]);
+  });
+});
+
+describe('executeArraysOnClient', () => {
+  test('normalizes node-api duplicate column suffixes for array results', async () => {
+    const client = makeClient({
+      rows: [[1, 2]],
+      columns: ['id', 'id'],
+      deduplicatedColumns: ['id', 'id:1'],
+    });
+
+    const result = await executeArraysOnClient(client, 'select', []);
+
+    expect(result).toEqual({
+      columns: ['id', 'id_1'],
+      rows: [[1, 2]],
+    });
+  });
+});
+
 describe('executeInBatchesRaw', () => {
-  test('uses deduplicatedColumnNames when provided', async () => {
+  test('normalizes node-api duplicate column suffixes when provided', async () => {
     let calls = 0;
     const client = makeClient({
       rows: [[1, 2]],
       columns: ['id', 'id'],
-      deduplicatedColumns: ['id', 'id_1'],
+      deduplicatedColumns: ['id', 'id:1'],
       onDeduplicatedColumns: () => {
         calls += 1;
       },
