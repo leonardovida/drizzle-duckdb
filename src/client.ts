@@ -209,6 +209,36 @@ function deduplicateColumns(columns: string[]): string[] {
   });
 }
 
+function normalizeDeduplicatedColumns(
+  columns: string[],
+  deduplicatedColumns: string[]
+): string[] {
+  if (columns.length !== deduplicatedColumns.length) {
+    return deduplicatedColumns;
+  }
+
+  let changed = false;
+  const normalized = deduplicatedColumns.map((column, index) => {
+    const original = columns[index];
+    if (column === original) {
+      return column;
+    }
+
+    const duplicatePrefix = `${original}:`;
+    if (column.startsWith(duplicatePrefix)) {
+      const suffix = column.slice(duplicatePrefix.length);
+      if (/^\d+$/.test(suffix)) {
+        changed = true;
+        return `${original}_${suffix}`;
+      }
+    }
+
+    return column;
+  });
+
+  return changed ? normalized : deduplicatedColumns;
+}
+
 function destroyPreparedStatement(entry: PreparedCacheEntry | undefined): void {
   if (!entry) return;
   try {
@@ -277,11 +307,16 @@ async function getOrPrepareStatement(
 }
 
 function resolveResultColumns(result: ResultColumnsLike): string[] {
+  const columns = result.columnNames();
+
   if (typeof result.deduplicatedColumnNames === 'function') {
-    return result.deduplicatedColumnNames();
+    return normalizeDeduplicatedColumns(
+      columns,
+      result.deduplicatedColumnNames()
+    );
   }
 
-  return deduplicateColumns(result.columnNames());
+  return deduplicateColumns(columns);
 }
 
 function isUnsupportedNodeApiTypeError(error: unknown): boolean {
