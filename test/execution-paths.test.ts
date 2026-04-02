@@ -89,3 +89,28 @@ test('prepare cache reuses prepared statements', async () => {
   prepareSpy.mockRestore();
   await db.close();
 });
+
+test('prepare cache evicts the least recently used statement', async () => {
+  const { connection, db } = await setupDb({ prepareCache: 1 });
+  const prepareSpy = vi.spyOn(connection, 'prepare');
+
+  const selectById = db
+    .select({ id: sampleTable.id })
+    .from(sampleTable)
+    .where(eq(sampleTable.id, sql.placeholder('pid')))
+    .prepare('cached_select_by_id');
+
+  const selectByValue = db
+    .select({ val: sampleTable.val })
+    .from(sampleTable)
+    .where(eq(sampleTable.val, sql.placeholder('pval')))
+    .prepare('cached_select_by_value');
+
+  expect(await selectById.execute({ pid: 1 })).toEqual([{ id: 1 }]);
+  expect(await selectByValue.execute({ pval: 'b' })).toEqual([{ val: 'b' }]);
+  expect(await selectById.execute({ pid: 3 })).toEqual([{ id: 3 }]);
+  expect(prepareSpy.mock.calls.length).toBe(3);
+
+  prepareSpy.mockRestore();
+  await db.close();
+});
