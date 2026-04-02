@@ -253,6 +253,16 @@ function evictCacheEntry(cache: PreparedStatementCache, key: string): void {
   destroyPreparedStatement(entry);
 }
 
+function rememberPreparedStatement(
+  cache: PreparedStatementCache,
+  query: string,
+  statement: DuckDBPreparedStatement
+): DuckDBPreparedStatement {
+  cache.entries.delete(query);
+  cache.entries.set(query, { statement });
+  return statement;
+}
+
 async function getOrPrepareStatement(
   connection: DuckDBConnection,
   query: string,
@@ -261,19 +271,29 @@ async function getOrPrepareStatement(
   const cache = getPreparedCache(connection, cacheConfig.size);
   const cached = cache.entries.get(query);
   if (cached) {
-    cache.entries.delete(query);
-    cache.entries.set(query, cached);
-    return cached.statement;
+    return rememberPreparedStatement(cache, query, cached.statement);
   }
 
   const statement = await connection.prepare(query);
-  cache.entries.set(query, { statement });
+  rememberPreparedStatement(cache, query, statement);
 
   while (cache.entries.size > cache.size) {
     evictOldest(cache);
   }
 
   return statement;
+}
+
+function bindPreparedStatement(
+  statement: DuckDBPreparedStatement,
+  values: DuckDBValue[] | undefined
+): void {
+  if (values) {
+    statement.bind(values);
+    return;
+  }
+
+  statement.clearBindings?.();
 }
 
 function resolveResultColumns(result: ResultColumnsLike): string[] {
@@ -354,6 +374,26 @@ async function materializeResultRows(
   return { columns, rows };
 }
 
+async function executePreparedQuery(
+  connection: DuckDBConnection,
+  query: string,
+  values: DuckDBValue[] | undefined,
+  cacheConfig: PreparedStatementCacheConfig
+): Promise<MaterializedRows> {
+  const cache = getPreparedCache(connection, cacheConfig.size);
+
+  try {
+    const statement = await getOrPrepareStatement(connection, query, cacheConfig);
+    bindPreparedStatement(statement, values);
+    const result = await statement.run();
+    rememberPreparedStatement(cache, query, statement);
+    return await materializeResultRows(result);
+  } catch (error) {
+    evictCacheEntry(cache, query);
+    throw error;
+  }
+}
+
 type StreamResultLike = ResultTypeMetadataLike & {
   yieldRowsJs: () => AsyncIterable<unknown[][]>;
   close?: () => Promise<void> | void;
@@ -384,26 +424,12 @@ async function materializeRows(
     const values = toNodeApiValues(params);
 
     if (options.prepareCache && typeof connection.prepare === 'function') {
-      const cache = getPreparedCache(connection, options.prepareCache.size);
-      try {
-        const statement = await getOrPrepareStatement(
-          connection,
-          query,
-          options.prepareCache
-        );
-        if (values) {
-          statement.bind(values as DuckDBValue[]);
-        } else {
-          statement.clearBindings?.();
-        }
-        const result = await statement.run();
-        cache.entries.delete(query);
-        cache.entries.set(query, { statement });
-        return await materializeResultRows(result);
-      } catch (error) {
-        evictCacheEntry(cache, query);
-        throw error;
-      }
+      return await executePreparedQuery(
+        connection,
+        query,
+        values,
+        options.prepareCache
+      );
     }
 
     const result = await connection.run(query, values);
