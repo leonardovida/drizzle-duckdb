@@ -50,9 +50,7 @@ function warnAboutUnavailableMotherDuck(error: Error): void {
   }
 
   warnedAboutUnavailableMotherDuck = true;
-  console.warn(
-    `Skipping MotherDuck integration assertions: ${error.message}`
-  );
+  console.warn(`Skipping MotherDuck integration assertions: ${error.message}`);
 }
 
 async function runWithMotherDuckRetry<T>(
