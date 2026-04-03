@@ -1,5 +1,6 @@
 import { DuckDBConnection, DuckDBInstance } from '@duckdb/node-api';
 import { closeClientConnection, type DuckDBConnectionPool } from './client.ts';
+import { normalizePositiveInteger } from './options.ts';
 
 /** Pool size presets for different MotherDuck instance types */
 export type PoolPreset =
@@ -24,14 +25,6 @@ export const POOL_PRESETS: Record<PoolPreset, number> = {
 
 const DEFAULT_POOL_SIZE = 4;
 
-function normalizePoolSize(value: number | undefined): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_POOL_SIZE;
-  }
-
-  return Math.max(1, Math.floor(value));
-}
-
 export interface DuckDBPoolConfig {
   /** Maximum concurrent connections. Defaults to 4. */
   size?: number;
@@ -47,7 +40,7 @@ export function resolvePoolSize(
   if (pool === false) return false;
   if (pool === undefined) return DEFAULT_POOL_SIZE;
   if (typeof pool === 'string') return POOL_PRESETS[pool] ?? DEFAULT_POOL_SIZE;
-  return normalizePoolSize(pool.size);
+  return normalizePositiveInteger(pool.size, DEFAULT_POOL_SIZE);
 }
 
 export interface DuckDBConnectionPoolOptions {
@@ -86,7 +79,7 @@ export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
 ): DuckDBConnectionPool & { size: number } {
-  const size = normalizePoolSize(options.size);
+  const size = normalizePositiveInteger(options.size, DEFAULT_POOL_SIZE);
   const acquireTimeout = options.acquireTimeout ?? 30_000;
   const maxWaitingRequests = options.maxWaitingRequests ?? 100;
   const maxLifetimeMs = options.maxLifetimeMs;
