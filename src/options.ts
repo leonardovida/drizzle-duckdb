@@ -6,8 +6,11 @@ export interface PreparedStatementCacheConfig {
 
 const DEFAULT_PREPARED_CACHE_SIZE = 32;
 
-function normalizePositiveInteger(value: number, fallback: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
+export function normalizePositiveInteger(
+  value: number | undefined,
+  fallback: number
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return fallback;
   }
 

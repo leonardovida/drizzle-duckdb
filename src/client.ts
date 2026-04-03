@@ -11,7 +11,10 @@ import {
   wrapperToNodeApiValue,
   type AnyDuckDBValueWrapper,
 } from './value-wrappers.ts';
-import type { PreparedStatementCacheConfig } from './options.ts';
+import {
+  normalizePositiveInteger,
+  type PreparedStatementCacheConfig,
+} from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
 
 export type DuckDBClientLike = DuckDBConnection | DuckDBConnectionPool;
@@ -580,16 +583,7 @@ export interface ExecuteBatchesRawChunk {
 function resolveRowsPerChunk(
   options: ExecuteInBatchesOptions | undefined
 ): number {
-  const rowsPerChunk = options?.rowsPerChunk;
-  if (
-    typeof rowsPerChunk !== 'number' ||
-    !Number.isFinite(rowsPerChunk) ||
-    rowsPerChunk <= 0
-  ) {
-    return 100_000;
-  }
-
-  return Math.max(1, Math.floor(rowsPerChunk));
+  return normalizePositiveInteger(options?.rowsPerChunk, 100_000);
 }
 
 async function* streamRawBatches(
