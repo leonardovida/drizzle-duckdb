@@ -124,3 +124,41 @@ test('return null instead of object if join has no match', async () => {
     },
   ]);
 });
+
+test('return null for joined objects built only from aliased SQL fields', async () => {
+  const { id: cityId } = await ctx.db
+    .insert(citiesTable)
+    .values({ id: 3, name: 'Rome' })
+    .returning({ id: citiesTable.id })
+    .then((rows) => rows[0]!);
+
+  await ctx.db.insert(users2Table).values([
+    { id: 3, name: 'Alice', cityId },
+    { id: 4, name: 'Bob' },
+  ]);
+
+  const res = await ctx.db
+    .select({
+      id: users2Table.id,
+      city: {
+        upperName: sql<string>`upper(${citiesTable.name})`.as('upper_name'),
+      },
+    })
+    .from(users2Table)
+    .leftJoin(citiesTable, eq(users2Table.cityId, citiesTable.id))
+    .where(sql`${users2Table.id} in (3, 4)`)
+    .orderBy(users2Table.id);
+
+  nodeAssert.deepEqual(res, [
+    {
+      id: 3,
+      city: {
+        upperName: 'ROME',
+      },
+    },
+    {
+      id: 4,
+      city: null,
+    },
+  ]);
+});
