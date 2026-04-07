@@ -29,6 +29,12 @@ type SQLCarrier = {
 type DecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>> =
   Parameters<TDecoder['mapFromDriverValue']>[0];
 
+type NullifyMap = Record<string, string | false>;
+
+const passthroughDecoder: DriverValueDecoder<unknown, unknown> = {
+  mapFromDriverValue: (value) => value,
+};
+
 function toDecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>>(
   decoder: TDecoder,
   value: unknown
@@ -56,6 +62,77 @@ function findColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
   return sqlValue?.queryChunks.find((chunk: unknown) => is(chunk, Column)) as
     | AnyColumn
     | undefined;
+}
+
+function resolveFieldDecoder(
+  field: unknown
+): DriverValueDecoder<unknown, unknown> {
+  if (is(field, Column)) {
+    return field;
+  }
+
+  if (is(field, SQL)) {
+    return (field as SQLInternal).decoder;
+  }
+
+  const fieldSql = getFieldSql(field as SQLCarrier);
+  const column = findColumnInSql(fieldSql);
+
+  if (is(column, PgCustomColumn)) {
+    return column;
+  }
+
+  return fieldSql?.decoder ?? passthroughDecoder;
+}
+
+function trackNullifyTarget(
+  nullifyMap: NullifyMap,
+  objectName: string,
+  tableName: string,
+  value: unknown
+): void {
+  if (!(objectName in nullifyMap)) {
+    nullifyMap[objectName] = value === null ? tableName : false;
+    return;
+  }
+
+  if (nullifyMap[objectName] && nullifyMap[objectName] !== tableName) {
+    nullifyMap[objectName] = false;
+  }
+}
+
+function trackJoinedObjectNullability(
+  nullifyMap: NullifyMap,
+  field: unknown,
+  path: string[],
+  value: unknown
+): void {
+  if (path.length !== 2) {
+    return;
+  }
+
+  const objectName = path[0] as string;
+
+  if (is(field, Column)) {
+    trackNullifyTarget(
+      nullifyMap,
+      objectName,
+      getTableName(field.table),
+      value
+    );
+    return;
+  }
+
+  if (!is(field, SQL.Aliased)) {
+    return;
+  }
+
+  const column = findColumnInSql(getFieldSql(field as SQLCarrier));
+  const tableName = column?.table && getTableName(column.table);
+
+  if (tableName) {
+    trackNullifyTarget(nullifyMap, objectName, tableName, value);
+  }
 }
 
 export function normalizeInet(value: unknown): unknown {
@@ -243,27 +320,11 @@ export function mapResultRow<TResult>(
   row: unknown[],
   joinsNotNullableMap: Record<string, boolean> | undefined
 ): TResult {
-  const nullifyMap: Record<string, string | false> = {};
+  const nullifyMap: NullifyMap = {};
 
   const result = columns.reduce<Record<string, any>>(
     (acc, { path, field }, columnIndex) => {
-      let decoder: DriverValueDecoder<unknown, unknown>;
-      if (is(field, Column)) {
-        decoder = field;
-      } else if (is(field, SQL)) {
-        decoder = (field as SQLInternal).decoder;
-      } else {
-        const fieldSql = getFieldSql(field as SQLCarrier);
-        const col = findColumnInSql(fieldSql);
-
-        if (is(col, PgCustomColumn)) {
-          decoder = col;
-        } else {
-          decoder = fieldSql?.decoder ?? {
-            mapFromDriverValue: (value) => value,
-          };
-        }
-      }
+      const decoder = resolveFieldDecoder(field);
       let node = acc;
       for (const [pathChunkIndex, pathChunk] of path.entries()) {
         if (pathChunkIndex < path.length - 1) {
@@ -279,43 +340,8 @@ export function mapResultRow<TResult>(
         const value = (node[pathChunk] =
           rawValue === null ? null : mapDriverValue(decoder, rawValue));
 
-        if (joinsNotNullableMap && is(field, Column) && path.length === 2) {
-          const objectName = path[0]!;
-          if (!(objectName in nullifyMap)) {
-            nullifyMap[objectName] =
-              value === null ? getTableName(field.table) : false;
-          } else if (
-            typeof nullifyMap[objectName] === 'string' &&
-            nullifyMap[objectName] !== getTableName(field.table)
-          ) {
-            nullifyMap[objectName] = false;
-          }
-          continue;
-        }
-
-        if (
-          joinsNotNullableMap &&
-          is(field, SQL.Aliased) &&
-          path.length === 2
-        ) {
-          const col = findColumnInSql(getFieldSql(field as SQLCarrier));
-          const tableName = col?.table && getTableName(col?.table);
-
-          if (!tableName) {
-            continue;
-          }
-
-          const objectName = path[0]!;
-
-          if (!(objectName in nullifyMap)) {
-            nullifyMap[objectName] = value === null ? tableName : false;
-            continue;
-          }
-
-          if (nullifyMap[objectName] && nullifyMap[objectName] !== tableName) {
-            nullifyMap[objectName] = false;
-          }
-          continue;
+        if (joinsNotNullableMap) {
+          trackJoinedObjectNullability(nullifyMap, field, path, value);
         }
       }
       return acc;
