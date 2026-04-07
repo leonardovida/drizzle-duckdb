@@ -114,7 +114,12 @@ function trackJoinedObjectNullability(
   const objectName = path[0] as string;
 
   if (is(field, Column)) {
-    trackNullifyTarget(nullifyMap, objectName, getTableName(field.table), value);
+    trackNullifyTarget(
+      nullifyMap,
+      objectName,
+      getTableName(field.table),
+      value
+    );
     return;
   }
 
