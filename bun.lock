@@ -10,7 +10,6 @@
       "devDependencies": {
         "@duckdb/node-api": "1.5.1-r.1",
         "@types/bun": "^1.3.11",
-<<<<<<< HEAD
         "@types/node": "25.5.2",
         "@vitest/ui": "4.1.3",
         "drizzle-orm": "0.45.2",
