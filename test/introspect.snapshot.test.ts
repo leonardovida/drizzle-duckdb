@@ -50,7 +50,7 @@ test('introspection snapshot covers DuckDB-specific types', async () => {
     `bigint("visits", { mode: 'number' }).notNull()`,
     `bigint("hits", { mode: 'number' })`,
     `numeric("price", { precision: 12, scale: 2 })`,
-    `duckDbStruct("payload", { "NAME": "VARCHAR", "VALUES": "INTEGER[]" })`,
+    `duckDbStruct("payload", { "name": "VARCHAR", "values": "INTEGER[]" })`,
     `duckDbMap("extras", "INTEGER[]")`,
     `duckDbList("tags", "VARCHAR")`,
     `duckDbList("labels", "VARCHAR")`,
