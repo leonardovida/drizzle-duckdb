@@ -5,7 +5,30 @@ import {
   splitTopLevel,
   buildDefault,
   toIdentifier,
+  normalizeTypeLiteral,
 } from '../src/introspect.ts';
+
+describe('normalizeTypeLiteral', () => {
+  test('canonicalizes character varying aliases', () => {
+    expect(normalizeTypeLiteral('character varying')).toBe('VARCHAR');
+    expect(normalizeTypeLiteral('character varying(255)[]')).toBe(
+      'VARCHAR(255)[]'
+    );
+  });
+
+  test('canonicalizes character aliases', () => {
+    expect(normalizeTypeLiteral('character(8)')).toBe('CHAR(8)');
+  });
+
+  test('canonicalizes timestamp aliases', () => {
+    expect(normalizeTypeLiteral('timestamp without time zone')).toBe(
+      'TIMESTAMP'
+    );
+    expect(normalizeTypeLiteral('timestamptz')).toBe(
+      'TIMESTAMP WITH TIME ZONE'
+    );
+  });
+});
 
 describe('parseStructFields', () => {
   test('parses simple struct fields', () => {
@@ -58,6 +81,16 @@ describe('parseStructFields', () => {
     ]);
   });
 
+  test('canonicalizes Postgres string aliases in nested fields', () => {
+    const result = parseStructFields(
+      'name character varying, tags character varying[]'
+    );
+    expect(result).toEqual([
+      { name: 'name', type: 'VARCHAR' },
+      { name: 'tags', type: 'VARCHAR[]' },
+    ]);
+  });
+
   test('handles whitespace around fields', () => {
     const result = parseStructFields('  name  VARCHAR  ,  age  INTEGER  ');
     // Should parse at least one field
@@ -96,6 +129,11 @@ describe('parseMapValue', () => {
   test('handles nested MAP in value', () => {
     const result = parseMapValue('MAP(TEXT, MAP(TEXT, INT))');
     expect(result).toBe('MAP(TEXT, INT)');
+  });
+
+  test('canonicalizes Postgres string aliases in map values', () => {
+    const result = parseMapValue('MAP(character varying, character varying[])');
+    expect(result).toBe('VARCHAR[]');
   });
 });
 

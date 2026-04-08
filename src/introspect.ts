@@ -571,13 +571,82 @@ interface TypeMappingResult {
   builder: string;
 }
 
+export function normalizeTypeLiteral(raw: string): string {
+  const trimmed = raw.trim().replace(/\s+/g, ' ');
+
+  const arrayMatch = /^(.*?)(\[(?:\d+)?\])$/.exec(trimmed);
+  if (arrayMatch) {
+    const [, base, suffix] = arrayMatch;
+    return `${normalizeTypeLiteral(base ?? '')}${suffix ?? ''}`;
+  }
+
+  const canonicalPrefixes: Array<[RegExp, string]> = [
+    [/^TIMESTAMP WITHOUT TIME ZONE\b/i, 'TIMESTAMP'],
+    [/^TIMESTAMP WITH TIME ZONE\b/i, 'TIMESTAMP WITH TIME ZONE'],
+    [/^TIMESTAMPTZ\b/i, 'TIMESTAMP WITH TIME ZONE'],
+    [/^TIME WITHOUT TIME ZONE\b/i, 'TIME'],
+    [/^CHARACTER VARYING\b/i, 'VARCHAR'],
+    [/^CHARACTER\b/i, 'CHAR'],
+  ];
+
+  for (const [pattern, replacement] of canonicalPrefixes) {
+    const match = pattern.exec(trimmed);
+    if (match) {
+      return `${replacement}${trimmed.slice(match[0].length)}`;
+    }
+  }
+
+  const upper = trimmed.toUpperCase();
+  const simpleTypes = new Set([
+    'BOOLEAN',
+    'BOOL',
+    'SMALLINT',
+    'INT2',
+    'INT16',
+    'TINYINT',
+    'INTEGER',
+    'INT',
+    'INT4',
+    'SIGNED',
+    'BIGINT',
+    'INT8',
+    'UBIGINT',
+    'DECIMAL',
+    'NUMERIC',
+    'REAL',
+    'FLOAT4',
+    'DOUBLE',
+    'DOUBLE PRECISION',
+    'FLOAT',
+    'CHAR',
+    'VARCHAR',
+    'TEXT',
+    'STRING',
+    'UUID',
+    'JSON',
+    'INET',
+    'INTERVAL',
+    'BLOB',
+    'BYTEA',
+    'VARBINARY',
+    'TIMESTAMP',
+    'TIME',
+    'DATE',
+  ]);
+  if (simpleTypes.has(upper)) {
+    return upper;
+  }
+
+  return trimmed;
+}
+
 function mapDuckDbType(
   column: IntrospectedColumn,
   imports: ImportBuckets,
   options: ColumnEmitOptions
 ): TypeMappingResult {
   const raw = column.dataType.trim();
-  const upper = raw.toUpperCase();
+  const upper = normalizeTypeLiteral(raw);
 
   if (upper === 'BOOLEAN' || upper === 'BOOL') {
     imports.pgCore.add('boolean');
@@ -818,23 +887,25 @@ export function parseStructFields(
   for (const part of splitTopLevel(inner, ',')) {
     const trimmed = part.trim();
     if (!trimmed) continue;
-    const match = /^"?([^"]+)"?\s+(.*)$/i.exec(trimmed);
+    const match =
+      /^"([^"]+)"\s+(.*)$/i.exec(trimmed) ??
+      /^([^\s"]+)\s+(.*)$/i.exec(trimmed);
     if (!match) {
       continue;
     }
     const [, name, type] = match;
-    result.push({ name, type: type.trim() });
+    result.push({ name, type: normalizeTypeLiteral(type) });
   }
   return result;
 }
 
 export function parseMapValue(raw: string): string {
-  const inner = raw.replace(/^MAP\(/i, '').replace(/\)$/, '');
+  const inner = raw.trim().replace(/^MAP\(/i, '').replace(/\)$/, '');
   const parts = splitTopLevel(inner, ',');
   if (parts.length < 2) {
     return 'TEXT';
   }
-  return parts[1]?.trim() ?? 'TEXT';
+  return normalizeTypeLiteral(parts[1] ?? 'TEXT');
 }
 
 export function splitTopLevel(input: string, delimiter: string): string[] {
