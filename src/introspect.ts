@@ -772,6 +772,19 @@ function mapDuckDbType(
     return { builder: factory };
   }
 
+  if (
+    upper === 'TIMESTAMP_NS' ||
+    upper === 'TIMESTAMP_MS' ||
+    upper === 'TIMESTAMP_S'
+  ) {
+    imports.local.add('duckDbTimestamp');
+    return {
+      builder: `duckDbTimestamp(${columnName(
+        column.name
+      )}, { duckDbType: ${JSON.stringify(upper)} })`,
+    };
+  }
+
   if (upper.startsWith('TIMESTAMP')) {
     if (options.useCustomTimeTypes) {
       imports.local.add('duckDbTimestamp');
@@ -790,6 +803,22 @@ function mapDuckDbType(
     }
     imports.pgCore.add('time');
     return { builder: `time(${columnName(column.name)})` };
+  }
+
+  if (upper === 'TIME WITH TIME ZONE' || upper === 'TIMETZ') {
+    imports.local.add('duckDbTime');
+    return {
+      builder: `duckDbTime(${columnName(column.name)}, { withTimezone: true })`,
+    };
+  }
+
+  if (upper === 'TIME_NS') {
+    imports.local.add('duckDbTime');
+    return {
+      builder: `duckDbTime(${columnName(
+        column.name
+      )}, { duckDbType: 'TIME_NS' })`,
+    };
   }
 
   if (upper === 'DATE') {

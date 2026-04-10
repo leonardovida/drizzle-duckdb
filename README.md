@@ -153,6 +153,7 @@ const db = drizzle(pool);
 
 - Use `drizzle-orm/pg-core` for schemas; DuckDB SQL is largely Postgres-compatible.
 - DuckDB-specific helpers: `duckDbList`, `duckDbArray`, `duckDbStruct`, `duckDbMap`, `duckDbJson`, `duckDbBlob`, `duckDbInet`, `duckDbInterval`, `duckDbTimestamp`, `duckDbDate`, `duckDbTime`.
+- `duckDbTimestamp` and `duckDbTime` can preserve DuckDB-specific storage variants such as `TIMESTAMP_NS`, `TIMESTAMP_MS`, `TIMESTAMP_S`, `TIME_NS`, and `TIME WITH TIME ZONE` via the `duckDbType` / `withTimezone` options.
 - Browser-safe imports live under `@duckdbfan/drizzle-duckdb/helpers` (introspection emits this path).
 
 See the [column types](https://leonardovida.github.io/drizzle-duckdb/api/columns) docs for full API.

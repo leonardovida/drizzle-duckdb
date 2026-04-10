@@ -12,8 +12,10 @@ function makeClient(options: {
   arrowValue?: unknown;
   fallbackValue?: unknown;
   rows?: unknown[][];
+  jsonRows?: unknown[][];
   columns?: string[];
   deduplicatedColumns?: string[];
+  columnTypeIds?: number[];
   onDeduplicatedColumns?: () => void;
   onStreamClose?: () => void;
 }): DuckDBClientLike {
@@ -21,7 +23,9 @@ function makeClient(options: {
     arrowValue,
     fallbackValue = {},
     rows = [[1], [2], [3]],
+    jsonRows = rows,
     columns = ['id'],
+    columnTypeIds,
     onStreamClose,
   } = options;
   const deduplicatedColumns = Object.prototype.hasOwnProperty.call(
@@ -36,8 +40,15 @@ function makeClient(options: {
       return {
         toArrow: arrowValue === undefined ? undefined : async () => arrowValue,
         getColumnsObjectJS: async () => fallbackValue,
+        getColumnsObjectJson: async () => fallbackValue,
         getRowsJS: async () => rows,
+        getRowsJson: async () => jsonRows,
         columnNames: () => columns,
+        columnCount: columns.length,
+        columnTypeId:
+          columnTypeIds === undefined
+            ? undefined
+            : (index: number) => columnTypeIds[index] ?? -1,
         deduplicatedColumnNames:
           deduplicatedColumns === undefined
             ? undefined
@@ -83,6 +94,18 @@ describe('executeArrowOnClient', () => {
   test('falls back to getColumnsObjectJS when Arrow unavailable', async () => {
     const fallback = { columns: true };
     const client = makeClient({ fallbackValue: fallback });
+
+    const data = await executeArrowOnClient(client, 'select 1', []);
+    expect(data).toBe(fallback);
+  });
+
+  test('uses JSON column materialization for precise time families', async () => {
+    const fallback = { ts_ns: ['2024-03-01 12:34:56.123456789'] };
+    const client = makeClient({
+      fallbackValue: fallback,
+      columns: ['ts_ns'],
+      columnTypeIds: [22],
+    });
 
     const data = await executeArrowOnClient(client, 'select 1', []);
     expect(data).toBe(fallback);
@@ -192,6 +215,24 @@ describe('executeOnClient', () => {
     const rows = await executeOnClient(client, 'select', []);
 
     expect(rows).toEqual([{ id: 1, id_1: 2 }]);
+  });
+
+  test('uses JSON materialization for precise time families', async () => {
+    const client = makeClient({
+      rows: [[new Date('2024-03-01T12:34:56.123Z')]],
+      jsonRows: [['2024-03-01 12:34:56.123456789']],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+    });
+
+    const rows = await executeOnClient(client, 'select', []);
+
+    expect(rows).toEqual([
+      {
+        ts_ns: '2024-03-01 12:34:56.123456789',
+      },
+    ]);
   });
 });
 
