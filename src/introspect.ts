@@ -929,7 +929,10 @@ export function parseStructFields(
 }
 
 export function parseMapValue(raw: string): string {
-  const inner = raw.trim().replace(/^MAP\(/i, '').replace(/\)$/, '');
+  const inner = raw
+    .trim()
+    .replace(/^MAP\(/i, '')
+    .replace(/\)$/, '');
   const parts = splitTopLevel(inner, ',');
   if (parts.length < 2) {
     return 'TEXT';
