@@ -36,6 +36,8 @@ beforeAll(async () => {
       id integer primary key default nextval('introspect.items_seq'),
       name text not null,
       visits bigint not null,
+      precise_time time_ns,
+      wake_at time with time zone,
       tags integer[],
       fixed integer[2],
       payload struct("name" varchar, "values" integer[]),
@@ -44,6 +46,9 @@ beforeAll(async () => {
       duration interval,
       price decimal,
       status introspect.item_status,
+      happened_ns timestamp_ns,
+      happened_ms timestamp_ms,
+      happened_s timestamp_s,
       created_at timestamp with time zone default current_timestamp,
       parent_id integer references introspect.parents(id),
       unique_col text unique,
@@ -74,8 +79,21 @@ test('introspects duckdb catalog and maps duckdb-specific types', async () => {
   expect(schemaTs).toContain(`duckDbArray("fixed"`);
   expect(schemaTs).toContain(`duckDbInterval("duration"`);
   expect(schemaTs).toContain(`numeric("price", { precision: 18, scale: 3 })`);
+  expect(schemaTs).toContain(
+    `duckDbTime("precise_time", { duckDbType: 'TIME_NS' })`
+  );
+  expect(schemaTs).toContain(`duckDbTime("wake_at", { withTimezone: true })`);
   expect(schemaTs).toContain(`/* ENUM ('pending', 'done') */`);
   expect(schemaTs).toContain(`bigint("visits", { mode: 'number' })`);
+  expect(schemaTs).toContain(
+    `duckDbTimestamp("happened_ns", { duckDbType: "TIMESTAMP_NS" })`
+  );
+  expect(schemaTs).toContain(
+    `duckDbTimestamp("happened_ms", { duckDbType: "TIMESTAMP_MS" })`
+  );
+  expect(schemaTs).toContain(
+    `duckDbTimestamp("happened_s", { duckDbType: "TIMESTAMP_S" })`
+  );
   expect(schemaTs).toContain(
     `duckDbTimestamp("created_at", { withTimezone: true })`
   );

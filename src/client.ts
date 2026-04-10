@@ -60,6 +60,11 @@ type ResultTypeMetadataLike = ResultColumnsLike & {
   columnTypeId?: (columnIndex: number) => number;
 };
 
+type ResultJsonRowsLike = {
+  getRowsJson?: () => Promise<unknown[][] | undefined>;
+  getColumnsObjectJson?: () => Promise<unknown>;
+};
+
 type ClosableResource = {
   close?: () => Promise<void> | void;
   closeSync?: () => void;
@@ -348,6 +353,29 @@ function isUnsupportedNodeApiTypeError(error: unknown): boolean {
   );
 }
 
+const JSON_RESULT_TYPE_IDS = new Set([22, 30, 39]);
+
+function prefersJsonMaterialization(result: ResultTypeMetadataLike): boolean {
+  if (
+    typeof result.columnCount !== 'number' ||
+    typeof result.columnTypeId !== 'function'
+  ) {
+    return false;
+  }
+
+  for (
+    let columnIndex = 0;
+    columnIndex < result.columnCount;
+    columnIndex += 1
+  ) {
+    if (JSON_RESULT_TYPE_IDS.has(result.columnTypeId(columnIndex))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function findUnsupportedNodeApiColumns(
   result: ResultTypeMetadataLike
 ): string[] {
@@ -399,13 +427,23 @@ function wrapUnsupportedNodeApiTypeError(
 async function materializeResultRows(
   result: {
     getRowsJS: () => Promise<unknown[][] | undefined>;
-  } & ResultTypeMetadataLike
+  } & ResultTypeMetadataLike &
+    ResultJsonRowsLike
 ): Promise<MaterializedRows> {
+  const preferJson = prefersJsonMaterialization(result);
   let rows: unknown[][];
   try {
-    rows = (await result.getRowsJS()) ?? [];
+    if (preferJson && typeof result.getRowsJson === 'function') {
+      rows = (await result.getRowsJson()) ?? [];
+    } else {
+      rows = (await result.getRowsJS()) ?? [];
+    }
   } catch (error) {
-    throw wrapUnsupportedNodeApiTypeError(result, error);
+    if (preferJson && typeof result.getRowsJson === 'function') {
+      rows = (await result.getRowsJson()) ?? [];
+    } else {
+      throw wrapUnsupportedNodeApiTypeError(result, error);
+    }
   }
   const columns = resolveResultColumns(result);
 
@@ -679,8 +717,26 @@ export async function executeArrowOnClient(
 
     // Fallback: return column-major JS arrays to avoid per-row object creation.
     try {
+      if (
+        prefersJsonMaterialization(
+          result as unknown as ResultTypeMetadataLike
+        ) &&
+        typeof (result as ResultJsonRowsLike).getColumnsObjectJson ===
+          'function'
+      ) {
+        return await (result as ResultJsonRowsLike).getColumnsObjectJson!();
+      }
       return await result.getColumnsObjectJS();
     } catch (error) {
+      if (
+        prefersJsonMaterialization(
+          result as unknown as ResultTypeMetadataLike
+        ) &&
+        typeof (result as ResultJsonRowsLike).getColumnsObjectJson ===
+          'function'
+      ) {
+        return await (result as ResultJsonRowsLike).getColumnsObjectJson!();
+      }
       throw wrapUnsupportedNodeApiTypeError(
         result as unknown as ResultTypeMetadataLike,
         error

@@ -24,8 +24,14 @@ const timestampsTable = pgTable('duckdb_timestamp_cases', {
   tsNoTzString: duckDbTimestamp('ts_no_tz_string', {
     mode: 'string',
   }),
+  tsNs: duckDbTimestamp('ts_ns', {
+    duckDbType: 'TIMESTAMP_NS',
+    mode: 'string',
+  }),
   dateCol: duckDbDate('date_col'),
   timeCol: duckDbTime('time_col'),
+  timeNs: duckDbTime('time_ns', { duckDbType: 'TIME_NS' }),
+  timeWithTz: duckDbTime('time_with_tz', { withTimezone: true }),
 });
 
 interface Context {
@@ -49,8 +55,11 @@ beforeAll(async () => {
       label text not null,
       ts_with_tz timestamptz,
       ts_no_tz_string timestamp,
+      ts_ns timestamp_ns,
       date_col date,
-      time_col time
+      time_col time,
+      time_ns time_ns,
+      time_with_tz time with time zone
     )
   `);
 });
@@ -127,10 +136,17 @@ test('date and time columns round-trip', async () => {
     label: 'date-time',
     dateCol: '2024-04-05',
     timeCol: '23:59:59',
+    timeNs: '23:59:59.123456789',
+    timeWithTz: '23:59:59+02',
   });
 
   const rows = await ctx.db
-    .select({ date: timestampsTable.dateCol, time: timestampsTable.timeCol })
+    .select({
+      date: timestampsTable.dateCol,
+      time: timestampsTable.timeCol,
+      timeNs: timestampsTable.timeNs,
+      timeWithTz: timestampsTable.timeWithTz,
+    })
     .from(timestampsTable)
     .where(eq(timestampsTable.id, 3));
 
@@ -138,4 +154,29 @@ test('date and time columns round-trip', async () => {
     typeof rows[0]?.date === 'string' || rows[0]?.date instanceof Date
   ).toBe(true);
   expect(typeof rows[0]?.time === 'string').toBe(true);
+  expect(rows[0]?.timeNs).toContain('23:59:59');
+  expect(rows[0]?.timeWithTz).toContain('+02');
+});
+
+test('specialized time helpers preserve DuckDB SQL types', () => {
+  expect(timestampsTable.tsWithTz.getSQLType()).toBe('TIMESTAMPTZ');
+  expect(timestampsTable.tsNs.getSQLType()).toBe('TIMESTAMP_NS');
+  expect(timestampsTable.timeCol.getSQLType()).toBe('TIME');
+  expect(timestampsTable.timeNs.getSQLType()).toBe('TIME_NS');
+  expect(timestampsTable.timeWithTz.getSQLType()).toBe('TIMETZ');
+});
+
+test('timestamp_ns can be read in string mode', async () => {
+  await ctx.db.insert(timestampsTable).values({
+    id: 5,
+    label: 'ts-ns',
+    tsNs: '2024-03-01 12:34:56.123456789',
+  });
+
+  const rows = await ctx.db
+    .select({ tsNs: timestampsTable.tsNs })
+    .from(timestampsTable)
+    .where(eq(timestampsTable.id, 5));
+
+  expect(rows[0]?.tsNs).toContain('2024-03-01 12:34:56.123456789');
 });

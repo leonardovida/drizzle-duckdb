@@ -47,11 +47,13 @@ type BlobColType = 'BLOB' | 'BYTEA' | 'VARBINARY';
 type DateColType =
   | 'DATE'
   | 'TIME'
+  | 'TIME_NS'
   | 'TIMETZ'
   | 'TIMESTAMP'
   | 'DATETIME'
   | 'TIMESTAMPTZ'
   | 'TIMESTAMP_MS'
+  | 'TIMESTAMP_NS'
   | 'TIMESTAMP_S';
 
 type AnyColType =
@@ -341,14 +343,73 @@ export const duckDbInterval = (name: string) =>
 
 type TimestampMode = 'date' | 'string';
 
+type DuckDbTimestampType =
+  | 'TIMESTAMP'
+  | 'TIMESTAMPTZ'
+  | 'TIMESTAMP_S'
+  | 'TIMESTAMP_MS'
+  | 'TIMESTAMP_NS';
+
+type DuckDbTimeType = 'TIME' | 'TIMETZ' | 'TIME_NS';
+
 interface TimestampOptions {
   withTimezone?: boolean;
   mode?: TimestampMode;
   precision?: number;
   bindMode?: 'auto' | 'bind' | 'literal';
+  duckDbType?: DuckDbTimestampType;
+}
+
+interface TimeOptions {
+  withTimezone?: boolean;
+  duckDbType?: DuckDbTimeType;
+}
+
+function resolveTimestampType(options: TimestampOptions): DuckDbTimestampType {
+  if (options.duckDbType) {
+    return options.duckDbType;
+  }
+
+  return options.withTimezone ? 'TIMESTAMPTZ' : 'TIMESTAMP';
+}
+
+function isTimestampWithTimezone(
+  duckDbType: DuckDbTimestampType,
+  options: TimestampOptions
+): boolean {
+  return duckDbType === 'TIMESTAMPTZ' || options.withTimezone === true;
+}
+
+function resolveTimeType(options: TimeOptions): DuckDbTimeType {
+  if (options.duckDbType) {
+    return options.duckDbType;
+  }
+
+  return options.withTimezone ? 'TIMETZ' : 'TIME';
+}
+
+function normalizeTimestampStringForDate(stringValue: string): string {
+  const trimmed = stringValue.trim();
+  const normalized = trimmed.replace(' ', 'T');
+
+  if (normalized.endsWith('Z')) {
+    return normalized;
+  }
+
+  return normalized
+    .replace(/([+-]\d{2})$/, '$1:00')
+    .replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
 }
 
 function shouldBindTimestamp(options: TimestampOptions): boolean {
+  if (
+    options.duckDbType &&
+    options.duckDbType !== 'TIMESTAMP' &&
+    options.duckDbType !== 'TIMESTAMPTZ'
+  ) {
+    return false;
+  }
+
   const bindMode = options.bindMode ?? 'auto';
   if (bindMode === 'bind') return true;
   if (bindMode === 'literal') return false;
@@ -376,8 +437,9 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
     driverData: SQL | string | Date | TimestampValueWrapper;
   }>({
     dataType() {
-      if (options.withTimezone) {
-        return 'TIMESTAMPTZ';
+      const duckDbType = resolveTimestampType(options);
+      if (duckDbType !== 'TIMESTAMP') {
+        return duckDbType;
       }
       const precision = options.precision ? `(${options.precision})` : '';
       return `TIMESTAMP${precision}`;
@@ -385,18 +447,16 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
     toDriver(
       value: Date | string
     ): SQL | string | Date | TimestampValueWrapper {
+      const duckDbType = resolveTimestampType(options);
+      const withTimezone = isTimestampWithTimezone(duckDbType, options);
+
       if (shouldBindTimestamp(options)) {
-        return wrapTimestamp(
-          value,
-          options.withTimezone ?? false,
-          options.precision
-        );
+        return wrapTimestamp(value, withTimezone, options.precision);
       }
 
       const iso = value instanceof Date ? value.toISOString() : value;
       const normalized = iso.replace('T', ' ').replace('Z', '+00');
-      const typeKeyword = options.withTimezone ? 'TIMESTAMPTZ' : 'TIMESTAMP';
-      return sql.raw(`${typeKeyword} '${normalized}'`);
+      return sql.raw(`${duckDbType} '${normalized}'`);
     },
     fromDriver(value: Date | string | SQL | TimestampValueWrapper) {
       if (
@@ -423,9 +483,9 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
       }
       const stringValue = typeof value === 'string' ? value : value.toString();
       const hasOffset =
-        stringValue.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(stringValue);
+        stringValue.endsWith('Z') || /[+-]\d{2}(?::?\d{2})?$/.test(stringValue);
       const normalized = hasOffset
-        ? stringValue.replace(' ', 'T')
+        ? normalizeTimestampStringForDate(stringValue)
         : `${stringValue.replace(' ', 'T')}Z`;
       return new Date(normalized);
     },
@@ -446,10 +506,10 @@ export const duckDbDate = (name: string) =>
     },
   })(name);
 
-export const duckDbTime = (name: string) =>
+export const duckDbTime = (name: string, options: TimeOptions = {}) =>
   customType<{ data: string; driverData: string | bigint }>({
     dataType() {
-      return 'TIME';
+      return resolveTimeType(options);
     },
     toDriver(value: string) {
       return value;
