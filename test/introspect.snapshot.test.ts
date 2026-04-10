@@ -57,7 +57,7 @@ test('introspection snapshot covers DuckDB-specific types', async () => {
     `numeric("price", { precision: 12, scale: 2 })`,
     `duckDbTime("precise_time", { duckDbType: 'TIME_NS' })`,
     `duckDbTime("wake_at", { withTimezone: true })`,
-    `duckDbStruct("payload", { "NAME": "VARCHAR", "VALUES": "INTEGER[]" })`,
+    `duckDbStruct("payload", { "name": "VARCHAR", "values": "INTEGER[]" })`,
     `duckDbMap("extras", "INTEGER[]")`,
     `duckDbList("tags", "VARCHAR")`,
     `duckDbList("labels", "VARCHAR")`,
