@@ -186,6 +186,7 @@ export class DuckDBPreparedQuery<
 export interface DuckDBSessionOptions {
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
+  arrayLiteralWarning?: (query: string) => void;
   prepareCache?: PreparedStatementCacheConfig;
 }
 
@@ -314,6 +315,10 @@ export class DuckDBSession<
       return;
     }
     this.hasWarnedArrayLiteral = true;
+    if (this.options.arrayLiteralWarning) {
+      this.options.arrayLiteralWarning(query);
+      return;
+    }
     this.logger.logQuery(
       `[duckdb] ${arrayLiteralWarning}\nquery: ${query}`,
       []

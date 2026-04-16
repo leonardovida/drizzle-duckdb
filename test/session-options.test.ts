@@ -95,9 +95,9 @@ describe('Session Options Tests', () => {
         )
       `);
 
-      // The rejectStringArrayLiterals option affects parameter handling
-      // This test verifies the option is accepted
-      expect(db).toBeDefined();
+      await expect(async () => {
+        await db.execute(sql`INSERT INTO reject_test VALUES (1, ${'{1,2,3}'})`);
+      }).toThrow('Stringified array literals are not supported');
 
       await db.close();
     });
@@ -150,11 +150,11 @@ describe('Session Options Tests', () => {
         )
       `);
 
-      // Insert with array literal - should trigger warning if detected
-      await db.execute(sql`INSERT INTO warn_test VALUES (1, [1, 2, 3])`);
+      await db.execute(sql`INSERT INTO warn_test VALUES (1, ${'{1,2,3}'})`);
+      await db.execute(sql`INSERT INTO warn_test VALUES (2, ${'{4,5,6}'})`);
 
-      // Note: The warning may or may not be triggered depending on
-      // how the query is constructed. This test validates the callback mechanism.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('INSERT INTO warn_test');
       await db.close();
     });
   });

@@ -162,6 +162,24 @@ await db.execute(sql`SELECT * FROM t WHERE tags = '{a,b}'`);
 // Error: Postgres-style array literals are not supported
 ```
 
+### arrayLiteralWarning
+
+Handle the first detected Postgres-style array literal warning yourself.
+
+| Type                     | Default | Description                                                    |
+| ------------------------ | ------- | -------------------------------------------------------------- |
+| `(query: string) => void` | logging | Called once with the SQL text when a `'{...}'` parameter is coerced |
+
+**Usage**:
+
+```typescript
+const db = drizzle(connection, {
+  arrayLiteralWarning: (query) => {
+    console.warn('Array literal parameter detected', query);
+  },
+});
+```
+
 ### pool
 
 Control connection pooling when using async connection strings/config. DuckDB runs one query per connection; pooling enables parallelism.
