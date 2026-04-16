@@ -166,8 +166,8 @@ await db.execute(sql`SELECT * FROM t WHERE tags = '{a,b}'`);
 
 Handle the first detected Postgres-style array literal warning yourself.
 
-| Type                     | Default | Description                                                    |
-| ------------------------ | ------- | -------------------------------------------------------------- |
+| Type                      | Default | Description                                                         |
+| ------------------------- | ------- | ------------------------------------------------------------------- |
 | `(query: string) => void` | logging | Called once with the SQL text when a `'{...}'` parameter is coerced |
 
 **Usage**:
