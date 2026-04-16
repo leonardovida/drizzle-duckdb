@@ -95,9 +95,11 @@ describe('Session Options Tests', () => {
         )
       `);
 
-      await expect(async () => {
-        await db.execute(sql`INSERT INTO reject_test VALUES (1, ${'{1,2,3}'})`);
-      }).toThrow('Stringified array literals are not supported');
+      await expect(
+        Promise.resolve(
+          db.execute(sql`INSERT INTO reject_test VALUES (1, ${'{1,2,3}'})`)
+        )
+      ).rejects.toThrow('Stringified array literals are not supported');
 
       await db.close();
     });
