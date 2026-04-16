@@ -398,6 +398,19 @@ export class DuckDBTransaction<
 > extends PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema> {
   static readonly [entityKind]: string = 'DuckDBTransaction';
 
+  private getInternals(): DuckDBTransactionWithInternals<TFullSchema, TSchema> {
+    // PgTransaction keeps dialect/session private, but DuckDB transaction
+    // helpers need the session for DuckDB-specific execution paths.
+    return this as unknown as DuckDBTransactionWithInternals<
+      TFullSchema,
+      TSchema
+    >;
+  }
+
+  private markRollbackOnly(): void {
+    this.getInternals().session.markRollbackOnly();
+  }
+
   rollback(): never {
     throw new TransactionRollbackError();
   }
@@ -450,9 +463,7 @@ export class DuckDBTransaction<
   }
 
   setTransaction(config: PgTransactionConfig): Promise<void> {
-    // Cast needed: PgTransaction doesn't expose dialect/session properties in public API
-    type Tx = DuckDBTransactionWithInternals<TFullSchema, TSchema>;
-    return (this as unknown as Tx).session.execute(
+    return this.getInternals().session.execute(
       sql`set transaction ${this.getTransactionConfigSQL(config)}`
     );
   }
@@ -461,32 +472,24 @@ export class DuckDBTransaction<
     query: SQL,
     options: ExecuteInBatchesOptions = {}
   ): AsyncGenerator<GenericRowData<T>[], void, void> {
-    // Cast needed: PgTransaction doesn't expose session property in public API
-    type Tx = DuckDBTransactionWithInternals<TFullSchema, TSchema>;
-    return (this as unknown as Tx).session.executeBatches<T>(query, options);
+    return this.getInternals().session.executeBatches<T>(query, options);
   }
 
   executeBatchesRaw(
     query: SQL,
     options: ExecuteInBatchesOptions = {}
   ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-    // Cast needed: PgTransaction doesn't expose session property in public API
-    type Tx = DuckDBTransactionWithInternals<TFullSchema, TSchema>;
-    return (this as unknown as Tx).session.executeBatchesRaw(query, options);
+    return this.getInternals().session.executeBatchesRaw(query, options);
   }
 
   executeArrow(query: SQL): Promise<unknown> {
-    // Cast needed: PgTransaction doesn't expose session property in public API
-    type Tx = DuckDBTransactionWithInternals<TFullSchema, TSchema>;
-    return (this as unknown as Tx).session.executeArrow(query);
+    return this.getInternals().session.executeArrow(query);
   }
 
   override async transaction<T>(
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>
   ): Promise<T> {
-    // Cast needed: PgTransaction doesn't expose dialect/session properties in public API
-    type Tx = DuckDBTransactionWithInternals<TFullSchema, TSchema>;
-    const internals = this as unknown as Tx;
+    const internals = this.getInternals();
     const savepoint = `drizzle_savepoint_${this.nestedIndex + 1}`;
     const savepointSql = sql.raw(`savepoint ${savepoint}`);
     const releaseSql = sql.raw(`release savepoint ${savepoint}`);
@@ -501,7 +504,7 @@ export class DuckDBTransaction<
 
     // Check dialect-level savepoint support (per-instance, not global)
     if (internals.dialect.areSavepointsUnsupported()) {
-      return this.runNestedWithoutSavepoint(transaction, nestedTx, internals);
+      return this.runNestedWithoutSavepoint(transaction, nestedTx);
     }
 
     let createdSavepoint = false;
@@ -514,7 +517,7 @@ export class DuckDBTransaction<
         throw error;
       }
       internals.dialect.markSavepointsUnsupported();
-      return this.runNestedWithoutSavepoint(transaction, nestedTx, internals);
+      return this.runNestedWithoutSavepoint(transaction, nestedTx);
     }
 
     try {
@@ -527,22 +530,17 @@ export class DuckDBTransaction<
       if (createdSavepoint) {
         await internals.session.execute(rollbackSql);
       }
-      (
-        internals.session as DuckDBSession<TFullSchema, TSchema>
-      ).markRollbackOnly();
+      this.markRollbackOnly();
       throw error;
     }
   }
 
   private runNestedWithoutSavepoint<T>(
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
-    nestedTx: DuckDBTransaction<TFullSchema, TSchema>,
-    internals: DuckDBTransactionWithInternals<TFullSchema, TSchema>
+    nestedTx: DuckDBTransaction<TFullSchema, TSchema>
   ): Promise<T> {
     return transaction(nestedTx).catch((error) => {
-      (
-        internals.session as DuckDBSession<TFullSchema, TSchema>
-      ).markRollbackOnly();
+      this.markRollbackOnly();
       throw error;
     });
   }
