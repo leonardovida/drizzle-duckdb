@@ -53,6 +53,7 @@ import {
 export interface PgDriverOptions {
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
+  arrayLiteralWarning?: (query: string) => void;
   prepareCache?: PreparedStatementCacheConfig;
 }
 
@@ -71,6 +72,7 @@ export class DuckDBDriver {
     return new DuckDBSession(this.client, this.dialect, schema, {
       logger: this.options.logger,
       rejectStringArrayLiterals: this.options.rejectStringArrayLiterals,
+      arrayLiteralWarning: this.options.arrayLiteralWarning,
       prepareCache: this.options.prepareCache,
     });
   }
@@ -88,6 +90,7 @@ export interface DuckDBDrizzleConfig<
   TSchema extends Record<string, unknown> = Record<string, never>,
 > extends DrizzleConfig<TSchema> {
   rejectStringArrayLiterals?: boolean;
+  arrayLiteralWarning?: (query: string) => void;
   prepareCache?: PrepareCacheOption;
   /** Pool configuration. Use preset name, size config, or false to disable. */
   pool?: DuckDBPoolConfig | PoolPreset | false;
@@ -165,6 +168,7 @@ function createFromClient<
   const driver = new DuckDBDriver(finalClient, dialect, {
     logger,
     rejectStringArrayLiterals: config.rejectStringArrayLiterals,
+    arrayLiteralWarning: config.arrayLiteralWarning,
     prepareCache,
   });
   const session = driver.createSession(schema);

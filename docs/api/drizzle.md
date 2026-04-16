@@ -50,6 +50,9 @@ interface DuckDBDrizzleConfig<TSchema> {
 
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals?: boolean;
+
+  // Handle the first coerced Postgres-style array literal warning
+  arrayLiteralWarning?: (query: string) => void;
 }
 ```
 
