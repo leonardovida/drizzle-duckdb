@@ -393,10 +393,7 @@ export class DuckDBTransaction<
 > extends PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema> {
   static readonly [entityKind]: string = 'DuckDBTransaction';
 
-  private getInternals(): DuckDBTransactionWithInternals<
-    TFullSchema,
-    TSchema
-  > {
+  private getInternals(): DuckDBTransactionWithInternals<TFullSchema, TSchema> {
     // PgTransaction keeps dialect/session private, but DuckDB transaction
     // helpers need the session for DuckDB-specific execution paths.
     return this as unknown as DuckDBTransactionWithInternals<
