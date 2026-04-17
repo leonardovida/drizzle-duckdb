@@ -183,7 +183,9 @@ describe('Session Options Tests', () => {
         getTransactionConfigSQL({
           isolationLevel: 'serializable; drop table users;',
         })
-      ).toThrow('Invalid transaction isolation level');
+      ).toThrow(
+        'Invalid transaction isolation level "serializable; drop table users;". Expected one of: read uncommitted, read committed, repeatable read, serializable.'
+      );
     });
 
     test('rejects invalid access mode values', () => {
@@ -191,7 +193,9 @@ describe('Session Options Tests', () => {
         getTransactionConfigSQL({
           accessMode: 'read only; drop table users;',
         })
-      ).toThrow('Invalid transaction access mode');
+      ).toThrow(
+        'Invalid transaction access mode "read only; drop table users;". Expected one of: read only, read write.'
+      );
     });
 
     test('rejects non-boolean deferrable values', () => {
