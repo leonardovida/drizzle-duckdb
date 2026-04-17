@@ -158,7 +158,7 @@ MotherDuck caches query results. Repeated queries on the same data will be faste
 
 ### Read Scaling and Session Affinity
 
-MotherDuck can use read scaling tokens to spread reads across replicas. Set a stable `session_hint` in your connection options to keep related queries on the same replica. Instance cache TTL determines how long a replica stays warm, so reuse the same `session_hint` while you want cache affinity.
+MotherDuck can use read scaling tokens to spread reads across replicas. Set a stable `session_name` in your connection options to keep related queries on the same replica. Instance cache TTL determines how long a replica stays warm, so reuse the same `session_name` while you want cache affinity. Older integrations may still pass `session_hint`, but MotherDuck now treats `session_name` as the preferred option.
 
 ```typescript
 const db = await drizzle({
@@ -166,7 +166,7 @@ const db = await drizzle({
     path: 'md:',
     options: {
       motherduck_token: process.env.MOTHERDUCK_TOKEN,
-      session_hint: 'analytics-dashboard',
+      session_name: 'analytics-dashboard',
     },
   },
 });
