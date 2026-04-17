@@ -21,7 +21,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | Aggregations                         | Full    |                                                                                                                     |
 | Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                                   |
 | Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                               |
-| Prepared statements                  | Partial | No statement caching; no named statements                                                                           |
+| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                               |
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                          |
 | `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5 types exist, but `@duckdb/node-api` cannot yet materialize raw values reliably. Cast in the query first. |
 | Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                          |
@@ -52,7 +52,7 @@ await db.transaction(async (tx) => {
 
 ## DuckDB 1.5 Core Types
 
-DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.1-r.1` still throws a low-level conversion error when those raw values are materialized into JavaScript.
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.2-r.1` still throws a low-level conversion error when those raw values are materialized into JavaScript.
 
 Use explicit projections when querying those columns:
 
