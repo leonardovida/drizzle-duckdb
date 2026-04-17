@@ -73,6 +73,22 @@ const VALID_TRANSACTION_ACCESS_MODES = new Set<string>([
   'read write',
 ]);
 
+function assertValidTransactionOption(
+  label: string,
+  value: string | undefined,
+  validValues: ReadonlySet<string>
+): void {
+  if (!value || validValues.has(value)) {
+    return;
+  }
+
+  throw new Error(
+    `Invalid transaction ${label} "${value}". Expected one of: ${Array.from(
+      validValues
+    ).join(', ')}.`
+  );
+}
+
 interface QueryParamPreparationOptions {
   logger: Logger;
   queryString: string;
@@ -416,27 +432,16 @@ export class DuckDBTransaction<
   }
 
   getTransactionConfigSQL(config: PgTransactionConfig): SQL {
-    if (
-      config.isolationLevel &&
-      !VALID_TRANSACTION_ISOLATION_LEVELS.has(config.isolationLevel)
-    ) {
-      throw new Error(
-        `Invalid transaction isolation level "${config.isolationLevel}". Expected one of: ${Array.from(
-          VALID_TRANSACTION_ISOLATION_LEVELS
-        ).join(', ')}.`
-      );
-    }
-
-    if (
-      config.accessMode &&
-      !VALID_TRANSACTION_ACCESS_MODES.has(config.accessMode)
-    ) {
-      throw new Error(
-        `Invalid transaction access mode "${config.accessMode}". Expected one of: ${Array.from(
-          VALID_TRANSACTION_ACCESS_MODES
-        ).join(', ')}.`
-      );
-    }
+    assertValidTransactionOption(
+      'isolation level',
+      config.isolationLevel,
+      VALID_TRANSACTION_ISOLATION_LEVELS
+    );
+    assertValidTransactionOption(
+      'access mode',
+      config.accessMode,
+      VALID_TRANSACTION_ACCESS_MODES
+    );
 
     if (
       config.deferrable !== undefined &&
