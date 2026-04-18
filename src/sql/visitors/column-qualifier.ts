@@ -18,6 +18,12 @@ import type {
   OrderBy,
   Column,
 } from 'node-sql-parser';
+import {
+  getColumnName,
+  isBinaryExpr,
+  isQualifiedColumnRef,
+  isUnqualifiedColumnRef,
+} from './ast-helpers.ts';
 
 type TableSource = {
   name: string;
@@ -55,37 +61,6 @@ function getQualifier(source: TableSource): Qualifier {
   };
 }
 
-function isUnqualifiedColumnRef(expr: ExpressionValue): expr is ColumnRefItem {
-  return (
-    typeof expr === 'object' &&
-    expr !== null &&
-    'type' in expr &&
-    expr.type === 'column_ref' &&
-    (!('table' in expr) || !expr.table)
-  );
-}
-
-function isQualifiedColumnRef(expr: ExpressionValue): expr is ColumnRefItem {
-  return (
-    typeof expr === 'object' &&
-    expr !== null &&
-    'type' in expr &&
-    expr.type === 'column_ref' &&
-    'table' in expr &&
-    !!expr.table
-  );
-}
-
-function getColumnName(col: ColumnRefItem): string | null {
-  if (typeof col.column === 'string') {
-    return col.column;
-  }
-  if (col.column && 'expr' in col.column && col.column.expr?.value) {
-    return String(col.column.expr.value);
-  }
-  return null;
-}
-
 function applyQualifier(col: ColumnRefItem, qualifier: Qualifier): void {
   col.table = qualifier.table;
   if (!('schema' in col) || !col.schema) {
@@ -120,17 +95,6 @@ function unwrapColumnRef(
     }
   }
   return null;
-}
-
-function isBinaryExpr(
-  expr: ExpressionValue | Binary | null | undefined
-): expr is Binary {
-  return (
-    !!expr &&
-    typeof expr === 'object' &&
-    'type' in expr &&
-    (expr as { type?: string }).type === 'binary_expr'
-  );
 }
 
 function walkOnClause(

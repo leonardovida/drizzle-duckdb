@@ -12,7 +12,6 @@
 
 import type {
   AST,
-  Binary,
   ColumnRefItem,
   ExpressionValue,
   From,
@@ -21,36 +20,7 @@ import type {
   OrderBy,
   Column,
 } from 'node-sql-parser';
-
-function getColumnName(col: ColumnRefItem): string | null {
-  if (typeof col.column === 'string') {
-    return col.column;
-  }
-  if (col.column && 'expr' in col.column && col.column.expr?.value) {
-    return String(col.column.expr.value);
-  }
-  return null;
-}
-
-function isColumnRef(expr: ExpressionValue): expr is ColumnRefItem {
-  return (
-    typeof expr === 'object' &&
-    expr !== null &&
-    'type' in expr &&
-    expr.type === 'column_ref'
-  );
-}
-
-function isBinaryExpr(
-  expr: ExpressionValue | Binary | null | undefined
-): expr is Binary {
-  return (
-    !!expr &&
-    typeof expr === 'object' &&
-    'type' in expr &&
-    (expr as { type?: string }).type === 'binary_expr'
-  );
-}
+import { getColumnName, isBinaryExpr, isColumnRef } from './ast-helpers.ts';
 
 function getGenerateSeriesAliases(from: Select['from']): Set<string> {
   const aliases = new Set<string>();
@@ -107,7 +77,7 @@ function walkExpression(
   }
 
   if (isBinaryExpr(expr)) {
-    const binary = expr as Binary;
+    const binary = expr;
     transformed =
       walkExpression(binary.left as ExpressionValue, aliases) || transformed;
     transformed =
