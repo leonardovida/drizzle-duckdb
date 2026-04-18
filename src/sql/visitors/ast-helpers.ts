@@ -1,8 +1,4 @@
-import type {
-  Binary,
-  ColumnRefItem,
-  ExpressionValue,
-} from 'node-sql-parser';
+import type { Binary, ColumnRefItem, ExpressionValue } from 'node-sql-parser';
 
 export function isColumnRef(expr: unknown): expr is ColumnRefItem {
   return (
@@ -13,9 +9,7 @@ export function isColumnRef(expr: unknown): expr is ColumnRefItem {
   );
 }
 
-export function isUnqualifiedColumnRef(
-  expr: unknown
-): expr is ColumnRefItem {
+export function isUnqualifiedColumnRef(expr: unknown): expr is ColumnRefItem {
   return isColumnRef(expr) && (!('table' in expr) || !expr.table);
 }
 
