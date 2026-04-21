@@ -281,7 +281,7 @@ const db = drizzle(pool);
 
 ### Advanced Pool Options
 
-`createDuckDBConnectionPool` supports tuning beyond size:
+Auto-created pools support the same tuning options through `drizzle('path', { pool: { ... } })`, and `createDuckDBConnectionPool` exposes the same controls for manual pools:
 
 - `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time
 - `maxWaitingRequests` (default 100): cap queued acquires; throws when full
@@ -327,8 +327,8 @@ const db = await drizzle(':memory:', {
   // Schema for relational queries
   schema: mySchema,
 
-  // Pool configuration (size/preset; use createDuckDBConnectionPool for timeouts)
-  pool: { size: 8 },
+  // Pool configuration (size/preset plus timeout and recycling options)
+  pool: { size: 8, idleTimeoutMs: 60_000 },
 
   // Throw on Postgres-style array literals (default: false)
   rejectStringArrayLiterals: false,

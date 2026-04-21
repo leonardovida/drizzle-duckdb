@@ -73,6 +73,38 @@ describe('Driver Factory Tests', () => {
     });
   });
 
+  describe('drizzle() pool options', () => {
+    test('forwards acquireTimeout to auto-created pools', async () => {
+      db = await drizzle(':memory:', {
+        pool: { size: 1, acquireTimeout: 10 },
+      });
+
+      const pool = db.$client as any;
+      const leased = await pool.acquire();
+
+      await expect(pool.acquire()).rejects.toThrow(/acquire timeout/i);
+
+      await pool.release(leased);
+    });
+
+    test('forwards idleTimeoutMs to auto-created pools', async () => {
+      db = await drizzle(':memory:', {
+        pool: { size: 1, idleTimeoutMs: 1 },
+      });
+
+      const pool = db.$client as any;
+      const first = await pool.acquire();
+      await pool.release(first);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const second = await pool.acquire();
+      expect(second).not.toBe(first);
+
+      await pool.release(second);
+    });
+  });
+
   describe('close() behavior', () => {
     test('close() resolves successfully', async () => {
       const instance = await DuckDBInstance.create(':memory:');

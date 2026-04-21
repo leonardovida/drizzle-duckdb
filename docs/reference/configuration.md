@@ -18,7 +18,7 @@ const db = drizzle(connection, {
   logger: true,
   schema: mySchema,
   rejectStringArrayLiterals: false,
-  pool: { size: 6 },
+  pool: { size: 6, idleTimeoutMs: 60_000 },
 });
 ```
 
