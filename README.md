@@ -128,9 +128,10 @@ const db = drizzle(connection, {
 DuckDB executes one query per connection. The async `drizzle()` entrypoints create a pool automatically (default size: 4). Options:
 
 - Set pool size or MotherDuck preset: `drizzle('md:', { pool: { size: 8 } })` or `pool: 'jumbo'` / `pool: 'giga'`.
+- Tune timeout and recycling behavior on the auto-created pool: `pool: { size: 8, idleTimeoutMs: 60_000, maxLifetimeMs: 10 * 60_000 }`.
 - Disable pooling for single-connection workloads: `pool: false`.
 - Transactions pin one pooled connection for their entire lifetime; non-transactional queries still use the pool.
-- For tuning (acquire timeout, queue limits, idle/lifetime recycling), create the pool manually:
+- Create the pool manually when you need the `setup` hook or want to reuse the same pool across multiple `drizzle()` instances:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
@@ -281,8 +282,8 @@ const db = drizzle(connection, {
   // Enable query logging
   logger: new DefaultLogger(),
 
-  // Pool size/preset when using connection strings (default: 4). Set false to disable.
-  pool: { size: 8 },
+  // Pool size, presets, and timeout/recycling when using connection strings.
+  pool: { size: 8, idleTimeoutMs: 60_000 },
 
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals: false,

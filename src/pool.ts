@@ -28,6 +28,14 @@ const DEFAULT_POOL_SIZE = 4;
 export interface DuckDBPoolConfig {
   /** Maximum concurrent connections. Defaults to 4. */
   size?: number;
+  /** Timeout in milliseconds to wait for a connection. Defaults to 30000 (30s). */
+  acquireTimeout?: number;
+  /** Maximum number of requests waiting for a connection. Defaults to 100. */
+  maxWaitingRequests?: number;
+  /** Max time (ms) a connection may live before being recycled. */
+  maxLifetimeMs?: number;
+  /** Max idle time (ms) before an idle connection is discarded. */
+  idleTimeoutMs?: number;
 }
 
 /**
@@ -43,17 +51,7 @@ export function resolvePoolSize(
   return normalizePositiveInteger(pool.size, DEFAULT_POOL_SIZE);
 }
 
-export interface DuckDBConnectionPoolOptions {
-  /** Maximum concurrent connections. Defaults to 4. */
-  size?: number;
-  /** Timeout in milliseconds to wait for a connection. Defaults to 30000 (30s). */
-  acquireTimeout?: number;
-  /** Maximum number of requests waiting for a connection. Defaults to 100. */
-  maxWaitingRequests?: number;
-  /** Max time (ms) a connection may live before being recycled. */
-  maxLifetimeMs?: number;
-  /** Max idle time (ms) before an idle connection is discarded. */
-  idleTimeoutMs?: number;
+export interface DuckDBConnectionPoolOptions extends DuckDBPoolConfig {
   /** Optional setup hook for newly created connections. */
   setup?: (connection: DuckDBConnection) => Promise<void>;
 }

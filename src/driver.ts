@@ -183,6 +183,16 @@ function createFromClient<
   return db as DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>;
 }
 
+function resolvePoolOptions(
+  pool: DuckDBPoolConfig | PoolPreset | false | undefined
+): DuckDBPoolConfig | undefined {
+  if (!pool || typeof pool !== 'object') {
+    return undefined;
+  }
+
+  return pool;
+}
+
 /** Internal: create database from a connection string */
 async function createFromConnectionString<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -193,6 +203,7 @@ async function createFromConnectionString<
 ): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
   const instance = await DuckDBInstance.create(path, instanceOptions);
   const ducklakeConfig = config.ducklake;
+  const poolOptions = resolvePoolOptions(config.pool);
   const { poolSize, resolvedPoolSize, isLocalCatalog } =
     resolveDuckLakePoolSize(config.pool, ducklakeConfig);
 
@@ -227,6 +238,7 @@ async function createFromConnectionString<
   }
 
   const pool = createDuckDBConnectionPool(instance, {
+    ...poolOptions,
     size: poolSize,
     setup: ducklakeConfig
       ? async (connection) => {
