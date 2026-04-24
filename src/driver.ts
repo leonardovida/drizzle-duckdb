@@ -125,6 +125,96 @@ function isConfigObject(data: unknown): data is Record<string, unknown> {
   );
 }
 
+interface ResolvedConnectionTarget<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+> {
+  kind: 'connection';
+  path: string;
+  instanceOptions: Record<string, string> | undefined;
+  config: DuckDBDrizzleConfig<TSchema>;
+}
+
+interface ResolvedClientTarget<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+> {
+  kind: 'client';
+  client: DuckDBClientLike;
+  config: DuckDBDrizzleConfig<TSchema>;
+}
+
+type ResolvedDrizzleTarget<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+> = ResolvedConnectionTarget<TSchema> | ResolvedClientTarget<TSchema>;
+
+function resolveConnectionTarget(
+  connection: string | DuckDBConnectionConfig
+): Omit<ResolvedConnectionTarget, 'config' | 'kind'> {
+  if (typeof connection === 'string') {
+    return {
+      path: connection,
+      instanceOptions: undefined,
+    };
+  }
+
+  return {
+    path: connection.path,
+    instanceOptions: connection.options,
+  };
+}
+
+function resolveDrizzleTarget<
+  TSchema extends Record<string, unknown> = Record<string, never>,
+>(
+  clientOrConfigOrPath:
+    | string
+    | DuckDBClientLike
+    | DuckDBDrizzleConfigWithConnection<TSchema>
+    | DuckDBDrizzleConfigWithClient<TSchema>,
+  config: DuckDBDrizzleConfig<TSchema> = {}
+): ResolvedDrizzleTarget<TSchema> {
+  if (typeof clientOrConfigOrPath === 'string') {
+    return {
+      kind: 'connection',
+      ...resolveConnectionTarget(clientOrConfigOrPath),
+      config,
+    };
+  }
+
+  if (isConfigObject(clientOrConfigOrPath)) {
+    if ('connection' in clientOrConfigOrPath) {
+      const { connection, ...restConfig } = clientOrConfigOrPath;
+
+      return {
+        kind: 'connection',
+        ...resolveConnectionTarget(
+          connection as DuckDBDrizzleConfigWithConnection<TSchema>['connection']
+        ),
+        config: restConfig as DuckDBDrizzleConfig<TSchema>,
+      };
+    }
+
+    if ('client' in clientOrConfigOrPath) {
+      const { client, ...restConfig } = clientOrConfigOrPath;
+
+      return {
+        kind: 'client',
+        client: client as DuckDBClientLike,
+        config: restConfig as DuckDBDrizzleConfig<TSchema>,
+      };
+    }
+
+    throw new Error(
+      'Invalid drizzle config: either connection or client must be provided'
+    );
+  }
+
+  return {
+    kind: 'client',
+    client: clientOrConfigOrPath as DuckDBClientLike,
+    config,
+  };
+}
+
 /** Internal: create database from a client (connection or pool) */
 function createFromClient<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -304,51 +394,17 @@ export function drizzle<
 ):
   | DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>
   | Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
-  // String path -> async with auto-pool
-  if (typeof clientOrConfigOrPath === 'string') {
-    return createFromConnectionString(clientOrConfigOrPath, undefined, config);
-  }
+  const target = resolveDrizzleTarget(clientOrConfigOrPath, config);
 
-  // Config object with connection or client
-  if (isConfigObject(clientOrConfigOrPath)) {
-    const configObj = clientOrConfigOrPath as
-      | DuckDBDrizzleConfigWithConnection<TSchema>
-      | DuckDBDrizzleConfigWithClient<TSchema>;
-
-    if ('connection' in configObj) {
-      const connConfig =
-        configObj as DuckDBDrizzleConfigWithConnection<TSchema>;
-      const { connection, ...restConfig } = connConfig;
-      if (typeof connection === 'string') {
-        return createFromConnectionString(
-          connection,
-          undefined,
-          restConfig as DuckDBDrizzleConfig<TSchema>
-        );
-      }
-      return createFromConnectionString(
-        connection.path,
-        connection.options,
-        restConfig as DuckDBDrizzleConfig<TSchema>
-      );
-    }
-
-    if ('client' in configObj) {
-      const clientConfig = configObj as DuckDBDrizzleConfigWithClient<TSchema>;
-      const { client: clientValue, ...restConfig } = clientConfig;
-      return createFromClient(
-        clientValue,
-        restConfig as DuckDBDrizzleConfig<TSchema>
-      );
-    }
-
-    throw new Error(
-      'Invalid drizzle config: either connection or client must be provided'
+  if (target.kind === 'connection') {
+    return createFromConnectionString(
+      target.path,
+      target.instanceOptions,
+      target.config
     );
   }
 
-  // Direct client (backward compatible)
-  return createFromClient(clientOrConfigOrPath as DuckDBClientLike, config);
+  return createFromClient(target.client, target.config);
 }
 
 export class DuckDBDatabase<
