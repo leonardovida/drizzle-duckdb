@@ -476,6 +476,7 @@ async function executePreparedQuery(
 
 type StreamResultLike = ResultTypeMetadataLike & {
   yieldRowsJs: () => AsyncIterable<unknown[][]>;
+  yieldRowsJson?: () => AsyncIterable<unknown[][]>;
   close?: () => Promise<void> | void;
   cancel?: () => Promise<void> | void;
 };
@@ -641,12 +642,18 @@ async function* streamRawBatches(
         values
       )) as StreamResultLike;
       const columns = resolveResultColumns(result);
+      const preferJson =
+        prefersJsonMaterialization(result) &&
+        typeof result.yieldRowsJson === 'function';
+      const rowStream = preferJson
+        ? result.yieldRowsJson!()
+        : result.yieldRowsJs();
 
       let rows: unknown[][] = [];
 
       try {
         try {
-          for await (const chunk of result.yieldRowsJs()) {
+          for await (const chunk of rowStream) {
             for (const row of chunk) {
               rows.push(row as unknown[]);
               if (rows.length >= rowsPerChunk) {

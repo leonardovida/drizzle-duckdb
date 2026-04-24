@@ -61,6 +61,11 @@ function makeClient(options: {
     async stream(_query: string, _values?: unknown[]) {
       return {
         columnNames: () => columns,
+        columnCount: columns.length,
+        columnTypeId:
+          columnTypeIds === undefined
+            ? undefined
+            : (index: number) => columnTypeIds[index] ?? -1,
         deduplicatedColumnNames:
           deduplicatedColumns === undefined
             ? undefined
@@ -70,6 +75,9 @@ function makeClient(options: {
               },
         async *yieldRowsJs() {
           yield rows;
+        },
+        async *yieldRowsJson() {
+          yield jsonRows;
         },
         close() {
           onStreamClose?.();
@@ -201,6 +209,25 @@ describe('executeInBatches', () => {
     }
 
     expect(closeCalls).toBe(1);
+  });
+
+  test('uses JSON streaming for precise time families', async () => {
+    const client = makeClient({
+      rows: [[new Date('2024-03-01T12:34:56.123Z')]],
+      jsonRows: [['2024-03-01 12:34:56.123456789']],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+    });
+    const chunks: Array<Array<{ ts_ns: string }>> = [];
+
+    for await (const chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: 1,
+    })) {
+      chunks.push(chunk as Array<{ ts_ns: string }>);
+    }
+
+    expect(chunks).toEqual([[{ ts_ns: '2024-03-01 12:34:56.123456789' }]]);
   });
 });
 
