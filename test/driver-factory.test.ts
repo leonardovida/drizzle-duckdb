@@ -73,6 +73,44 @@ describe('Driver Factory Tests', () => {
     });
   });
 
+  describe('drizzle() config object entrypoints', () => {
+    test('creates database from config with connection string', async () => {
+      db = await drizzle({
+        connection: ':memory:',
+        pool: false,
+      });
+
+      const result = await db.execute(sql`SELECT 1 as value`);
+      expect(result[0]).toEqual({ value: 1 });
+    });
+
+    test('creates database from config with connection object', async () => {
+      db = await drizzle({
+        connection: { path: ':memory:' },
+        pool: false,
+      });
+
+      const result = await db.execute(sql`SELECT 1 as value`);
+      expect(result[0]).toEqual({ value: 1 });
+    });
+
+    test('creates database from config with explicit client', async () => {
+      const instance = await DuckDBInstance.create(':memory:');
+      const connection = await instance.connect();
+
+      db = drizzle({
+        client: connection,
+      });
+
+      const result = await db.execute(sql`SELECT 1 as value`);
+      expect(result[0]).toEqual({ value: 1 });
+
+      await db.close();
+      db = null;
+      instance.closeSync?.();
+    });
+  });
+
   describe('drizzle() pool options', () => {
     test('forwards acquireTimeout to auto-created pools', async () => {
       db = await drizzle(':memory:', {
