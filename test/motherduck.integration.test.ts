@@ -20,7 +20,7 @@ const MOTHERDUCK_TRANSIENT_ERROR_PATTERNS = [
 const MOTHERDUCK_UNAVAILABLE_ERROR_PATTERNS = [
   /failed to resolve extension version from server response/i,
   /Web Authentication Redirect/i,
-  /redirect=http:\/\/api\.motherduck\.com\/extension_version/i,
+  /redirect=https?:\/\/api\.motherduck\.com\/extension_version/i,
 ];
 let warnedAboutUnavailableMotherDuck = false;
 
