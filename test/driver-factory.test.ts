@@ -1,6 +1,6 @@
-import { DuckDBInstance } from '@duckdb/node-api';
+import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
-import { describe, expect, test, afterEach } from 'vitest';
+import { describe, expect, test, afterEach, vi } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 import { POOL_PRESETS, resolvePoolSize } from '../src/pool.ts';
 import { DuckDBDatabase } from '../src/driver.ts';
@@ -15,6 +15,7 @@ describe('Driver Factory Tests', () => {
       await db.close();
       db = null;
     }
+    vi.restoreAllMocks();
   });
 
   describe('Pool Presets', () => {
@@ -184,6 +185,32 @@ describe('Driver Factory Tests', () => {
 
       await expect(dbWithFailingClient.close()).rejects.toBe(closeError);
       expect(instanceClosed).toBe(1);
+    });
+
+    test('connection-string setup closes resources when DuckLake setup fails', async () => {
+      const setupError = new Error('ducklake setup failed');
+      const connection = {
+        run: vi.fn(async () => {
+          throw setupError;
+        }),
+        closeSync: vi.fn(),
+      } as unknown as DuckDBConnection;
+      const instance = {
+        connect: vi.fn(async () => connection),
+        closeSync: vi.fn(),
+      } as unknown as DuckDBInstance;
+
+      vi.spyOn(DuckDBInstance, 'create').mockResolvedValue(instance);
+
+      await expect(
+        drizzle(':memory:', {
+          pool: false,
+          ducklake: { catalog: 'md:meta_db' },
+        })
+      ).rejects.toBe(setupError);
+
+      expect(connection.closeSync).toHaveBeenCalledTimes(1);
+      expect(instance.closeSync).toHaveBeenCalledTimes(1);
     });
   });
 });

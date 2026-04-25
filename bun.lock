@@ -29,7 +29,7 @@
     },
   },
   "overrides": {
-    "esbuild": "0.25.12",
+    "esbuild": "0.28.0",
   },
   "packages": {
     "@duckdb/node-api": ["@duckdb/node-api@1.5.2-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.5.2-r.1" } }, "sha512-OzBBnS0JGXMoS5mzKNY/Ylr7SshcRQiLFIoxQ4AlePwJ2fNeDL/fbHu/knjxUrXwW1fJBTUgwWftmxDdnZZb3A=="],

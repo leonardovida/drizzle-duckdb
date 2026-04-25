@@ -292,56 +292,71 @@ async function createFromConnectionString<
   config: DuckDBDrizzleConfig<TSchema> = {}
 ): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
   const instance = await DuckDBInstance.create(path, instanceOptions);
-  const ducklakeConfig = config.ducklake;
-  const poolOptions = resolvePoolOptions(config.pool);
-  const { poolSize, resolvedPoolSize, isLocalCatalog } =
-    resolveDuckLakePoolSize(config.pool, ducklakeConfig);
+  let createdClient: DuckDBClientLike | undefined;
 
-  if (
-    ducklakeConfig &&
-    resolvedPoolSize !== false &&
-    typeof resolvedPoolSize === 'number' &&
-    resolvedPoolSize > 1 &&
-    isLocalCatalog
-  ) {
-    console.warn(
-      '[ducklake] DuckDB catalog files support a single client connection. Pool sizes greater than 1 can cause write conflicts.'
-    );
-  }
+  try {
+    const ducklakeConfig = config.ducklake;
+    const poolOptions = resolvePoolOptions(config.pool);
+    const { poolSize, resolvedPoolSize, isLocalCatalog } =
+      resolveDuckLakePoolSize(config.pool, ducklakeConfig);
 
-  if (poolSize === false) {
-    const connection = await instance.connect();
-    try {
+    if (
+      ducklakeConfig &&
+      resolvedPoolSize !== false &&
+      typeof resolvedPoolSize === 'number' &&
+      resolvedPoolSize > 1 &&
+      isLocalCatalog
+    ) {
+      console.warn(
+        '[ducklake] DuckDB catalog files support a single client connection. Pool sizes greater than 1 can cause write conflicts.'
+      );
+    }
+
+    if (poolSize === false) {
+      const connection = await instance.connect();
+      createdClient = connection;
       if (ducklakeConfig) {
         await configureDuckLake(connection, ducklakeConfig);
       }
-    } catch (error) {
-      await closeClientConnection(connection);
-      throw error;
+      const { ducklake, ...restConfig } = config;
+      const db = createFromClient(
+        connection,
+        restConfig as DuckDBDrizzleConfig<TSchema>,
+        instance
+      );
+      createdClient = undefined;
+      return db;
     }
+
+    const pool = createDuckDBConnectionPool(instance, {
+      ...poolOptions,
+      size: poolSize,
+      setup: ducklakeConfig
+        ? async (connection) => {
+            await configureDuckLake(connection, ducklakeConfig);
+          }
+        : undefined,
+    });
+    createdClient = pool;
     const { ducklake, ...restConfig } = config;
-    return createFromClient(
-      connection,
+    const db = createFromClient(
+      pool,
       restConfig as DuckDBDrizzleConfig<TSchema>,
       instance
     );
+    createdClient = undefined;
+    return db;
+  } catch (error) {
+    if (createdClient) {
+      if (isPool(createdClient) && createdClient.close) {
+        await createdClient.close();
+      } else if (!isPool(createdClient)) {
+        await closeClientConnection(createdClient);
+      }
+    }
+    await closeDuckDbInstance(instance);
+    throw error;
   }
-
-  const pool = createDuckDBConnectionPool(instance, {
-    ...poolOptions,
-    size: poolSize,
-    setup: ducklakeConfig
-      ? async (connection) => {
-          await configureDuckLake(connection, ducklakeConfig);
-        }
-      : undefined,
-  });
-  const { ducklake, ...restConfig } = config;
-  return createFromClient(
-    pool,
-    restConfig as DuckDBDrizzleConfig<TSchema>,
-    instance
-  );
 }
 
 // Overload 1: Connection string (async, auto-pools)
