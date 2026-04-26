@@ -11,21 +11,27 @@ import {
 function makeClient(options: {
   arrowValue?: unknown;
   fallbackValue?: unknown;
+  jsonColumnsValue?: unknown;
   rows?: unknown[][];
   jsonRows?: unknown[][];
   columns?: string[];
   deduplicatedColumns?: string[];
   columnTypeIds?: number[];
+  getRowsError?: Error;
+  getColumnsObjectError?: Error;
   onDeduplicatedColumns?: () => void;
   onStreamClose?: () => void;
 }): DuckDBClientLike {
   const {
     arrowValue,
     fallbackValue = {},
+    jsonColumnsValue = fallbackValue,
     rows = [[1], [2], [3]],
     jsonRows = rows,
     columns = ['id'],
     columnTypeIds,
+    getRowsError,
+    getColumnsObjectError,
     onStreamClose,
   } = options;
   const deduplicatedColumns = Object.prototype.hasOwnProperty.call(
@@ -39,9 +45,19 @@ function makeClient(options: {
     async run(_query: string, _values?: unknown[]) {
       return {
         toArrow: arrowValue === undefined ? undefined : async () => arrowValue,
-        getColumnsObjectJS: async () => fallbackValue,
-        getColumnsObjectJson: async () => fallbackValue,
-        getRowsJS: async () => rows,
+        getColumnsObjectJS: async () => {
+          if (getColumnsObjectError) {
+            throw getColumnsObjectError;
+          }
+          return fallbackValue;
+        },
+        getColumnsObjectJson: async () => jsonColumnsValue,
+        getRowsJS: async () => {
+          if (getRowsError) {
+            throw getRowsError;
+          }
+          return rows;
+        },
         getRowsJson: async () => jsonRows,
         columnNames: () => columns,
         columnCount: columns.length,
@@ -105,6 +121,20 @@ describe('executeArrowOnClient', () => {
       fallbackValue: fallback,
       columns: ['ts_ns'],
       columnTypeIds: [22],
+    });
+
+    const data = await executeArrowOnClient(client, 'select 1', []);
+    expect(data).toBe(fallback);
+  });
+
+  test('falls back to JSON column materialization when JS materialization fails', async () => {
+    const fallback = { ts_ns: ['2024-03-01 12:34:56.123456789'] };
+    const client = makeClient({
+      fallbackValue: { ignored: true },
+      jsonColumnsValue: fallback,
+      columns: ['ts_ns'],
+      columnTypeIds: [22],
+      getColumnsObjectError: new Error('Unexpected type id: 0'),
     });
 
     const data = await executeArrowOnClient(client, 'select 1', []);
@@ -224,6 +254,25 @@ describe('executeOnClient', () => {
       columns: ['ts_ns'],
       deduplicatedColumns: ['ts_ns'],
       columnTypeIds: [22],
+    });
+
+    const rows = await executeOnClient(client, 'select', []);
+
+    expect(rows).toEqual([
+      {
+        ts_ns: '2024-03-01 12:34:56.123456789',
+      },
+    ]);
+  });
+
+  test('falls back to JSON rows when JS materialization fails for precise time families', async () => {
+    const client = makeClient({
+      rows: [[new Date('2024-03-01T12:34:56.123Z')]],
+      jsonRows: [['2024-03-01 12:34:56.123456789']],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+      getRowsError: new Error('Unexpected type id: 0'),
     });
 
     const rows = await executeOnClient(client, 'select', []);

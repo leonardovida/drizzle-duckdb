@@ -76,9 +76,35 @@ type DisconnectableResource = ClosableResource & {
 
 const PREPARED_CACHE = Symbol.for('drizzle-duckdb:prepared-cache');
 
+interface PreferredResultReader<T> {
+  readDefault: () => Promise<T>;
+  readPreferred?: () => Promise<T>;
+  wrapError: (error: unknown) => Error;
+}
+
 export interface PrepareParamsOptions {
   rejectStringArrayLiterals?: boolean;
   warnOnStringArrayLiteral?: () => void;
+}
+
+async function readPreferredResult<T>({
+  readDefault,
+  readPreferred,
+  wrapError,
+}: PreferredResultReader<T>): Promise<T> {
+  try {
+    if (readPreferred) {
+      return await readPreferred();
+    }
+
+    return await readDefault();
+  } catch (error) {
+    if (readPreferred) {
+      return await readPreferred();
+    }
+
+    throw wrapError(error);
+  }
 }
 
 async function withConnection<T>(
@@ -430,21 +456,18 @@ async function materializeResultRows(
   } & ResultTypeMetadataLike &
     ResultJsonRowsLike
 ): Promise<MaterializedRows> {
-  const preferJson = prefersJsonMaterialization(result);
-  let rows: unknown[][];
-  try {
-    if (preferJson && typeof result.getRowsJson === 'function') {
-      rows = (await result.getRowsJson()) ?? [];
-    } else {
-      rows = (await result.getRowsJS()) ?? [];
-    }
-  } catch (error) {
-    if (preferJson && typeof result.getRowsJson === 'function') {
-      rows = (await result.getRowsJson()) ?? [];
-    } else {
-      throw wrapUnsupportedNodeApiTypeError(result, error);
-    }
-  }
+  const getRowsJson =
+    typeof result.getRowsJson === 'function'
+      ? result.getRowsJson.bind(result)
+      : undefined;
+  const rows = await readPreferredResult({
+    readDefault: async () => (await result.getRowsJS()) ?? [],
+    readPreferred:
+      prefersJsonMaterialization(result) && getRowsJson
+        ? async () => (await getRowsJson()) ?? []
+        : undefined,
+    wrapError: (error) => wrapUnsupportedNodeApiTypeError(result, error),
+  });
   const columns = resolveResultColumns(result);
 
   return { columns, rows };
@@ -716,31 +739,20 @@ export async function executeArrowOnClient(
     }
 
     // Fallback: return column-major JS arrays to avoid per-row object creation.
-    try {
-      if (
-        prefersJsonMaterialization(
-          result as unknown as ResultTypeMetadataLike
-        ) &&
-        typeof (result as ResultJsonRowsLike).getColumnsObjectJson ===
-          'function'
-      ) {
-        return await (result as ResultJsonRowsLike).getColumnsObjectJson!();
-      }
-      return await result.getColumnsObjectJS();
-    } catch (error) {
-      if (
-        prefersJsonMaterialization(
-          result as unknown as ResultTypeMetadataLike
-        ) &&
-        typeof (result as ResultJsonRowsLike).getColumnsObjectJson ===
-          'function'
-      ) {
-        return await (result as ResultJsonRowsLike).getColumnsObjectJson!();
-      }
-      throw wrapUnsupportedNodeApiTypeError(
-        result as unknown as ResultTypeMetadataLike,
-        error
-      );
-    }
+    const resultMetadata = result as unknown as ResultTypeMetadataLike;
+    const resultJsonRows = result as ResultJsonRowsLike;
+    const getColumnsObjectJson =
+      typeof resultJsonRows.getColumnsObjectJson === 'function'
+        ? resultJsonRows.getColumnsObjectJson.bind(result)
+        : undefined;
+    return await readPreferredResult({
+      readDefault: () => result.getColumnsObjectJS(),
+      readPreferred:
+        prefersJsonMaterialization(resultMetadata) && getColumnsObjectJson
+          ? () => getColumnsObjectJson()
+          : undefined,
+      wrapError: (error) =>
+        wrapUnsupportedNodeApiTypeError(resultMetadata, error),
+    });
   });
 }
