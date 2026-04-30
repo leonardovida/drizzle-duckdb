@@ -9,6 +9,9 @@ import {
   denseRank,
   drizzle,
   lag,
+  lanceFts,
+  lanceHybridSearch,
+  lanceVectorSearch,
   lead,
   median,
   olap,
@@ -19,6 +22,7 @@ import {
   sumN,
 } from '../src';
 import type { DuckDBDatabase } from '../src';
+import { DuckDBDialect } from '../src/dialect.ts';
 
 const numbers = pgTable('olap_numbers', {
   id: integer('id').primaryKey(),
@@ -232,6 +236,72 @@ test('lead with default value for last row', async () => {
     .orderBy(windowed.id);
 
   expect(rows[1]?.nextAmount).toBe(999);
+});
+
+test('MotherDuck Lance helpers emit table functions with named parameters', () => {
+  const dialect = new DuckDBDialect();
+
+  const vector = dialect.sqlToQuery(
+    lanceVectorSearch('documents', 'embedding', [0.1, 0.2], {
+      k: 5,
+      useIndex: false,
+      nprobs: 12,
+      refineFactor: 2,
+      prefilter: true,
+      explainVerbose: true,
+    })
+  );
+  const fts = dialect.sqlToQuery(
+    lanceFts('documents', 'body', 'duckdb', {
+      k: 3,
+      prefilter: false,
+    })
+  );
+  const hybrid = dialect.sqlToQuery(
+    lanceHybridSearch('documents', 'embedding', [0.1], 'body', 'duckdb', {
+      k: 10,
+      nprobs: 20,
+      refineFactor: 4,
+      prefilter: true,
+      useIndex: true,
+      alpha: 0.75,
+      oversampleFactor: 8,
+    })
+  );
+
+  expect(vector.sql).toContain(
+    'lance_vector_search($1, $2, $3, k = $4, use_index = $5, nprobs = $6, refine_factor = $7, prefilter = $8, explain_verbose = $9)'
+  );
+  expect(vector.params).toEqual([
+    'documents',
+    'embedding',
+    [0.1, 0.2],
+    5,
+    false,
+    12,
+    2,
+    true,
+    true,
+  ]);
+  expect(fts.sql).toContain('lance_fts($1, $2, $3, k = $4, prefilter = $5)');
+  expect(fts.params).toEqual(['documents', 'body', 'duckdb', 3, false]);
+  expect(hybrid.sql).toContain(
+    'lance_hybrid_search($1, $2, $3, $4, $5, k = $6, nprobs = $7, refine_factor = $8, prefilter = $9, use_index = $10, alpha = $11, oversample_factor = $12)'
+  );
+  expect(hybrid.params).toEqual([
+    'documents',
+    'embedding',
+    [0.1],
+    'body',
+    'duckdb',
+    10,
+    20,
+    4,
+    true,
+    true,
+    0.75,
+    8,
+  ]);
 });
 
 test('OlapBuilder throws when from() not called', () => {
