@@ -18,7 +18,9 @@ function makeClient(options: {
   deduplicatedColumns?: string[];
   columnTypeIds?: number[];
   getRowsError?: Error;
+  getRowsJsonError?: Error;
   getColumnsObjectError?: Error;
+  getColumnsObjectJsonError?: Error;
   onDeduplicatedColumns?: () => void;
   onStreamClose?: () => void;
 }): DuckDBClientLike {
@@ -31,7 +33,9 @@ function makeClient(options: {
     columns = ['id'],
     columnTypeIds,
     getRowsError,
+    getRowsJsonError,
     getColumnsObjectError,
+    getColumnsObjectJsonError,
     onStreamClose,
   } = options;
   const deduplicatedColumns = Object.prototype.hasOwnProperty.call(
@@ -51,14 +55,24 @@ function makeClient(options: {
           }
           return fallbackValue;
         },
-        getColumnsObjectJson: async () => jsonColumnsValue,
+        getColumnsObjectJson: async () => {
+          if (getColumnsObjectJsonError) {
+            throw getColumnsObjectJsonError;
+          }
+          return jsonColumnsValue;
+        },
         getRowsJS: async () => {
           if (getRowsError) {
             throw getRowsError;
           }
           return rows;
         },
-        getRowsJson: async () => jsonRows,
+        getRowsJson: async () => {
+          if (getRowsJsonError) {
+            throw getRowsJsonError;
+          }
+          return jsonRows;
+        },
         columnNames: () => columns,
         columnCount: columns.length,
         columnTypeId:
@@ -143,6 +157,19 @@ describe('executeArrowOnClient', () => {
       columns: ['ts_ns'],
       columnTypeIds: [22],
       getColumnsObjectError: new Error('Unexpected type id: 0'),
+    });
+
+    const data = await executeArrowOnClient(client, 'select 1', []);
+    expect(data).toBe(fallback);
+  });
+
+  test('falls back to JS column materialization when preferred JSON materialization fails', async () => {
+    const fallback = { ts_ns: ['2024-03-01T12:34:56.123Z'] };
+    const client = makeClient({
+      fallbackValue: fallback,
+      columns: ['ts_ns'],
+      columnTypeIds: [22],
+      getColumnsObjectJsonError: new Error('json reader unavailable'),
     });
 
     const data = await executeArrowOnClient(client, 'select 1', []);
@@ -307,6 +334,25 @@ describe('executeOnClient', () => {
     expect(rows).toEqual([
       {
         ts_ns: '2024-03-01 12:34:56.123456789',
+      },
+    ]);
+  });
+
+  test('falls back to JS rows when preferred JSON materialization fails', async () => {
+    const client = makeClient({
+      rows: [['2024-03-01T12:34:56.123Z']],
+      jsonRows: [['ignored']],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+      getRowsJsonError: new Error('json reader unavailable'),
+    });
+
+    const rows = await executeOnClient(client, 'select', []);
+
+    expect(rows).toEqual([
+      {
+        ts_ns: '2024-03-01T12:34:56.123Z',
       },
     ]);
   });
