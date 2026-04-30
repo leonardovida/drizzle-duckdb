@@ -92,22 +92,18 @@ async function readPreferredResult<T>({
   readPreferred,
   wrapError,
 }: PreferredResultReader<T>): Promise<T> {
-  if (!readPreferred) {
+  if (readPreferred) {
     try {
-      return await readDefault();
-    } catch (error) {
-      throw wrapError(error);
+      return await readPreferred();
+    } catch {
+      // Fall back when precision-preserving materialization is unavailable.
     }
   }
 
   try {
-    return await readPreferred();
-  } catch {
-    try {
-      return await readDefault();
-    } catch (error) {
-      throw wrapError(error);
-    }
+    return await readDefault();
+  } catch (error) {
+    throw wrapError(error);
   }
 }
 

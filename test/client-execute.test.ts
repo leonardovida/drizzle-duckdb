@@ -163,8 +163,8 @@ describe('executeArrowOnClient', () => {
     expect(data).toBe(fallback);
   });
 
-  test('falls back to JS column materialization when preferred JSON materialization fails', async () => {
-    const fallback = { ts_ns: ['2024-03-01T12:34:56.123Z'] };
+  test('falls back to JS column materialization when JSON materialization fails', async () => {
+    const fallback = { ts_ns: [new Date('2024-03-01T12:34:56.123Z')] };
     const client = makeClient({
       fallbackValue: fallback,
       columns: ['ts_ns'],
@@ -338,10 +338,10 @@ describe('executeOnClient', () => {
     ]);
   });
 
-  test('falls back to JS rows when preferred JSON materialization fails', async () => {
+  test('falls back to JS rows when JSON materialization fails for precise time families', async () => {
+    const date = new Date('2024-03-01T12:34:56.123Z');
     const client = makeClient({
-      rows: [['2024-03-01T12:34:56.123Z']],
-      jsonRows: [['ignored']],
+      rows: [[date]],
       columns: ['ts_ns'],
       deduplicatedColumns: ['ts_ns'],
       columnTypeIds: [22],
@@ -352,7 +352,7 @@ describe('executeOnClient', () => {
 
     expect(rows).toEqual([
       {
-        ts_ns: '2024-03-01T12:34:56.123Z',
+        ts_ns: date,
       },
     ]);
   });
