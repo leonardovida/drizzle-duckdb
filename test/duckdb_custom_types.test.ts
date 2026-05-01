@@ -31,6 +31,17 @@ const listTable = pgTable('duck_list_types', {
   createdLabel: duckDbTimestamp('created_label', { mode: 'string' }),
 });
 
+const nestedStructTable = pgTable('duck_nested_struct_types', {
+  id: integer('id').primaryKey(),
+  profile: duckDbStruct<{
+    name: string;
+    address: { city: string; zip: number; tags: string[] };
+  }>('profile', {
+    name: 'TEXT',
+    address: 'STRUCT (city TEXT, zip INTEGER, tags TEXT[])',
+  }),
+});
+
 interface Context {
   db: DuckDBDatabase;
   connection: DuckDBConnection;
@@ -56,10 +67,22 @@ beforeAll(async () => {
       created_label timestamp
     )
   `);
+
+  await db.execute(sql`drop table if exists ${nestedStructTable}`);
+  await db.execute(sql`
+    create table ${nestedStructTable} (
+      id integer primary key,
+      profile struct(
+        name text,
+        address struct(city text, zip integer, tags text[])
+      )
+    )
+  `);
 });
 
 beforeEach(async () => {
   await ctx.db.execute(sql`delete from ${listTable}`);
+  await ctx.db.execute(sql`delete from ${nestedStructTable}`);
 });
 
 afterAll(() => {
@@ -116,4 +139,24 @@ test('array helpers use DuckDB list semantics', async () => {
 
   expect(containsOrm).toEqual([{ id: 1 }]);
   expect(overlapsDb).toEqual([{ id: 2 }]);
+});
+
+test('duckdb nested struct roundtrip', async () => {
+  await ctx.db.insert(nestedStructTable).values({
+    id: 1,
+    profile: {
+      name: 'Ada',
+      address: { city: 'Brussels', zip: 1000, tags: ['eu', 'be'] },
+    },
+  });
+
+  const rows = await ctx.db
+    .select()
+    .from(nestedStructTable)
+    .where(eq(nestedStructTable.id, 1));
+
+  expect(rows[0]?.profile).toEqual({
+    name: 'Ada',
+    address: { city: 'Brussels', zip: 1000, tags: ['eu', 'be'] },
+  });
 });
