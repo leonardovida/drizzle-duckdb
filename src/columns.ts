@@ -203,9 +203,7 @@ export function buildListLiteral(values: unknown[], elementType?: string): SQL {
   if (values.length === 0) {
     return sql`[]`;
   }
-  const chunks = values.map((v) =>
-    valueToSqlLiteral(v, elementType)
-  );
+  const chunks = values.map((v) => valueToSqlLiteral(v, elementType));
   return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
 }
 
