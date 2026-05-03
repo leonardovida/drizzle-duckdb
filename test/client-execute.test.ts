@@ -19,6 +19,7 @@ function makeClient(options: {
   columnTypeIds?: number[];
   getRowsError?: Error;
   getRowsJsonError?: Error;
+  streamRowsJsonError?: Error;
   getColumnsObjectError?: Error;
   getColumnsObjectJsonError?: Error;
   onDeduplicatedColumns?: () => void;
@@ -34,6 +35,7 @@ function makeClient(options: {
     columnTypeIds,
     getRowsError,
     getRowsJsonError,
+    streamRowsJsonError,
     getColumnsObjectError,
     getColumnsObjectJsonError,
     onStreamClose,
@@ -107,6 +109,9 @@ function makeClient(options: {
           yield rows;
         },
         async *yieldRowsJson() {
+          if (streamRowsJsonError) {
+            throw streamRowsJsonError;
+          }
           yield jsonRows;
         },
         close() {
@@ -285,6 +290,27 @@ describe('executeInBatches', () => {
     }
 
     expect(chunks).toEqual([[{ ts_ns: '2024-03-01 12:34:56.123456789' }]]);
+  });
+
+  test('falls back to JS streaming when JSON streaming fails before yielding', async () => {
+    const date = new Date('2024-03-01T12:34:56.123Z');
+    const client = makeClient({
+      rows: [[date]],
+      jsonRows: [['2024-03-01 12:34:56.123456789']],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+      streamRowsJsonError: new Error('json stream unavailable'),
+    });
+    const chunks: Array<Array<{ ts_ns: Date }>> = [];
+
+    for await (const chunk of executeInBatches(client, 'select', [], {
+      rowsPerChunk: 1,
+    })) {
+      chunks.push(chunk as Array<{ ts_ns: Date }>);
+    }
+
+    expect(chunks).toEqual([[{ ts_ns: date }]]);
   });
 });
 
