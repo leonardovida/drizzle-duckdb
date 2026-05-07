@@ -45,6 +45,35 @@ describe('transformSQL', () => {
       expect(result.sql.toLowerCase()).toContain('array_has_all');
       expect(result.sql.toLowerCase()).toContain('array_has_any');
     });
+
+    it('transforms array_lower for the first dimension', () => {
+      const result = transformSQL(
+        'SELECT array_lower(tags, 1) AS lo FROM t WHERE array_lower(tags, 1) = 1'
+      );
+
+      expect(result.transformed).toBe(true);
+      expect(result.sql.toLowerCase()).toContain('case when');
+      expect(result.sql.toLowerCase()).toContain('array_length(tags)');
+      expect(result.sql.toLowerCase()).not.toContain('array_lower');
+    });
+
+    it('transforms array_upper for the first dimension', () => {
+      const result = transformSQL(
+        'SELECT array_upper(tags, 1) AS hi FROM t WHERE array_upper(tags, 1) > 0'
+      );
+
+      expect(result.transformed).toBe(true);
+      expect(result.sql.toLowerCase()).toContain('case when');
+      expect(result.sql.toLowerCase()).toContain('array_length(tags)');
+      expect(result.sql.toLowerCase()).not.toContain('array_upper');
+    });
+
+    it('leaves unsupported array bounds dimensions unchanged', () => {
+      const result = transformSQL('SELECT array_upper(tags, 2) AS hi FROM t');
+
+      expect(result.transformed).toBe(false);
+      expect(result.sql).toBe('SELECT array_upper(tags, 2) AS hi FROM t');
+    });
   });
 
   describe('JOIN column qualification', () => {
@@ -238,6 +267,11 @@ describe('needsTransformation', () => {
 
   it('returns true for queries with &&', () => {
     expect(needsTransformation('SELECT * FROM t WHERE a && b')).toBe(true);
+  });
+
+  it('returns true for array bounds functions', () => {
+    expect(needsTransformation('SELECT array_lower(a, 1) FROM t')).toBe(true);
+    expect(needsTransformation('SELECT array_upper(a, 1) FROM t')).toBe(true);
   });
 
   it('returns true for queries with JOIN', () => {

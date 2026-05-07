@@ -129,6 +129,13 @@ Drizzle DuckDB automatically rewrites Postgres array operators using AST transfo
 | `<@`     | `array_has_all(values, column)` |
 | `&&`     | `array_has_any(column, values)` |
 
+Postgres first-dimension bounds helpers are also rewritten for DuckDB lists:
+
+| Postgres Function   | DuckDB Equivalent                                   |
+| ------------------- | --------------------------------------------------- |
+| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END` |
+| `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
+
 This means Postgres-style code works seamlessly:
 
 ```typescript

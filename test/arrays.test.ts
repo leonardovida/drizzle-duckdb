@@ -91,3 +91,26 @@ test('Postgres array operators are rewritten to DuckDB functions', async () => {
   expect(containsOrm).toEqual([{ id: 1 }, { id: 3 }]);
   expect(overlapsOrm).toEqual([{ id: 1 }, { id: 3 }]);
 });
+
+test('Postgres array bounds functions are rewritten for first dimension', async () => {
+  await ctx.db.execute(sql`
+    insert into ${items} (id, tags, numbers)
+    values (4, [], []), (5, NULL, NULL)
+  `);
+
+  const rows = await ctx.db.execute(sql`
+    select
+      id,
+      array_lower(tags, 1) as lower_bound,
+      array_upper(tags, 1) as upper_bound
+    from ${items}
+    where id in (1, 4, 5)
+    order by id
+  `);
+
+  expect(rows).toEqual([
+    { id: 1, lower_bound: 1, upper_bound: 2n },
+    { id: 4, lower_bound: null, upper_bound: null },
+    { id: 5, lower_bound: null, upper_bound: null },
+  ]);
+});
