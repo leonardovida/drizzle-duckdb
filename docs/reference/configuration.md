@@ -111,9 +111,9 @@ Postgres array operators are automatically rewritten to DuckDB functions via AST
 
 Postgres first-dimension array bounds calls are also rewritten:
 
-| Postgres Function   | Rewritten To |
-| ------------------- | ------------ |
-| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END` |
+| Postgres Function   | Rewritten To                                                       |
+| ------------------- | ------------------------------------------------------------------ |
+| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
 | `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
 
 **Example**:

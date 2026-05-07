@@ -18,9 +18,7 @@ const OPERATOR_MAP: Record<string, { fn: string; swap?: boolean }> = {
 };
 
 function getFunctionName(expr: Record<string, unknown>): string | undefined {
-  const name = expr.name as
-    | { name?: Array<{ value?: unknown }> }
-    | undefined;
+  const name = expr.name as { name?: Array<{ value?: unknown }> } | undefined;
   const firstNamePart = name?.name?.[0]?.value;
   return typeof firstNamePart === 'string'
     ? firstNamePart.toLowerCase()
