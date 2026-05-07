@@ -293,7 +293,7 @@ const db = drizzle(connection, {
 });
 ```
 
-Postgres array operators (`@>`, `<@`, `&&`) are automatically rewritten to DuckDB's `array_has_*` functions via AST transformation.
+Postgres array operators (`@>`, `<@`, `&&`) are automatically rewritten to DuckDB's `array_has_*` functions via AST transformation. First-dimension `array_lower(a, 1)` and `array_upper(a, 1)` calls are also rewritten to DuckDB-compatible `array_length` expressions.
 
 ## Known Limitations
 

@@ -17,6 +17,93 @@ const OPERATOR_MAP: Record<string, { fn: string; swap?: boolean }> = {
   '&&': { fn: 'array_has_any' },
 };
 
+function getFunctionName(expr: Record<string, unknown>): string | undefined {
+  const name = expr.name as { name?: Array<{ value?: unknown }> } | undefined;
+  const firstNamePart = name?.name?.[0]?.value;
+  return typeof firstNamePart === 'string'
+    ? firstNamePart.toLowerCase()
+    : undefined;
+}
+
+function getFunctionArgs(expr: Record<string, unknown>): unknown[] | undefined {
+  const args = expr.args as { value?: unknown[] } | undefined;
+  return Array.isArray(args?.value) ? args.value : undefined;
+}
+
+function isFirstArrayDimension(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const expr = value as { type?: unknown; value?: unknown };
+  return expr.type === 'number' && Number(expr.value) === 1;
+}
+
+function arrayLengthExpr(arrayExpr: unknown) {
+  return {
+    type: 'function' as const,
+    name: { name: [{ type: 'default', value: 'array_length' }] },
+    args: {
+      type: 'expr_list' as const,
+      value: [arrayExpr],
+    },
+  };
+}
+
+function arrayBoundsExpr(functionName: string, arrayExpr: unknown) {
+  const lengthExpr = arrayLengthExpr(arrayExpr);
+
+  return {
+    type: 'case' as const,
+    expr: null,
+    args: [
+      {
+        type: 'when' as const,
+        cond: {
+          type: 'binary_expr' as const,
+          operator: '>',
+          left: arrayLengthExpr(arrayExpr),
+          right: { type: 'number' as const, value: 0 },
+        },
+        result:
+          functionName === 'array_lower'
+            ? { type: 'number' as const, value: 1 }
+            : lengthExpr,
+      },
+      {
+        type: 'else' as const,
+        result: { type: 'null' as const, value: null },
+      },
+    ],
+  };
+}
+
+function transformArrayBoundsFunction(
+  expr: Record<string, unknown>,
+  parent?: object,
+  key?: string
+): boolean {
+  const functionName = getFunctionName(expr);
+  if (functionName !== 'array_lower' && functionName !== 'array_upper') {
+    return false;
+  }
+
+  const args = getFunctionArgs(expr);
+  if (!args || args.length !== 2 || !isFirstArrayDimension(args[1])) {
+    return false;
+  }
+
+  if (!parent || !key) {
+    return false;
+  }
+
+  (parent as Record<string, unknown>)[key] = arrayBoundsExpr(
+    functionName,
+    args[0]
+  );
+  return true;
+}
+
 function walkExpression(
   expr: ExpressionValue | null | undefined,
   parent?: object,
@@ -55,6 +142,11 @@ function walkExpression(
         walkExpression(binary.right as ExpressionValue, binary, 'right') ||
         transformed;
     }
+  }
+
+  if ('type' in expr && exprObj.type === 'function') {
+    transformed =
+      transformArrayBoundsFunction(exprObj, parent, key) || transformed;
   }
 
   if ('type' in expr && exprObj.type === 'unary_expr') {
