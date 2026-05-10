@@ -3,6 +3,7 @@
  *
  * Transforms:
  * - Array operators: @>, <@, && -> array_has_all(), array_has_any()
+ * - Array bounds: array_lower(..., 1), array_upper(..., 1) -> DuckDB expressions
  * - JOIN column qualification: "col" = "col" -> "left"."col" = "right"."col"
  *
  * Performance optimizations:
@@ -61,7 +62,7 @@ function getCachedOrTransform(
 
 const DEBUG_ENV = 'DRIZZLE_DUCKDB_DEBUG_AST';
 
-const ARRAY_OPERATOR_PATTERN = /@>|<@|&&/;
+const ARRAY_OPERATOR_PATTERN = /@>|<@|&&|\barray_(?:lower|upper)\s*\(/i;
 const JOIN_PATTERN = /\bjoin\b/i;
 const UNION_PATTERN = /\bunion\b/i;
 const INTERSECT_PATTERN = /\bintersect\b/i;

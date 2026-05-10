@@ -161,6 +161,20 @@ describe('buildStructLiteral', () => {
     const result = buildStructLiteral({ tags: [1, 2] }, { tags: 'INTEGER[]' });
     expect(result).toBeDefined();
   });
+
+  test('handles nested struct schema hints', () => {
+    const result = buildStructLiteral(
+      {
+        profile: {
+          city: 'Brussels',
+          tags: ['eu', 'be'],
+        },
+      },
+      { profile: 'STRUCT (city TEXT, tags TEXT[])' }
+    );
+
+    expect(result).toBeDefined();
+  });
 });
 
 describe('buildMapLiteral', () => {

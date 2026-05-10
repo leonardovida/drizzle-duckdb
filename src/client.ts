@@ -668,29 +668,47 @@ async function* streamRawBatches(
       const preferJson =
         prefersJsonMaterialization(result) &&
         typeof result.yieldRowsJson === 'function';
-      const rowStream = preferJson
-        ? result.yieldRowsJson!()
-        : result.yieldRowsJs();
-
       let rows: unknown[][] = [];
+      let hasYielded = false;
 
-      try {
-        try {
-          for await (const chunk of rowStream) {
-            for (const row of chunk) {
-              rows.push(row as unknown[]);
-              if (rows.length >= rowsPerChunk) {
-                yield { columns, rows };
-                rows = [];
-              }
+      const drainRows = async function* (
+        rowStream: AsyncIterable<unknown[][]>
+      ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
+        for await (const chunk of rowStream) {
+          for (const row of chunk) {
+            rows.push(row as unknown[]);
+            if (rows.length >= rowsPerChunk) {
+              hasYielded = true;
+              yield { columns, rows };
+              rows = [];
             }
           }
-        } catch (error) {
-          throw wrapUnsupportedNodeApiTypeError(result, error);
         }
 
         if (rows.length > 0) {
+          hasYielded = true;
           yield { columns, rows };
+          rows = [];
+        }
+      };
+
+      try {
+        try {
+          if (preferJson) {
+            try {
+              yield* drainRows(result.yieldRowsJson!());
+              return;
+            } catch (error) {
+              if (hasYielded) {
+                throw error;
+              }
+              rows = [];
+            }
+          }
+
+          yield* drainRows(result.yieldRowsJs());
+        } catch (error) {
+          throw wrapUnsupportedNodeApiTypeError(result, error);
         }
       } finally {
         await closeStreamResult(result);

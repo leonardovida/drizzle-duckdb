@@ -3,7 +3,7 @@ import { sql, Subquery, type SQLWrapper } from 'drizzle-orm';
 import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { PgViewBase } from 'drizzle-orm/pg-core/view-base';
 import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders';
-import { SQL } from 'drizzle-orm/sql/sql';
+import { SQL, isSQLWrapper } from 'drizzle-orm/sql/sql';
 import { Column, getTableName } from 'drizzle-orm';
 import type { DuckDBDatabase } from './driver.ts';
 
@@ -28,6 +28,131 @@ export const median = (expr: SQLWrapper) => percentileCont(0.5, expr);
 
 export const anyValue = <T = unknown>(expr: SQLWrapper) =>
   sql<T>`any_value(${expr})`;
+
+type LanceSqlArgument =
+  | SQLWrapper
+  | string
+  | number
+  | boolean
+  | readonly unknown[];
+
+export interface LanceVectorSearchOptions {
+  k?: number;
+  useIndex?: boolean;
+  nprobs?: number;
+  refineFactor?: number;
+  prefilter?: boolean;
+  explainVerbose?: boolean;
+}
+
+export interface LanceFtsOptions {
+  k?: number;
+  prefilter?: boolean;
+}
+
+export interface LanceHybridSearchOptions {
+  k?: number;
+  nprobs?: number;
+  refineFactor?: number;
+  prefilter?: boolean;
+  useIndex?: boolean;
+  alpha?: number;
+  oversampleFactor?: number;
+}
+
+type LanceNamedParamSpec<TOptions> = {
+  key: keyof TOptions;
+  sqlName: string;
+};
+
+function lanceNamedParams<TOptions extends object>(
+  options: TOptions | undefined,
+  specs: LanceNamedParamSpec<TOptions>[]
+): SQL {
+  if (!options) {
+    return sql``;
+  }
+
+  const chunks: SQL[] = [];
+  for (const { key, sqlName } of specs) {
+    const value = options[key];
+    if (value !== undefined) {
+      chunks.push(sql`${sql.raw(sqlName)} = ${value}`);
+    }
+  }
+
+  return chunks.length > 0 ? sql`, ${sql.join(chunks, sql`, `)}` : sql``;
+}
+
+function lanceArg(value: LanceSqlArgument): SQLWrapper {
+  return isSQLWrapper(value) ? value : sql.param(value);
+}
+
+const lanceVectorSearchOptions: LanceNamedParamSpec<LanceVectorSearchOptions>[] =
+  [
+    { key: 'k', sqlName: 'k' },
+    { key: 'useIndex', sqlName: 'use_index' },
+    { key: 'nprobs', sqlName: 'nprobs' },
+    { key: 'refineFactor', sqlName: 'refine_factor' },
+    { key: 'prefilter', sqlName: 'prefilter' },
+    { key: 'explainVerbose', sqlName: 'explain_verbose' },
+  ];
+
+const lanceFtsOptions: LanceNamedParamSpec<LanceFtsOptions>[] = [
+  { key: 'k', sqlName: 'k' },
+  { key: 'prefilter', sqlName: 'prefilter' },
+];
+
+const lanceHybridSearchOptions: LanceNamedParamSpec<LanceHybridSearchOptions>[] =
+  [
+    { key: 'k', sqlName: 'k' },
+    { key: 'nprobs', sqlName: 'nprobs' },
+    { key: 'refineFactor', sqlName: 'refine_factor' },
+    { key: 'prefilter', sqlName: 'prefilter' },
+    { key: 'useIndex', sqlName: 'use_index' },
+    { key: 'alpha', sqlName: 'alpha' },
+    { key: 'oversampleFactor', sqlName: 'oversample_factor' },
+  ];
+
+export function lanceVectorSearch(
+  table: LanceSqlArgument,
+  vectorColumn: LanceSqlArgument,
+  queryVector: LanceSqlArgument,
+  options?: LanceVectorSearchOptions
+): SQL {
+  return sql`lance_vector_search(${lanceArg(table)}, ${lanceArg(
+    vectorColumn
+  )}, ${lanceArg(queryVector)}${lanceNamedParams(
+    options,
+    lanceVectorSearchOptions
+  )})`;
+}
+
+export function lanceFts(
+  table: LanceSqlArgument,
+  textColumn: LanceSqlArgument,
+  queryText: LanceSqlArgument,
+  options?: LanceFtsOptions
+): SQL {
+  return sql`lance_fts(${lanceArg(table)}, ${lanceArg(textColumn)}, ${lanceArg(
+    queryText
+  )}${lanceNamedParams(options, lanceFtsOptions)})`;
+}
+
+export function lanceHybridSearch(
+  table: LanceSqlArgument,
+  vectorColumn: LanceSqlArgument,
+  queryVector: LanceSqlArgument,
+  textColumn: LanceSqlArgument,
+  queryText: LanceSqlArgument,
+  options?: LanceHybridSearchOptions
+): SQL {
+  return sql`lance_hybrid_search(${lanceArg(table)}, ${lanceArg(
+    vectorColumn
+  )}, ${lanceArg(queryVector)}, ${lanceArg(textColumn)}, ${lanceArg(
+    queryText
+  )}${lanceNamedParams(options, lanceHybridSearchOptions)})`;
+}
 
 type PartitionOrder =
   | {

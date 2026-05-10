@@ -4,7 +4,7 @@
  */
 
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
-import { buildListLiteral } from './sql-literals.ts';
+import { buildListLiteral } from './columns.ts';
 
 type ArrayPredicateValue<T> = T[] | SQLWrapper;
 

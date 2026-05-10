@@ -1,5 +1,5 @@
 import { sql, type SQL } from 'drizzle-orm';
-import type { SQLWrapper } from 'drizzle-orm/sql/sql';
+import { isSQLWrapper, type SQLWrapper } from 'drizzle-orm/sql/sql';
 import { customType } from 'drizzle-orm/pg-core';
 import {
   wrapList,
@@ -16,15 +16,8 @@ import {
   type TimestampValueWrapper,
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
-import {
-  arrayContainedBy,
-  arrayHasAll,
-  arrayHasAny,
-} from './operators.ts';
-import { buildListLiteral } from './sql-literals.ts';
 
 export { coerceArrayString } from './array-literals.ts';
-export { buildListLiteral, formatLiteral } from './sql-literals.ts';
 
 type IntColType =
   | 'SMALLINT'
@@ -83,6 +76,77 @@ type ArrayDriverValue =
   | ListValueWrapper
   | ArrayValueWrapper;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStructType(typeHint: string | undefined): typeHint is StructColType {
+  return /^STRUCT\s*\(/i.test(typeHint?.trim() ?? '');
+}
+
+function splitTopLevel(input: string, delimiter: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    if (char === '(') depth += 1;
+    if (char === ')') depth = Math.max(0, depth - 1);
+    if (char === delimiter && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+
+  if (current) {
+    parts.push(current);
+  }
+
+  return parts;
+}
+
+function parseStructSchema(
+  typeHint: string | undefined
+): Record<string, Primitive> | undefined {
+  if (!isStructType(typeHint)) {
+    return undefined;
+  }
+
+  const inner = typeHint
+    .trim()
+    .replace(/^STRUCT\s*\(/i, '')
+    .replace(/\)$/, '');
+  const fields: Record<string, Primitive> = {};
+
+  for (const part of splitTopLevel(inner, ',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const match =
+      /^"([^"]+)"\s+(.*)$/i.exec(trimmed) ??
+      /^([^\s"]+)\s+(.*)$/i.exec(trimmed);
+    if (!match) continue;
+
+    const [, key, type] = match;
+    fields[key] = type.trim() as Primitive;
+  }
+
+  return fields;
+}
+
+function arrayElementType(typeHint: string | undefined): string | undefined {
+  if (!typeHint) return undefined;
+  const trimmed = typeHint.trim();
+  if (trimmed.endsWith('[]')) {
+    return trimmed.slice(0, -2);
+  }
+
+  const fixedArrayMatch = /^(.*)\[\d+\]$/.exec(trimmed);
+  return fixedArrayMatch?.[1]?.trim();
+}
+
 function coerceArrayDriverValue<TData>(value: ArrayDriverValue): TData[] {
   if (Array.isArray(value)) {
     return value as TData[];
@@ -98,21 +162,74 @@ function coerceArrayDriverValue<TData>(value: ArrayDriverValue): TData[] {
   return value as unknown as TData[];
 }
 
+export function formatLiteral(value: unknown, typeHint?: string): string {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  }
+
+  const upperType = typeHint?.toUpperCase() ?? '';
+  if (value instanceof Date) {
+    return `'${value.toISOString()}'`;
+  }
+
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return value.toString();
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'TRUE' : 'FALSE';
+  }
+
+  const str =
+    typeof value === 'string'
+      ? value
+      : (JSON.stringify(value) ?? String(value));
+
+  const escaped = str.replace(/'/g, "''");
+  // Simple quoting based on hint.
+  if (
+    upperType.includes('CHAR') ||
+    upperType.includes('TEXT') ||
+    upperType.includes('STRING') ||
+    upperType.includes('VARCHAR')
+  ) {
+    return `'${escaped}'`;
+  }
+
+  return `'${escaped}'`;
+}
+
+export function buildListLiteral(values: unknown[], elementType?: string): SQL {
+  if (values.length === 0) {
+    return sql`[]`;
+  }
+  const chunks = values.map((v) => valueToSqlLiteral(v, elementType));
+  return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
+}
+
+function valueToSqlLiteral(value: unknown, typeHint?: string): SQL {
+  if (Array.isArray(value)) {
+    return buildListLiteral(value, arrayElementType(typeHint));
+  }
+
+  if (isSQLWrapper(value)) {
+    return sql`${value}`;
+  }
+
+  if (isRecord(value)) {
+    return buildStructLiteral(value, parseStructSchema(typeHint));
+  }
+
+  return sql.raw(formatLiteral(value, typeHint));
+}
+
 export function buildStructLiteral(
   value: Record<string, unknown>,
   schema?: Record<string, Primitive>
 ): SQL {
   const parts = Object.entries(value).map(([key, val]) => {
     const typeHint = schema?.[key];
-    if (Array.isArray(val)) {
-      const inner =
-        typeof typeHint === 'string' && typeHint.endsWith('[]')
-          ? typeHint.slice(0, -2)
-          : undefined;
-
-      return sql`${sql.identifier(key)} := ${buildListLiteral(val, inner)}`;
-    }
-    return sql`${sql.identifier(key)} := ${val}`;
+    return sql`${sql.identifier(key)} := ${valueToSqlLiteral(val, typeHint)}`;
   });
   return sql`struct_pack(${sql.join(parts, sql.raw(', '))})`;
 }
@@ -486,19 +603,22 @@ export function duckDbArrayContains(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  return arrayHasAll(column, values);
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  return sql`array_has_all(${column}, ${rhs})`;
 }
 
 export function duckDbArrayContained(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  return arrayContainedBy(column, values);
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  return sql`array_has_all(${rhs}, ${column})`;
 }
 
 export function duckDbArrayOverlaps(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  return arrayHasAny(column, values);
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  return sql`array_has_any(${column}, ${rhs})`;
 }
