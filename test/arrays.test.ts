@@ -6,6 +6,9 @@ import {
   duckDbArrayOverlaps,
   duckDbList,
   drizzle,
+  arrayHasAll,
+  arrayHasAny,
+  arrayContainedBy,
   type DuckDBDatabase,
 } from '../src';
 import { integer, pgTable } from 'drizzle-orm/pg-core';
@@ -73,6 +76,30 @@ test('duckDbArrayContains/Overlaps use DuckDB list semantics', async () => {
 
   expect(containsOrm).toEqual([{ id: 1 }, { id: 3 }]);
   expect(overlapsDb).toEqual([{ id: 2 }, { id: 3 }]);
+});
+
+test('native array operators share DuckDB list literal handling', async () => {
+  const containsOrm = await ctx.db
+    .select({ id: items.id })
+    .from(items)
+    .where(arrayHasAll(items.tags, ['ORM']))
+    .orderBy(items.id);
+
+  const overlapsDb = await ctx.db
+    .select({ id: items.id })
+    .from(items)
+    .where(arrayHasAny(items.tags, ['Database', 'GraphQL']))
+    .orderBy(items.id);
+
+  const containedBy = await ctx.db
+    .select({ id: items.id })
+    .from(items)
+    .where(arrayContainedBy(items.tags, ['ORM', 'Typescript']))
+    .orderBy(items.id);
+
+  expect(containsOrm).toEqual([{ id: 1 }, { id: 3 }]);
+  expect(overlapsDb).toEqual([{ id: 2 }, { id: 3 }]);
+  expect(containedBy).toEqual([{ id: 1 }]);
 });
 
 test('Postgres array operators are rewritten to DuckDB functions', async () => {

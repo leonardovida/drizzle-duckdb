@@ -16,8 +16,15 @@ import {
   type TimestampValueWrapper,
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
+import {
+  arrayContainedBy,
+  arrayHasAll,
+  arrayHasAny,
+} from './operators.ts';
+import { buildListLiteral } from './sql-literals.ts';
 
 export { coerceArrayString } from './array-literals.ts';
+export { buildListLiteral, formatLiteral } from './sql-literals.ts';
 
 type IntColType =
   | 'SMALLINT'
@@ -89,55 +96,6 @@ function coerceArrayDriverValue<TData>(value: ArrayDriverValue): TData[] {
   }
 
   return value as unknown as TData[];
-}
-
-export function formatLiteral(value: unknown, typeHint?: string): string {
-  if (value === null || value === undefined) {
-    return 'NULL';
-  }
-
-  const upperType = typeHint?.toUpperCase() ?? '';
-  if (value instanceof Date) {
-    return `'${value.toISOString()}'`;
-  }
-
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return value.toString();
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? 'TRUE' : 'FALSE';
-  }
-
-  const str =
-    typeof value === 'string'
-      ? value
-      : (JSON.stringify(value) ?? String(value));
-
-  const escaped = str.replace(/'/g, "''");
-  // Simple quoting based on hint.
-  if (
-    upperType.includes('CHAR') ||
-    upperType.includes('TEXT') ||
-    upperType.includes('STRING') ||
-    upperType.includes('VARCHAR')
-  ) {
-    return `'${escaped}'`;
-  }
-
-  return `'${escaped}'`;
-}
-
-export function buildListLiteral(values: unknown[], elementType?: string): SQL {
-  if (values.length === 0) {
-    return sql`[]`;
-  }
-  const chunks = values.map((v) =>
-    typeof v === 'object' && !Array.isArray(v)
-      ? sql`${v as SQLWrapper}`
-      : sql.raw(formatLiteral(v, elementType))
-  );
-  return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
 }
 
 export function buildStructLiteral(
@@ -524,30 +482,23 @@ export const duckDbTime = (name: string, options: TimeOptions = {}) =>
     },
   })(name);
 
-function toListValue(values: (unknown | SQLWrapper)[]): SQL {
-  return buildListLiteral(values);
-}
-
 export function duckDbArrayContains(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
-  return sql`array_has_all(${column}, ${rhs})`;
+  return arrayHasAll(column, values);
 }
 
 export function duckDbArrayContained(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
-  return sql`array_has_all(${rhs}, ${column})`;
+  return arrayContainedBy(column, values);
 }
 
 export function duckDbArrayOverlaps(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
-  return sql`array_has_any(${column}, ${rhs})`;
+  return arrayHasAny(column, values);
 }
