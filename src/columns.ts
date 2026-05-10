@@ -599,15 +599,11 @@ export const duckDbTime = (name: string, options: TimeOptions = {}) =>
     },
   })(name);
 
-function toListValue(values: (unknown | SQLWrapper)[]): SQL {
-  return buildListLiteral(values);
-}
-
 export function duckDbArrayContains(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
   return sql`array_has_all(${column}, ${rhs})`;
 }
 
@@ -615,7 +611,7 @@ export function duckDbArrayContained(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
   return sql`array_has_all(${rhs}, ${column})`;
 }
 
@@ -623,6 +619,6 @@ export function duckDbArrayOverlaps(
   column: SQLWrapper,
   values: unknown[] | SQLWrapper
 ): SQL {
-  const rhs = Array.isArray(values) ? toListValue(values) : values;
+  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
   return sql`array_has_any(${column}, ${rhs})`;
 }
