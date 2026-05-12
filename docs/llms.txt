@@ -41,6 +41,7 @@ const allUsers = await db.select().from(users);
 - Migrations and schema introspection
 - MotherDuck cloud support
 - DuckLake catalog attach support
+- MotherDuck metadata table function helpers: mdAccessTokens(), mdListDives()
 
 ## Important Notes
 

@@ -16,5 +16,6 @@ Complete API documentation for Drizzle DuckDB.
 - [DuckDBDatabase]({{ '/api/database' | relative_url }}) - Database class methods
 - [Column Types]({{ '/api/columns' | relative_url }}) - All column type helpers
 - [Array Helpers]({{ '/api/array-helpers' | relative_url }}) - Array query functions
+- [OLAP Helpers]({{ '/api/olap-helpers' | relative_url }}) - Aggregate helpers and MotherDuck table functions
 - [migrate()]({{ '/api/migrate' | relative_url }}) - Run migrations
 - [introspect()]({{ '/api/introspect' | relative_url }}) - Generate schema from existing database
