@@ -20,6 +20,8 @@ function makeClient(options: {
   getRowsError?: Error;
   getRowsJsonError?: Error;
   streamRowsJsonError?: Error;
+  streamRowsJsonErrorAfterFirstChunk?: Error;
+  streamRowsJsonChunks?: unknown[][][];
   getColumnsObjectError?: Error;
   getColumnsObjectJsonError?: Error;
   onDeduplicatedColumns?: () => void;
@@ -36,6 +38,8 @@ function makeClient(options: {
     getRowsError,
     getRowsJsonError,
     streamRowsJsonError,
+    streamRowsJsonErrorAfterFirstChunk,
+    streamRowsJsonChunks,
     getColumnsObjectError,
     getColumnsObjectJsonError,
     onStreamClose,
@@ -112,7 +116,13 @@ function makeClient(options: {
           if (streamRowsJsonError) {
             throw streamRowsJsonError;
           }
-          yield jsonRows;
+          const chunks = streamRowsJsonChunks ?? [jsonRows];
+          for (let index = 0; index < chunks.length; index += 1) {
+            yield chunks[index] as unknown[][];
+            if (index === 0 && streamRowsJsonErrorAfterFirstChunk) {
+              throw streamRowsJsonErrorAfterFirstChunk;
+            }
+          }
         },
         close() {
           onStreamClose?.();
@@ -311,6 +321,31 @@ describe('executeInBatches', () => {
     }
 
     expect(chunks).toEqual([[{ ts_ns: date }]]);
+  });
+
+  test('throws JSON streaming errors after yielding a chunk', async () => {
+    const error = new Error('json stream failed after yielding');
+    const client = makeClient({
+      rows: [[new Date('2024-03-01T12:34:56.123Z')]],
+      streamRowsJsonChunks: [[['2024-03-01 12:34:56.123456789']]],
+      columns: ['ts_ns'],
+      deduplicatedColumns: ['ts_ns'],
+      columnTypeIds: [22],
+      streamRowsJsonErrorAfterFirstChunk: error,
+    });
+    const chunks: Array<Array<{ ts_ns: string }>> = [];
+
+    await expect(
+      (async () => {
+        for await (const chunk of executeInBatches(client, 'select', [], {
+          rowsPerChunk: 1,
+        })) {
+          chunks.push(chunk as Array<{ ts_ns: string }>);
+        }
+      })()
+    ).rejects.toThrow(error);
+
+    expect(chunks).toEqual([[{ ts_ns: '2024-03-01 12:34:56.123456789' }]]);
   });
 });
 

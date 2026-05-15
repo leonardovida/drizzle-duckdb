@@ -648,6 +648,28 @@ function resolveRowsPerChunk(
   return normalizePositiveInteger(options?.rowsPerChunk, 100_000);
 }
 
+async function* chunkRowStream(
+  rowStream: AsyncIterable<unknown[][]>,
+  columns: string[],
+  rowsPerChunk: number
+): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
+  let rows: unknown[][] = [];
+
+  for await (const chunk of rowStream) {
+    for (const row of chunk) {
+      rows.push(row as unknown[]);
+      if (rows.length >= rowsPerChunk) {
+        yield { columns, rows };
+        rows = [];
+      }
+    }
+  }
+
+  if (rows.length > 0) {
+    yield { columns, rows };
+  }
+}
+
 async function* streamRawBatches(
   client: DuckDBClientLike,
   query: string,
@@ -668,45 +690,29 @@ async function* streamRawBatches(
       const preferJson =
         prefersJsonMaterialization(result) &&
         typeof result.yieldRowsJson === 'function';
-      let rows: unknown[][] = [];
-      let hasYielded = false;
-
-      const drainRows = async function* (
-        rowStream: AsyncIterable<unknown[][]>
-      ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-        for await (const chunk of rowStream) {
-          for (const row of chunk) {
-            rows.push(row as unknown[]);
-            if (rows.length >= rowsPerChunk) {
-              hasYielded = true;
-              yield { columns, rows };
-              rows = [];
-            }
-          }
-        }
-
-        if (rows.length > 0) {
-          hasYielded = true;
-          yield { columns, rows };
-          rows = [];
-        }
-      };
 
       try {
         try {
           if (preferJson) {
+            let yieldedJsonRows = false;
             try {
-              yield* drainRows(result.yieldRowsJson!());
+              for await (const chunk of chunkRowStream(
+                result.yieldRowsJson!(),
+                columns,
+                rowsPerChunk
+              )) {
+                yieldedJsonRows = true;
+                yield chunk;
+              }
               return;
             } catch (error) {
-              if (hasYielded) {
+              if (yieldedJsonRows) {
                 throw error;
               }
-              rows = [];
             }
           }
 
-          yield* drainRows(result.yieldRowsJs());
+          yield* chunkRowStream(result.yieldRowsJs(), columns, rowsPerChunk);
         } catch (error) {
           throw wrapUnsupportedNodeApiTypeError(result, error);
         }
