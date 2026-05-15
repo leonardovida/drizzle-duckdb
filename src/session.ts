@@ -21,6 +21,7 @@ import type { DuckDBDialect } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
+  DuckDBExecutionClient,
   RowData,
 } from './client.ts';
 import {
@@ -34,7 +35,6 @@ import {
   type ExecuteInBatchesOptions,
 } from './client.ts';
 import { isPool } from './client.ts';
-import type { DuckDBConnection } from '@duckdb/node-api';
 import type { PreparedStatementCacheConfig } from './options.ts';
 
 export type { DuckDBClientLike, RowData } from './client.ts';
@@ -277,7 +277,7 @@ export class DuckDBSession<
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
     config?: PgTransactionConfig
   ): Promise<T> {
-    let pinnedConnection: DuckDBConnection | undefined;
+    let pinnedConnection: DuckDBExecutionClient | undefined;
     let pool: DuckDBConnectionPool | undefined;
 
     let clientForTx: DuckDBClientLike = this.client;

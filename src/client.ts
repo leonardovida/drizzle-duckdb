@@ -8,21 +8,23 @@ import {
 } from '@duckdb/node-api';
 import {
   DUCKDB_VALUE_MARKER,
-  wrapperToNodeApiValue,
   type AnyDuckDBValueWrapper,
+  wrapperToNodeApiValue,
 } from './value-wrappers.ts';
 import {
   normalizePositiveInteger,
   type PreparedStatementCacheConfig,
 } from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
+import type { PgDuckClient, PgDuckQueryResult } from './pgduck.ts';
 
-export type DuckDBClientLike = DuckDBConnection | DuckDBConnectionPool;
+export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
+export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
 export type RowData = Record<string, unknown>;
 
 export interface DuckDBConnectionPool {
-  acquire(): Promise<DuckDBConnection>;
-  release(connection: DuckDBConnection): void | Promise<void>;
+  acquire(): Promise<DuckDBExecutionClient>;
+  release(connection: DuckDBExecutionClient): void | Promise<void>;
   close?(): Promise<void> | void;
 }
 
@@ -107,9 +109,19 @@ async function readPreferredResult<T>({
   }
 }
 
+function isPgDuckClient(client: DuckDBExecutionClient): client is PgDuckClient {
+  return typeof (client as PgDuckClient).query === 'function';
+}
+
+function isNodeApiConnection(
+  client: DuckDBExecutionClient
+): client is DuckDBConnection {
+  return typeof (client as DuckDBConnection).run === 'function';
+}
+
 async function withConnection<T>(
   client: DuckDBClientLike,
-  callback: (connection: DuckDBConnection) => Promise<T>
+  callback: (connection: DuckDBExecutionClient) => Promise<T>
 ): Promise<T> {
   if (!isPool(client)) {
     return await callback(client);
@@ -125,7 +137,7 @@ async function withConnection<T>(
 
 async function* withConnectionStream<T>(
   client: DuckDBClientLike,
-  callback: (connection: DuckDBConnection) => AsyncGenerator<T, void, void>
+  callback: (connection: DuckDBExecutionClient) => AsyncGenerator<T, void, void>
 ): AsyncGenerator<T, void, void> {
   if (!isPool(client)) {
     yield* callback(client);
@@ -216,6 +228,68 @@ function toNodeApiValues(params: unknown[]): DuckDBValue[] | undefined {
   return params.length > 0
     ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
     : undefined;
+}
+
+function wrapperToPgDuckValue(wrapper: AnyDuckDBValueWrapper): unknown {
+  switch (wrapper.kind) {
+    case 'list':
+    case 'array':
+      return wrapper.data.map((item) => toPgDuckValue(item));
+    case 'struct':
+    case 'map':
+      return Object.fromEntries(
+        Object.entries(wrapper.data).map(([key, value]) => [
+          key,
+          toPgDuckValue(value),
+        ])
+      );
+    case 'json':
+      return JSON.stringify(wrapper.data);
+    case 'timestamp':
+      return wrapper.data;
+    case 'blob':
+      return wrapper.data instanceof Buffer
+        ? wrapper.data
+        : Buffer.from(wrapper.data);
+    default: {
+      const _exhaustive: never = wrapper;
+      throw new Error(
+        `Unknown wrapper kind: ${(_exhaustive as AnyDuckDBValueWrapper).kind}`
+      );
+    }
+  }
+}
+
+function toPgDuckValue(value: unknown): unknown {
+  if (value == null) return null;
+
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'bigint' ||
+    typeof value === 'boolean' ||
+    value instanceof Date
+  ) {
+    return value;
+  }
+
+  if (typeof value === 'object' && DUCKDB_VALUE_MARKER in value) {
+    return wrapperToPgDuckValue(value as AnyDuckDBValueWrapper);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => toPgDuckValue(item));
+  }
+
+  if (value instanceof Uint8Array) {
+    return value instanceof Buffer ? value : Buffer.from(value);
+  }
+
+  return value;
+}
+
+function toPgDuckValues(params: unknown[]): unknown[] {
+  return params.map((param) => toPgDuckValue(param));
 }
 
 function deduplicateColumns(columns: string[]): string[] {
@@ -525,6 +599,10 @@ async function materializeRows(
   options: ExecuteClientOptions = {}
 ): Promise<MaterializedRows> {
   return await withConnection(client, async (connection) => {
+    if (isPgDuckClient(connection)) {
+      return await materializePgDuckRows(connection, query, params);
+    }
+
     const values = toNodeApiValues(params);
 
     if (options.prepareCache && typeof connection.prepare === 'function') {
@@ -539,6 +617,52 @@ async function materializeRows(
     const result = await connection.run(query, values);
     return await materializeResultRows(result);
   });
+}
+
+function normalizePgDuckResult(result: PgDuckQueryResult | unknown[]) {
+  return Array.isArray(result)
+    ? { rows: result, fields: undefined }
+    : { rows: result.rows, fields: result.fields };
+}
+
+async function materializePgDuckRows(
+  client: PgDuckClient,
+  query: string,
+  params: unknown[]
+): Promise<MaterializedRows> {
+  const result = normalizePgDuckResult(
+    await client.query({
+      text: query,
+      values: toPgDuckValues(params),
+      rowMode: 'array',
+    })
+  );
+  const rows = result.rows ?? [];
+
+  if (rows.length === 0) {
+    const columns = result.fields?.map((field) => field.name) ?? [];
+    return { columns: deduplicateColumns(columns), rows: [] };
+  }
+
+  const firstRow = rows[0];
+  if (Array.isArray(firstRow)) {
+    const columns = result.fields?.map((field) => field.name) ?? [];
+    return {
+      columns: deduplicateColumns(columns),
+      rows: rows as unknown[][],
+    };
+  }
+
+  const columns =
+    result.fields?.map((field) => field.name) ??
+    Object.keys(firstRow as RowData);
+  const deduplicated = deduplicateColumns(columns);
+  return {
+    columns: deduplicated,
+    rows: (rows as RowData[]).map((row) =>
+      columns.map((column) => row[column])
+    ),
+  };
 }
 
 function clearPreparedCache(connection: DuckDBConnection): void {
@@ -572,9 +696,11 @@ function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
 }
 
 export async function closeClientConnection(
-  connection: DuckDBConnection
+  connection: DuckDBExecutionClient
 ): Promise<void> {
-  clearPreparedCache(connection);
+  if (isNodeApiConnection(connection)) {
+    clearPreparedCache(connection);
+  }
 
   await closeDuckDbResource(connection as DisconnectableResource, true);
 }
@@ -658,6 +784,22 @@ async function* streamRawBatches(
     client,
     async function* (connection): AsyncGenerator<ExecuteBatchesRawChunk> {
       const rowsPerChunk = resolveRowsPerChunk(options);
+
+      if (isPgDuckClient(connection)) {
+        const { columns, rows } = await materializePgDuckRows(
+          connection,
+          query,
+          params
+        );
+        for (let index = 0; index < rows.length; index += rowsPerChunk) {
+          yield {
+            columns,
+            rows: rows.slice(index, index + rowsPerChunk),
+          };
+        }
+        return;
+      }
+
       const values = toNodeApiValues(params);
 
       const result = (await connection.stream(
@@ -750,6 +892,24 @@ export async function executeArrowOnClient(
   params: unknown[]
 ): Promise<unknown> {
   return await withConnection(client, async (connection) => {
+    if (isPgDuckClient(connection)) {
+      const { columns, rows } = await materializePgDuckRows(
+        connection,
+        query,
+        params
+      );
+      const columnData: Record<string, unknown[]> = {};
+      for (const column of columns) {
+        columnData[column] = [];
+      }
+      for (const row of rows) {
+        for (let index = 0; index < columns.length; index += 1) {
+          columnData[columns[index] as string]?.push(row[index]);
+        }
+      }
+      return columnData;
+    }
+
     const values = toNodeApiValues(params);
     const result = await connection.run(query, values);
 
