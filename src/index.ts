@@ -10,6 +10,7 @@ export * from './value-wrappers.ts';
 export * from './options.ts';
 export * from './operators.ts';
 export * from './pgduck.ts';
+export * from './motherduck.ts';
 export {
   configureDuckLake,
   wrapDuckLakePool,
