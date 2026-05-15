@@ -111,6 +111,43 @@ const connection = await instance.connect();
 const db = drizzle(connection);
 ```
 
+### pg_duckdb
+
+For PostgreSQL servers with the
+[`pg_duckdb`](https://github.com/duckdb/pg_duckdb) extension installed, use a
+Postgres wire client such as `pg`:
+
+```typescript
+import pg from 'pg';
+import { sql } from 'drizzle-orm';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
+
+const client = new pg.Client({
+  connectionString: process.env.DATABASE_URL,
+});
+await client.connect();
+
+const db = drizzle(client);
+
+await db.execute(sql`SET duckdb.force_execution = true`);
+```
+
+When using a `pg.Pool`, wrap it so transactions pin one backend connection:
+
+```typescript
+import pg from 'pg';
+import {
+  createPgDuckConnectionPool,
+  drizzle,
+} from '@duckdbfan/drizzle-duckdb';
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+const db = drizzle(createPgDuckConnectionPool(pool));
+```
+
 ### With Logging
 
 ```typescript
