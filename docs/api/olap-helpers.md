@@ -125,6 +125,38 @@ await db.execute(sql`
 `);
 ```
 
+## MotherDuck scan execution overrides
+
+MotherDuck supports `md_run` on file scan functions so you can force supported scans to execute locally, remotely, or leave the optimizer on automatic placement. Use the whitelisted helper when you want Drizzle to parameterize paths and option values:
+
+```typescript
+import { motherDuckReadParquet } from '@duckdbfan/drizzle-duckdb';
+
+await db.execute(sql`
+  select *
+  from ${motherDuckReadParquet('s3://bucket/events/*.parquet', {
+    mdRun: 'remote',
+    named: {
+      hive_partitioning: true,
+      filename: false,
+    },
+  })}
+`);
+```
+
+For other supported scan functions, use `motherDuckTableFunction`:
+
+```typescript
+import { motherDuckTableFunction } from '@duckdbfan/drizzle-duckdb';
+
+await db.execute(sql`
+  select *
+  from ${motherDuckTableFunction('delta_scan', ['s3://bucket/delta'], {
+    mdRun: 'remote',
+  })}
+`);
+```
+
 ## MotherDuck metadata table functions
 
 Use `mdAccessTokens()` and `mdListDives()` when querying the matching MotherDuck table functions through Drizzle SQL templates:
