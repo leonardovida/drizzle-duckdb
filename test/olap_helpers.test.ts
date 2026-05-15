@@ -14,6 +14,10 @@ import {
   lanceVectorSearch,
   lead,
   median,
+  motherDuckReadCsvAuto,
+  motherDuckReadJsonAuto,
+  motherDuckReadParquet,
+  motherDuckTableFunction,
   olap,
   percentileCont,
   rank,
@@ -302,6 +306,72 @@ test('MotherDuck Lance helpers emit table functions with named parameters', () =
     0.75,
     8,
   ]);
+});
+
+test('MotherDuck scan helpers emit md_run overrides and named parameters', () => {
+  const dialect = new DuckDBDialect();
+
+  const parquet = dialect.sqlToQuery(
+    motherDuckReadParquet('s3://bucket/events/*.parquet', {
+      mdRun: 'remote',
+      named: {
+        hive_partitioning: true,
+        filename: false,
+      },
+    })
+  );
+  const csv = dialect.sqlToQuery(
+    motherDuckReadCsvAuto('https://example.com/data.csv', {
+      mdRun: 'local',
+      named: {
+        header: true,
+      },
+    })
+  );
+  const json = dialect.sqlToQuery(
+    motherDuckReadJsonAuto(sql`read_json_source`, {
+      mdRun: 'auto',
+    })
+  );
+  const delta = dialect.sqlToQuery(
+    motherDuckTableFunction('delta_scan', ['s3://bucket/delta'], {
+      mdRun: 'remote',
+    })
+  );
+
+  expect(parquet.sql).toContain(
+    'read_parquet($1, hive_partitioning = $2, filename = $3, md_run = $4)'
+  );
+  expect(parquet.params).toEqual([
+    's3://bucket/events/*.parquet',
+    true,
+    false,
+    'remote',
+  ]);
+  expect(csv.sql).toContain('read_csv_auto($1, header = $2, md_run = $3)');
+  expect(csv.params).toEqual(['https://example.com/data.csv', true, 'local']);
+  expect(json.sql).toContain('read_json_auto(read_json_source, md_run = $1)');
+  expect(json.params).toEqual(['auto']);
+  expect(delta.sql).toContain('delta_scan($1, md_run = $2)');
+  expect(delta.params).toEqual(['s3://bucket/delta', 'remote']);
+});
+
+test('MotherDuck scan helpers reject unsafe named parameters', () => {
+  expect(() =>
+    motherDuckTableFunction('read_parquet', ['s3://bucket/file.parquet'], {
+      named: {
+        'header); drop table t; --': true,
+      },
+    }).getSQL()
+  ).toThrow('Invalid MotherDuck table function parameter');
+});
+
+test('MotherDuck scan helpers reject invalid md_run modes', () => {
+  expect(() =>
+    motherDuckTableFunction('read_parquet', ['s3://bucket/file.parquet'], {
+      mdRun: 'remote); drop table t; --' as 'remote',
+    }).getSQL()
+  ).toThrow('Invalid MotherDuck mdRun mode');
 });
 
 test('OlapBuilder throws when from() not called', () => {

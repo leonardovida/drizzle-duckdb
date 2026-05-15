@@ -134,6 +134,7 @@ MotherDuck supports hybrid queries that combine local and cloud data:
 
 ```typescript
 import { sql } from 'drizzle-orm';
+import { motherDuckReadParquet } from '@duckdbfan/drizzle-duckdb';
 
 // Attach a local database
 await db.execute(sql`ATTACH './local.duckdb' AS local_db`);
@@ -143,6 +144,14 @@ const results = await db.execute(sql`
   SELECT c.name, l.value
   FROM my_cloud_db.main.cloud_table c
   JOIN local_db.main.local_table l ON c.id = l.cloud_id
+`);
+
+// Force a supported cloud scan to run remotely
+await db.execute(sql`
+  select *
+  from ${motherDuckReadParquet('s3://bucket/events/*.parquet', {
+    mdRun: 'remote',
+  })}
 `);
 ```
 
