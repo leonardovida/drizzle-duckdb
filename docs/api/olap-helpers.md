@@ -157,6 +157,28 @@ await db.execute(sql`
 `);
 ```
 
+## MotherDuck metadata table functions
+
+Use `mdAccessTokens()` and `mdListDives()` when querying the matching MotherDuck table functions through Drizzle SQL templates:
+
+```typescript
+import { mdAccessTokens, mdListDives } from '@duckdbfan/drizzle-duckdb';
+
+const tokens = await db.execute(sql`
+  select token_name, token_type, created_ts, expire_at
+  from ${mdAccessTokens()}
+  order by token_name
+`);
+
+const divesWithResources = await db.execute(sql`
+  select id, required_resources
+  from ${mdListDives()}
+  where len(required_resources) > 0
+`);
+```
+
+`mdListDives()` includes `required_resources` on supported MotherDuck deployments. The column is a list of structs with `name`, `alias`, `url`, `id`, and `resource_type` fields.
+
 ## OLAP builder (grouped measures)
 
 ```typescript

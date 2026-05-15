@@ -1,5 +1,5 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
-import type { DuckDBConnectionPool } from './client.ts';
+import type { DuckDBConnectionPool, DuckDBExecutionClient } from './client.ts';
 import {
   resolvePoolSize,
   type DuckDBPoolConfig,
@@ -165,6 +165,12 @@ export async function configureDuckLake(
   }
 }
 
+function isDuckDBConnection(
+  connection: DuckDBExecutionClient
+): connection is DuckDBConnection {
+  return typeof (connection as DuckDBConnection).run === 'function';
+}
+
 export function wrapDuckLakePool(
   pool: DuckDBConnectionPool,
   config: DuckLakeConfig
@@ -177,6 +183,13 @@ export function wrapDuckLakePool(
   const wrapped: DuckDBConnectionPool & { size?: number } = {
     async acquire() {
       const connection = await pool.acquire();
+      if (!isDuckDBConnection(connection)) {
+        await pool.release(connection);
+        throw new Error(
+          'DuckLake configuration requires an @duckdb/node-api connection pool and cannot be used with pg_duckdb clients.'
+        );
+      }
+
       if (configuredConnections.has(connection)) {
         return connection;
       }
