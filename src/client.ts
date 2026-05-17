@@ -16,7 +16,7 @@ import {
   type PreparedStatementCacheConfig,
 } from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
-import type { PgDuckClient, PgDuckQueryResult } from './pgduck.ts';
+import type { PgDuckClient, PgDuckField, PgDuckQueryResult } from './pgduck.ts';
 
 export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
 export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
@@ -619,10 +619,59 @@ async function materializeRows(
   });
 }
 
-function normalizePgDuckResult(result: PgDuckQueryResult | unknown[]) {
+type NormalizedPgDuckResult = {
+  rows: unknown[];
+  fields?: PgDuckField[];
+};
+
+function normalizePgDuckResult(
+  result: PgDuckQueryResult | unknown[]
+): NormalizedPgDuckResult {
   return Array.isArray(result)
     ? { rows: result, fields: undefined }
     : { rows: result.rows, fields: result.fields };
+}
+
+function getPgDuckFieldNames(fields: PgDuckField[] | undefined): string[] {
+  return fields?.map((field) => field.name) ?? [];
+}
+
+function materializedRows(
+  columns: string[],
+  rows: unknown[][]
+): MaterializedRows {
+  return { columns: deduplicateColumns(columns), rows };
+}
+
+function mapObjectRowsToArrays(
+  rows: RowData[],
+  columns: string[]
+): unknown[][] {
+  return rows.map((row) => columns.map((column) => row[column]));
+}
+
+function materializePgDuckResultRows(
+  result: NormalizedPgDuckResult
+): MaterializedRows {
+  const { rows } = result;
+  const fieldColumns = getPgDuckFieldNames(result.fields);
+
+  if (rows.length === 0) {
+    return materializedRows(fieldColumns, []);
+  }
+
+  const firstRow = rows[0];
+  if (Array.isArray(firstRow)) {
+    return materializedRows(fieldColumns, rows as unknown[][]);
+  }
+
+  const columns =
+    fieldColumns.length > 0 ? fieldColumns : Object.keys(firstRow as RowData);
+
+  return materializedRows(
+    columns,
+    mapObjectRowsToArrays(rows as RowData[], columns)
+  );
 }
 
 async function materializePgDuckRows(
@@ -630,39 +679,15 @@ async function materializePgDuckRows(
   query: string,
   params: unknown[]
 ): Promise<MaterializedRows> {
-  const result = normalizePgDuckResult(
-    await client.query({
-      text: query,
-      values: toPgDuckValues(params),
-      rowMode: 'array',
-    })
+  return materializePgDuckResultRows(
+    normalizePgDuckResult(
+      await client.query({
+        text: query,
+        values: toPgDuckValues(params),
+        rowMode: 'array',
+      })
+    )
   );
-  const rows = result.rows ?? [];
-
-  if (rows.length === 0) {
-    const columns = result.fields?.map((field) => field.name) ?? [];
-    return { columns: deduplicateColumns(columns), rows: [] };
-  }
-
-  const firstRow = rows[0];
-  if (Array.isArray(firstRow)) {
-    const columns = result.fields?.map((field) => field.name) ?? [];
-    return {
-      columns: deduplicateColumns(columns),
-      rows: rows as unknown[][],
-    };
-  }
-
-  const columns =
-    result.fields?.map((field) => field.name) ??
-    Object.keys(firstRow as RowData);
-  const deduplicated = deduplicateColumns(columns);
-  return {
-    columns: deduplicated,
-    rows: (rows as RowData[]).map((row) =>
-      columns.map((column) => row[column])
-    ),
-  };
 }
 
 function clearPreparedCache(connection: DuckDBConnection): void {
@@ -693,6 +718,25 @@ function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
   }
 
   return mappedRows;
+}
+
+function mapRowsToColumnData(
+  columns: string[],
+  rows: unknown[][]
+): Record<string, unknown[]> {
+  const columnData: Record<string, unknown[]> = {};
+
+  for (const column of columns) {
+    columnData[column] = [];
+  }
+
+  for (const row of rows) {
+    for (let index = 0; index < columns.length; index += 1) {
+      columnData[columns[index] as string]?.push(row[index]);
+    }
+  }
+
+  return columnData;
 }
 
 export async function closeClientConnection(
@@ -904,16 +948,7 @@ export async function executeArrowOnClient(
         query,
         params
       );
-      const columnData: Record<string, unknown[]> = {};
-      for (const column of columns) {
-        columnData[column] = [];
-      }
-      for (const row of rows) {
-        for (let index = 0; index < columns.length; index += 1) {
-          columnData[columns[index] as string]?.push(row[index]);
-        }
-      }
-      return columnData;
+      return mapRowsToColumnData(columns, rows);
     }
 
     const values = toNodeApiValues(params);
