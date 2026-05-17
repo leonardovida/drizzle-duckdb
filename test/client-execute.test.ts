@@ -7,6 +7,7 @@ import {
   executeOnClient,
   type DuckDBClientLike,
 } from '../src/client.ts';
+import type { PgDuckClient, PgDuckQueryConfig } from '../src/pgduck.ts';
 
 function makeClient(options: {
   arrowValue?: unknown;
@@ -204,6 +205,24 @@ describe('executeArrowOnClient', () => {
     await executeArrowOnClient(pool, 'select 1', []);
 
     expect(releaseCalls).toBe(1);
+  });
+
+  test('normalizes pg_duckdb object rows to column data', async () => {
+    const calls: PgDuckQueryConfig[] = [];
+    const client: PgDuckClient = {
+      async query(query) {
+        calls.push(query as PgDuckQueryConfig);
+        return {
+          fields: [{ name: 'id' }, { name: 'name' }],
+          rows: [{ id: 1, name: 'Ada' }],
+        };
+      },
+    };
+
+    const data = await executeArrowOnClient(client, 'select', []);
+
+    expect(data).toEqual({ id: [1], name: ['Ada'] });
+    expect(calls[0]).toMatchObject({ text: 'select', rowMode: 'array' });
   });
 });
 
