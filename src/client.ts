@@ -16,11 +16,7 @@ import {
   type PreparedStatementCacheConfig,
 } from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
-import type {
-  PgDuckClient,
-  PgDuckField,
-  PgDuckQueryResult,
-} from './pgduck.ts';
+import type { PgDuckClient, PgDuckField, PgDuckQueryResult } from './pgduck.ts';
 
 export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
 export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
@@ -647,7 +643,10 @@ function materializedRows(
   return { columns: deduplicateColumns(columns), rows };
 }
 
-function mapObjectRowsToArrays(rows: RowData[], columns: string[]): unknown[][] {
+function mapObjectRowsToArrays(
+  rows: RowData[],
+  columns: string[]
+): unknown[][] {
   return rows.map((row) => columns.map((column) => row[column]));
 }
 
