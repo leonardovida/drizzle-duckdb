@@ -823,15 +823,31 @@ async function* chunkRowStream(
   columns: string[],
   rowsPerChunk: number
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-  let rows: unknown[][] = [];
+  yield* chunkRows(flattenRowChunks(rowStream), columns, rowsPerChunk);
+}
 
+async function* flattenRowChunks(
+  rowStream: AsyncIterable<unknown[][]>
+): AsyncGenerator<unknown[], void, void> {
   for await (const chunk of rowStream) {
     for (const row of chunk) {
-      rows.push(row as unknown[]);
-      if (rows.length >= rowsPerChunk) {
-        yield { columns, rows };
-        rows = [];
-      }
+      yield row as unknown[];
+    }
+  }
+}
+
+async function* chunkRows(
+  rowStream: AsyncIterable<unknown[]> | Iterable<unknown[]>,
+  columns: string[],
+  rowsPerChunk: number
+): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
+  let rows: unknown[][] = [];
+
+  for await (const row of rowStream) {
+    rows.push(row);
+    if (rows.length >= rowsPerChunk) {
+      yield { columns, rows };
+      rows = [];
     }
   }
 
@@ -857,12 +873,7 @@ async function* streamRawBatches(
           query,
           params
         );
-        for (let index = 0; index < rows.length; index += rowsPerChunk) {
-          yield {
-            columns,
-            rows: rows.slice(index, index + rowsPerChunk),
-          };
-        }
+        yield* chunkRows(rows, columns, rowsPerChunk);
         return;
       }
 

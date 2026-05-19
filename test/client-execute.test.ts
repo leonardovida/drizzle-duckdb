@@ -456,6 +456,33 @@ describe('executeArraysOnClient', () => {
 });
 
 describe('executeInBatchesRaw', () => {
+  test('chunks pg_duckdb materialized rows through the shared batch path', async () => {
+    let rowMode: unknown;
+    const client: PgDuckClient = {
+      async query(query) {
+        rowMode = typeof query === 'string' ? undefined : query.rowMode;
+        return {
+          fields: [{ name: 'id' }],
+          rows: [[1], [2], [3], [4], [5]],
+        };
+      },
+    };
+    const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
+
+    for await (const chunk of executeInBatchesRaw(client, 'select', [], {
+      rowsPerChunk: 2,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(rowMode).toBe('array');
+    expect(chunks).toEqual([
+      { columns: ['id'], rows: [[1], [2]] },
+      { columns: ['id'], rows: [[3], [4]] },
+      { columns: ['id'], rows: [[5]] },
+    ]);
+  });
+
   test('normalizes node-api duplicate column suffixes when provided', async () => {
     let calls = 0;
     const client = makeClient({
