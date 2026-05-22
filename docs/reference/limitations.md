@@ -52,7 +52,7 @@ await db.transaction(async (tx) => {
 
 ## DuckDB 1.5 Core Types
 
-DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.2-r.1` still throws a low-level conversion error when those raw values are materialized into JavaScript.
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.2-r.2` still throws a low-level conversion error when those raw values are materialized into JavaScript.
 
 Use explicit projections when querying those columns:
 
