@@ -449,11 +449,12 @@ function resolveResultColumns(result: ResultColumnsLike): string[] {
 
 function isUnsupportedNodeApiTypeError(error: unknown): boolean {
   return (
-    error instanceof Error && error.message.includes('Unexpected type id: 0')
+    error instanceof Error && /^Unexpected type id: \d+/.test(error.message)
   );
 }
 
 const JSON_RESULT_TYPE_IDS = new Set([22, 30, 39]);
+const UNSUPPORTED_JS_RESULT_TYPE_IDS = new Set([0, 40, 41]);
 
 function prefersJsonMaterialization(result: ResultTypeMetadataLike): boolean {
   if (
@@ -493,7 +494,7 @@ function findUnsupportedNodeApiColumns(
     columnIndex < result.columnCount;
     columnIndex += 1
   ) {
-    if (result.columnTypeId(columnIndex) === 0) {
+    if (UNSUPPORTED_JS_RESULT_TYPE_IDS.has(result.columnTypeId(columnIndex))) {
       unsupportedColumns.push(result.columnName(columnIndex));
     }
   }

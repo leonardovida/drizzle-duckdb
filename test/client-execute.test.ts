@@ -81,6 +81,7 @@ function makeClient(options: {
           return jsonRows;
         },
         columnNames: () => columns,
+        columnName: (index: number) => columns[index] ?? '',
         columnCount: columns.length,
         columnTypeId:
           columnTypeIds === undefined
@@ -98,6 +99,7 @@ function makeClient(options: {
     async stream(_query: string, _values?: unknown[]) {
       return {
         columnNames: () => columns,
+        columnName: (index: number) => columns[index] ?? '',
         columnCount: columns.length,
         columnTypeId:
           columnTypeIds === undefined
@@ -416,6 +418,21 @@ describe('executeOnClient', () => {
         ts_ns: '2024-03-01 12:34:56.123456789',
       },
     ]);
+  });
+
+  test('wraps unsupported DuckDB 1.5 type materialization errors', async () => {
+    for (const typeId of [40, 41]) {
+      const client = makeClient({
+        columns: ['data'],
+        deduplicatedColumns: ['data'],
+        columnTypeIds: [typeId],
+        getRowsError: new Error(`Unexpected type id: ${typeId}`),
+      });
+
+      await expect(executeOnClient(client, 'select', [])).rejects.toThrow(
+        /column "data".*VARIANT and GEOMETRY.*CAST\(col AS VARCHAR\)/i
+      );
+    }
   });
 
   test('falls back to JS rows when JSON materialization fails for precise time families', async () => {
