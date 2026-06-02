@@ -11,21 +11,21 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 
 ## Feature Support Matrix
 
-| Feature                              | Status  | Notes                                                                                                                            |
-| ------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Select queries                       | Full    | All standard select operations work                                                                                              |
-| Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                                         |
-| Joins                                | Full    | All join types supported; same-name columns auto-qualified                                                                       |
-| Subqueries                           | Full    |                                                                                                                                  |
-| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                                              |
-| Aggregations                         | Full    |                                                                                                                                  |
-| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                                                |
-| Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                                            |
-| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                                            |
-| JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                       |
-| `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5.3 materializes `VARIANT`; `GEOMETRY` materializes as binary after loading spatial. Cast when you need a stable shape. |
-| Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                                       |
-| Relational queries                   | Full    | With schema configuration                                                                                                        |
+| Feature                              | Status  | Notes                                                                                                      |
+| ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| Select queries                       | Full    | All standard select operations work                                                                        |
+| Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                   |
+| Joins                                | Full    | All join types supported; same-name columns auto-qualified                                                 |
+| Subqueries                           | Full    |                                                                                                            |
+| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                        |
+| Aggregations                         | Full    |                                                                                                            |
+| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                          |
+| Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                      |
+| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                      |
+| JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                 |
+| `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5.3 materializes `VARIANT`; `GEOMETRY` materializes as binary. Cast when you need a stable shape. |
+| Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                 |
+| Relational queries                   | Full    | With schema configuration                                                                                  |
 
 ## Transactions
 
@@ -52,7 +52,7 @@ await db.transaction(async (tx) => {
 
 ## DuckDB 1.5 Core Types
 
-DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values. `GEOMETRY` materializes as its binary representation after the spatial extension is loaded.
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values. `GEOMETRY` materializes as its binary representation.
 
 Use explicit projections when querying those columns:
 

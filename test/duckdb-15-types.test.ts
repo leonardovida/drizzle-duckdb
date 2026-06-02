@@ -50,8 +50,7 @@ test('VARIANT columns materialize native JavaScript values', async () => {
   expect(rows[1]?.data_text).toContain('Alice');
 });
 
-test('GEOMETRY columns materialize as binary values with spatial loaded', async () => {
-  await db.execute(sql`load spatial`);
+test('GEOMETRY columns materialize as binary values', async () => {
   await db.execute(sql`
     create table duckdb_geometry_test (
       id integer,
@@ -60,7 +59,7 @@ test('GEOMETRY columns materialize as binary values with spatial loaded', async 
   `);
   await db.execute(sql`
     insert into duckdb_geometry_test values
-      (1, ST_GeomFromText('POINT(1 2)'))
+      (1, 'POINT(1 2)'::geometry)
   `);
 
   const rawRows = await db.execute<{ geom: Buffer }>(
@@ -70,7 +69,7 @@ test('GEOMETRY columns materialize as binary values with spatial loaded', async 
   expect(Buffer.isBuffer(rawRows[0]?.geom)).toBe(true);
 
   const textRows = await db.execute<{ geom_wkt: string }>(
-    sql`select ST_AsText(geom) as geom_wkt from duckdb_geometry_test`
+    sql`select cast(geom as varchar) as geom_wkt from duckdb_geometry_test`
   );
 
   expect(textRows[0]).toEqual({ geom_wkt: 'POINT (1 2)' });

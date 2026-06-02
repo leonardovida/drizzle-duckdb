@@ -9,7 +9,7 @@ nav_order: 3
 
 DuckDB provides several types not found in standard Postgres. This guide covers how to use them with Drizzle.
 
-DuckDB 1.5 adds native `VARIANT` and moves `GEOMETRY` into core DuckDB. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values and `GEOMETRY` materializes as its binary representation after loading the spatial extension. Use explicit projections such as `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)` when you need a stable textual or binary shape.
+DuckDB 1.5 adds native `VARIANT` and moves `GEOMETRY` into core DuckDB. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values and `GEOMETRY` materializes as its binary representation. Use explicit projections such as `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)` when you need a stable textual or binary shape.
 
 ## Import
 
