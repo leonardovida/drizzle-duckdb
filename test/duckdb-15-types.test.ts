@@ -19,7 +19,7 @@ afterAll(() => {
   instance?.closeSync?.();
 });
 
-test('VARIANT columns surface a descriptive node-api compatibility error', async () => {
+test('VARIANT columns materialize with node-api 1.5.3', async () => {
   try {
     await db.execute(
       sql`create table duckdb_variant_test (id integer, data variant)`
@@ -36,12 +36,10 @@ test('VARIANT columns surface a descriptive node-api compatibility error', async
       (2, {'name': 'Alice'}::variant)
   `);
 
-  await expect(
-    (async () =>
-      await db.execute(sql`select data from duckdb_variant_test order by id`))()
-  ).rejects.toThrow(
-    /@duckdb\/node-api cannot materialize to JavaScript.*VARIANT and GEOMETRY/i
+  const variantRows = await db.execute(
+    sql`select data from duckdb_variant_test order by id`
   );
+  expect(variantRows).toEqual([{ data: 42 }, { data: { name: 'Alice' } }]);
 
   const rows = await db.execute(
     sql`select cast(data as varchar) as data_text from duckdb_variant_test order by id`

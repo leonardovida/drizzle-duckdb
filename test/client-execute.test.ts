@@ -420,7 +420,7 @@ describe('executeOnClient', () => {
     ]);
   });
 
-  test('wraps unsupported DuckDB 1.5 type materialization errors', async () => {
+  test('wraps unsupported node-api type materialization errors', async () => {
     for (const typeId of [40, 41]) {
       const client = makeClient({
         columns: ['data'],
@@ -430,7 +430,7 @@ describe('executeOnClient', () => {
       });
 
       await expect(executeOnClient(client, 'select', [])).rejects.toThrow(
-        /column "data".*VARIANT and GEOMETRY.*CAST\(col AS VARCHAR\)/i
+        /column "data".*CAST\(col AS VARCHAR\)/i
       );
     }
   });
