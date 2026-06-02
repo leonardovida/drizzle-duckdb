@@ -1,6 +1,7 @@
 import type { DuckDBConnection, DuckDBInstance } from '@duckdb/node-api';
 import { expect, test, vi } from 'vitest';
 import { closeClientConnection, closeDuckDbInstance } from '../src/client.ts';
+import type { PgDuckClient } from '../src/pgduck.ts';
 
 test('closeClientConnection prefers async close when available', async () => {
   const close = vi.fn(async () => undefined);
@@ -26,6 +27,18 @@ test('closeClientConnection falls back to disconnectSync', async () => {
   } as unknown as DuckDBConnection);
 
   expect(disconnectSync).toHaveBeenCalledTimes(1);
+});
+
+test('closeClientConnection closes pg-style clients with end', async () => {
+  const end = vi.fn(async () => undefined);
+  const client: PgDuckClient = {
+    query: vi.fn(async () => ({ rows: [] })),
+    end,
+  };
+
+  await closeClientConnection(client);
+
+  expect(end).toHaveBeenCalledTimes(1);
 });
 
 test('closeDuckDbInstance prefers async close when available', async () => {
