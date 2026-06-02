@@ -70,6 +70,7 @@ type ResultJsonRowsLike = {
 type ClosableResource = {
   close?: () => Promise<void> | void;
   closeSync?: () => void;
+  end?: () => Promise<void> | void;
 };
 
 type DisconnectableResource = ClosableResource & {
@@ -767,6 +768,11 @@ async function closeDuckDbResource(
 
   if (typeof resource.closeSync === 'function') {
     resource.closeSync();
+    return;
+  }
+
+  if (typeof resource.end === 'function') {
+    await resource.end();
     return;
   }
 

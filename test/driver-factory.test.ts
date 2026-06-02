@@ -6,6 +6,7 @@ import { POOL_PRESETS, resolvePoolSize } from '../src/pool.ts';
 import { DuckDBDatabase } from '../src/driver.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 import { DuckDBSession } from '../src/session.ts';
+import type { PgDuckClient } from '../src/pgduck.ts';
 
 describe('Driver Factory Tests', () => {
   let db: DuckDBDatabase | null = null;
@@ -185,6 +186,19 @@ describe('Driver Factory Tests', () => {
 
       await expect(dbWithFailingClient.close()).rejects.toBe(closeError);
       expect(instanceClosed).toBe(1);
+    });
+
+    test('close() ends direct pg-style clients', async () => {
+      const end = vi.fn(async () => undefined);
+      const pgClient: PgDuckClient = {
+        query: vi.fn(async () => ({ rows: [] })),
+        end,
+      };
+      const dbWithPgClient = drizzle(pgClient);
+
+      await dbWithPgClient.close();
+
+      expect(end).toHaveBeenCalledTimes(1);
     });
 
     test('connection-string setup closes resources when DuckLake setup fails', async () => {
