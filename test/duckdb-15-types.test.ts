@@ -19,7 +19,7 @@ afterAll(() => {
   instance?.closeSync?.();
 });
 
-test('VARIANT columns surface a descriptive node-api compatibility error', async () => {
+test('VARIANT columns materialize native JavaScript values', async () => {
   try {
     await db.execute(
       sql`create table duckdb_variant_test (id integer, data variant)`
@@ -36,12 +36,11 @@ test('VARIANT columns surface a descriptive node-api compatibility error', async
       (2, {'name': 'Alice'}::variant)
   `);
 
-  await expect(
-    (async () =>
-      await db.execute(sql`select data from duckdb_variant_test order by id`))()
-  ).rejects.toThrow(
-    /@duckdb\/node-api cannot materialize to JavaScript.*VARIANT and GEOMETRY/i
+  const rawRows = await db.execute<{ data: unknown }>(
+    sql`select data from duckdb_variant_test order by id`
   );
+
+  expect(rawRows).toEqual([{ data: 42 }, { data: { name: 'Alice' } }]);
 
   const rows = await db.execute(
     sql`select cast(data as varchar) as data_text from duckdb_variant_test order by id`
@@ -49,4 +48,30 @@ test('VARIANT columns surface a descriptive node-api compatibility error', async
 
   expect(rows[0]).toEqual({ data_text: '42' });
   expect(rows[1]?.data_text).toContain('Alice');
+});
+
+test('GEOMETRY columns materialize as binary values with spatial loaded', async () => {
+  await db.execute(sql`load spatial`);
+  await db.execute(sql`
+    create table duckdb_geometry_test (
+      id integer,
+      geom geometry
+    )
+  `);
+  await db.execute(sql`
+    insert into duckdb_geometry_test values
+      (1, ST_GeomFromText('POINT(1 2)'))
+  `);
+
+  const rawRows = await db.execute<{ geom: Buffer }>(
+    sql`select geom from duckdb_geometry_test`
+  );
+
+  expect(Buffer.isBuffer(rawRows[0]?.geom)).toBe(true);
+
+  const textRows = await db.execute<{ geom_wkt: string }>(
+    sql`select ST_AsText(geom) as geom_wkt from duckdb_geometry_test`
+  );
+
+  expect(textRows[0]).toEqual({ geom_wkt: 'POINT (1 2)' });
 });

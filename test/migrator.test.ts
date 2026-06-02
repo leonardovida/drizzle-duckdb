@@ -6,6 +6,7 @@ import {
   test,
   beforeAll,
   afterAll,
+  afterEach,
   beforeEach,
 } from 'vitest';
 import { drizzle } from '../src/driver.ts';
@@ -20,10 +21,6 @@ describe('Migrator Tests', () => {
   const testMigrationsDir = join(import.meta.dirname, '.tmp/test-migrations');
 
   beforeAll(async () => {
-    instance = await DuckDBInstance.create(':memory:');
-    const connection = await instance.connect();
-    db = drizzle(connection);
-
     // Create test migrations directory
     if (!existsSync(testMigrationsDir)) {
       mkdirSync(testMigrationsDir, { recursive: true });
@@ -75,10 +72,18 @@ describe('Migrator Tests', () => {
     );
   });
 
-  afterAll(async () => {
+  beforeEach(async () => {
+    instance = await DuckDBInstance.create(':memory:');
+    const connection = await instance.connect();
+    db = drizzle(connection);
+  });
+
+  afterEach(async () => {
     await db.close();
     instance.closeSync?.();
+  });
 
+  afterAll(async () => {
     // Clean up test migrations
     if (existsSync(testMigrationsDir)) {
       rmSync(testMigrationsDir, { recursive: true, force: true });
@@ -115,7 +120,8 @@ describe('Migrator Tests', () => {
   });
 
   test('migrate creates __drizzle_migrations table', async () => {
-    // After the first migrate, the migrations table should exist
+    await migrate(db, { migrationsFolder: testMigrationsDir });
+
     const result = await db.execute<{ name: string }>(sql`
       SELECT table_name as name
       FROM information_schema.tables

@@ -47,7 +47,7 @@ const allUsers = await db.select().from(users);
 
 - Do NOT use Postgres json or jsonb columns - use duckDbJson() instead
 - Current DuckDB 1.4.x and 1.5.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
-- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`, but raw JS materialization for those types is still limited by `@duckdb/node-api`. Cast them before selecting, for example with `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)`.
+- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values and `GEOMETRY` materializes as binary after loading spatial. Cast when you need a stable representation, for example with `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)`.
 - Array operators are automatically rewritten to DuckDB functions
 
 ## Documentation

@@ -37,7 +37,7 @@ npm install @duckdbfan/drizzle-duckdb @duckdb/node-api
 pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
-Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.2-r.2`. The repo now develops against `1.5.2-r.2`, and `1.4.4-r.1` remains supported.
+Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.3-r.3`. The repo now develops against `1.5.3-r.3`, and `1.4.4-r.1` remains supported.
 Tested `drizzle-orm` versions currently span `0.40.1` through `0.45.x`.
 
 ## Quick Start

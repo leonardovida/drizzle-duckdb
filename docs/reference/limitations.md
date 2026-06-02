@@ -11,21 +11,21 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 
 ## Feature Support Matrix
 
-| Feature                              | Status  | Notes                                                                                                               |
-| ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| Select queries                       | Full    | All standard select operations work                                                                                 |
-| Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                            |
-| Joins                                | Full    | All join types supported; same-name columns auto-qualified                                                          |
-| Subqueries                           | Full    |                                                                                                                     |
-| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                                 |
-| Aggregations                         | Full    |                                                                                                                     |
-| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                                   |
-| Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                               |
-| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                               |
-| JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                          |
-| `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5 types exist, but `@duckdb/node-api` cannot yet materialize raw values reliably. Cast in the query first. |
-| Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                          |
-| Relational queries                   | Full    | With schema configuration                                                                                           |
+| Feature                              | Status  | Notes                                                                                                                            |
+| ------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Select queries                       | Full    | All standard select operations work                                                                                              |
+| Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                                         |
+| Joins                                | Full    | All join types supported; same-name columns auto-qualified                                                                       |
+| Subqueries                           | Full    |                                                                                                                                  |
+| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                                              |
+| Aggregations                         | Full    |                                                                                                                                  |
+| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back)                                                |
+| Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                                            |
+| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                                            |
+| JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                       |
+| `VARIANT` / `GEOMETRY` raw JS values | Partial | DuckDB 1.5.3 materializes `VARIANT`; `GEOMETRY` materializes as binary after loading spatial. Cast when you need a stable shape. |
+| Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                                       |
+| Relational queries                   | Full    | With schema configuration                                                                                                        |
 
 ## Transactions
 
@@ -52,7 +52,7 @@ await db.transaction(async (tx) => {
 
 ## DuckDB 1.5 Core Types
 
-DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. DuckDB itself supports them, but `@duckdb/node-api@1.5.2-r.2` still throws a low-level conversion error when those raw values are materialized into JavaScript.
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` materializes as native JavaScript values. `GEOMETRY` materializes as its binary representation after the spatial extension is loaded.
 
 Use explicit projections when querying those columns:
 
@@ -66,7 +66,7 @@ await db.execute(sql`
 `);
 ```
 
-Until the Node API exposes JS conversions for those types, this driver does not provide first-class column helpers for raw `VARIANT` or `GEOMETRY` values.
+This driver does not provide first-class column helpers for raw `VARIANT` or `GEOMETRY` values yet.
 
 ## JSON Columns
 
