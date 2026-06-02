@@ -37,7 +37,7 @@ npm install @duckdbfan/drizzle-duckdb @duckdb/node-api
 pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
-Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.2-r.2`. The repo now develops against `1.5.2-r.2`, and `1.4.4-r.1` remains supported.
+Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.3-r.3`. The repo now develops against `1.5.3-r.3`, and `1.4.4-r.1` remains supported.
 Tested `drizzle-orm` versions currently span `0.40.1` through `0.45.x`.
 
 ## Quick Start
@@ -206,18 +206,22 @@ MotherDuck table function helpers are composable SQL fragments:
 
 ```typescript
 import { sql } from 'drizzle-orm';
-import { mdCreateJob, mdJobRuns, mdJobs } from '@duckdbfan/drizzle-duckdb';
+import {
+  mdCreateFlight,
+  mdFlightRuns,
+  mdFlights,
+} from '@duckdbfan/drizzle-duckdb';
 
-const jobs = await db.execute(sql`
-  select job_id, job_name, current_version
-  from ${mdJobs({ limit: 25 })}
+const flights = await db.execute(sql`
+  select flight_id, flight_name, current_version
+  from ${mdFlights({ limit: 25 })}
 `);
 
-const [job] = await db.execute(sql`
-  select job_id, status
-  from ${mdCreateJob({
+const [flight] = await db.execute(sql`
+  select flight_id, status
+  from ${mdCreateFlight({
     name: 'daily-refresh',
-    mdTokenName: 'pipeline_token',
+    accessTokenName: 'pipeline_token',
     sourceCode: 'print("hello")',
     scheduleCron: '0 0 * * *',
   })}
@@ -225,9 +229,12 @@ const [job] = await db.execute(sql`
 
 const runs = await db.execute(sql`
   select run_number, status, created_at
-  from ${mdJobRuns(String(job.job_id))}
+  from ${mdFlightRuns(String(flight.flight_id))}
 `);
 ```
+
+The older `mdJobs()` helper family is still exported for deployments that have
+not moved to Flights yet, but new code should use the Flight helpers.
 
 ## Querying
 

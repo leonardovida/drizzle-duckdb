@@ -75,6 +75,11 @@ describe('Migrator Tests', () => {
     );
   });
 
+  beforeEach(async () => {
+    await db.execute(sql`DROP TABLE IF EXISTS users`);
+    await db.execute(sql`DROP SCHEMA IF EXISTS drizzle CASCADE`);
+  });
+
   afterAll(async () => {
     await db.close();
     instance.closeSync?.();
@@ -100,8 +105,6 @@ describe('Migrator Tests', () => {
   });
 
   test('migrate accepts a migrations folder string', async () => {
-    await db.execute(sql`DROP TABLE IF EXISTS users`);
-
     await migrate(db, testMigrationsDir);
 
     const result = await db.execute<{ name: string }>(sql`
@@ -115,7 +118,8 @@ describe('Migrator Tests', () => {
   });
 
   test('migrate creates __drizzle_migrations table', async () => {
-    // After the first migrate, the migrations table should exist
+    await migrate(db, { migrationsFolder: testMigrationsDir });
+
     const result = await db.execute<{ name: string }>(sql`
       SELECT table_name as name
       FROM information_schema.tables

@@ -179,6 +179,42 @@ const divesWithResources = await db.execute(sql`
 
 `mdListDives()` includes `required_resources` on supported MotherDuck deployments. The column is a list of structs with `name`, `alias`, `url`, `id`, and `resource_type` fields.
 
+## MotherDuck Flight table functions
+
+Use the Flight helper functions when creating, listing, updating, running, or
+inspecting MotherDuck Flights through Drizzle SQL templates:
+
+```typescript
+import {
+  mdCreateFlight,
+  mdFlightRuns,
+  mdFlights,
+} from '@duckdbfan/drizzle-duckdb';
+
+const flights = await db.execute(sql`
+  select flight_id, flight_name, current_version
+  from ${mdFlights({ limit: 25 })}
+`);
+
+const [flight] = await db.execute(sql`
+  select flight_id, status
+  from ${mdCreateFlight({
+    name: 'daily-refresh',
+    accessTokenName: 'pipeline_token',
+    sourceCode: 'print("hello")',
+    scheduleCron: '0 0 * * *',
+  })}
+`);
+
+const runs = await db.execute(sql`
+  select run_number, status, created_at
+  from ${mdFlightRuns(String(flight.flight_id))}
+`);
+```
+
+The older Job helper names are still exported for older MotherDuck deployments,
+but new code should use the Flight helpers.
+
 ## OLAP builder (grouped measures)
 
 ```typescript

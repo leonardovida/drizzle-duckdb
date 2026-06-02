@@ -42,12 +42,13 @@ const allUsers = await db.select().from(users);
 - MotherDuck cloud support
 - DuckLake catalog attach support
 - MotherDuck metadata table function helpers: mdAccessTokens(), mdListDives()
+- MotherDuck Flight table function helpers: mdFlights(), mdCreateFlight(), mdFlightRuns()
 
 ## Important Notes
 
 - Do NOT use Postgres json or jsonb columns - use duckDbJson() instead
 - Current DuckDB 1.4.x and 1.5.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
-- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`, but raw JS materialization for those types is still limited by `@duckdb/node-api`. Cast them before selecting, for example with `CAST(... AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)`, or `ST_AsWKB(...)`.
+- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` values materialize into JavaScript values. Project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output.
 - Array operators are automatically rewritten to DuckDB functions
 
 ## Documentation

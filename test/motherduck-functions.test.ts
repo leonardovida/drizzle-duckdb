@@ -2,9 +2,18 @@ import { sql } from 'drizzle-orm';
 import { expect, test } from 'vitest';
 import {
   mdAccessTokens,
+  mdCancelFlightRun,
   mdCancelJobRun,
+  mdCreateFlight,
   mdCreateJob,
+  mdDeleteFlight,
   mdDeleteJob,
+  mdFlightLogs,
+  mdFlightRuns,
+  mdFlights,
+  mdFlightVersions,
+  mdGetFlight,
+  mdGetFlightVersion,
   mdGetJob,
   mdGetJobVersion,
   mdJobRunLogs,
@@ -12,7 +21,9 @@ import {
   mdJobs,
   mdJobVersions,
   mdListDives,
+  mdRunFlight,
   mdRunJob,
+  mdUpdateFlight,
   mdUpdateJob,
 } from '../src/motherduck.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
@@ -37,6 +48,88 @@ test('MotherDuck table function helpers emit callable SQL', () => {
   expect(dives.sql).toContain('from md_list_dives()');
   expect(dives.sql).toContain('required_resources');
   expect(dives.params).toEqual([]);
+});
+
+test('MotherDuck flight helpers emit named-parameter table functions', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  const createFlight = dialect.sqlToQuery(sql`
+    select flight_id, current_version
+    from ${mdCreateFlight({
+      name: 'daily-refresh',
+      accessTokenName: 'pipeline_token',
+      sourceCode: 'print("hello")',
+      flightSecretNames: ['warehouse'],
+      scheduleCron: '0 0 * * *',
+      config: { retries: '3', owner: 'analytics' },
+      requirementsTxt: 'duckdb==1.0.0',
+    })}
+  `);
+
+  expect(createFlight.sql).toContain(
+    'from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)'
+  );
+  expect(createFlight.params).toEqual([
+    'daily-refresh',
+    'pipeline_token',
+    'print("hello")',
+    ['warehouse'],
+    '0 0 * * *',
+    ['retries', 'owner'],
+    ['3', 'analytics'],
+    'duckdb==1.0.0',
+  ]);
+
+  const flights = dialect.sqlToQuery(sql`
+    select flight_name
+    from ${mdFlights({ limit: 10, offset: 20 })}
+  `);
+
+  expect(flights.sql).toContain('from md_flights("LIMIT" = $1, "OFFSET" = $2)');
+  expect(flights.params).toEqual([10, 20]);
+
+  const updateFlight = dialect.sqlToQuery(sql`
+    select current_version
+    from ${mdUpdateFlight({
+      flightId,
+      sourceCode: sql`source_code || ${'\n# patched'}`,
+      flightSecretNames: [],
+    })}
+  `);
+
+  expect(updateFlight.sql).toContain(
+    'from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3)'
+  );
+  expect(updateFlight.params).toEqual([flightId, '\n# patched', []]);
+
+  expect(dialect.sqlToQuery(sql`from ${mdGetFlight(flightId)}`).sql).toContain(
+    'from md_get_flight(flight_id = $1)'
+  );
+  expect(
+    dialect.sqlToQuery(sql`from ${mdDeleteFlight(flightId)}`).sql
+  ).toContain('from md_delete_flight(flight_id = $1)');
+  expect(dialect.sqlToQuery(sql`from ${mdRunFlight(flightId)}`).sql).toContain(
+    'from md_run_flight(flight_id = $1)'
+  );
+  expect(
+    dialect.sqlToQuery(sql`from ${mdCancelFlightRun(flightId, 2)}`).sql
+  ).toContain('from md_cancel_flight_run(flight_id = $1, run_number = $2)');
+  expect(
+    dialect.sqlToQuery(sql`from ${mdFlightRuns(flightId, { limit: 1 })}`).sql
+  ).toContain('from md_flight_runs(flight_id = $1, "LIMIT" = $2)');
+  expect(
+    dialect.sqlToQuery(sql`from ${mdFlightLogs(flightId, 1)}`).sql
+  ).toContain('from md_flight_logs(flight_id = $1, run_number = $2)');
+  expect(
+    dialect.sqlToQuery(sql`from ${mdFlightVersions(flightId, { offset: 2 })}`)
+      .sql
+  ).toContain('from md_flight_versions(flight_id = $1, "OFFSET" = $2)');
+  expect(
+    dialect.sqlToQuery(sql`from ${mdGetFlightVersion(flightId, 1)}`).sql
+  ).toContain(
+    'from md_get_flight_version(flight_id = $1, version_number = $2)'
+  );
 });
 
 test('MotherDuck job helpers emit named-parameter table functions', () => {

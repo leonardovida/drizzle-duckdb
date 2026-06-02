@@ -519,7 +519,7 @@ function wrapUnsupportedNodeApiTypeError(
       : '';
 
   const wrapped = new Error(
-    `DuckDB returned a column type that @duckdb/node-api cannot materialize to JavaScript${columnsText}. This currently affects some DuckDB 1.5 types, including VARIANT and GEOMETRY. Cast those columns to a supported representation before selecting them, for example CAST(col AS VARCHAR), variant_extract(...), ST_AsText(...), or ST_AsWKB(...).`
+    `DuckDB returned a column type that @duckdb/node-api cannot materialize to JavaScript${columnsText}. Cast those columns to a supported representation before selecting them, for example CAST(col AS VARCHAR), variant_extract(...), ST_AsText(...), or ST_AsWKB(...).`
   );
   (wrapped as Error & { cause?: unknown }).cause = error;
   return wrapped;
