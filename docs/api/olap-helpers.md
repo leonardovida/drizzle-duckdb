@@ -214,6 +214,15 @@ const runs = await db.execute(sql`
 
 The older Job helper names are still exported for older MotherDuck deployments,
 but new code should use the Flight helpers.
+For optional Flight fields, `undefined` omits the named parameter and `null`
+emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
+or empty values for nullable Flight options such as `requirementsTxt`, `config`,
+and `flightSecretNames`.
+
+`config` entries are exposed to Flight code as environment variables using the
+config key. `flightSecretNames` references MotherDuck `TYPE flights` secrets;
+each secret param is exposed as `<SECRET_NAME>_<KEY>`, so a secret named
+`api_secret` with param `API_KEY` becomes `API_SECRET_API_KEY`.
 
 ## OLAP builder (grouped measures)
 
