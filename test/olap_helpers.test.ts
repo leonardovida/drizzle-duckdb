@@ -356,6 +356,43 @@ test('MotherDuck scan helpers emit md_run overrides and named parameters', () =>
   expect(delta.params).toEqual(['s3://bucket/delta', 'remote']);
 });
 
+test('MotherDuck scan helpers support remote extension metadata functions', () => {
+  const dialect = new DuckDBDialect();
+
+  const avro = dialect.sqlToQuery(
+    motherDuckTableFunction('read_avro', ['s3://bucket/events.avro'], {
+      mdRun: 'remote',
+    })
+  );
+  const parquetMetadata = dialect.sqlToQuery(
+    motherDuckTableFunction('parquet_metadata', [
+      's3://bucket/events.parquet',
+    ])
+  );
+  const spatial = dialect.sqlToQuery(
+    motherDuckTableFunction('st_read', ['s3://bucket/map.gpkg'])
+  );
+  const icebergStats = dialect.sqlToQuery(
+    motherDuckTableFunction('iceberg_column_stats', [
+      's3://bucket/warehouse/table',
+    ])
+  );
+  const duckLakeOptions = dialect.sqlToQuery(
+    motherDuckTableFunction('ducklake_options', ['ducklake:md:metadata'])
+  );
+
+  expect(avro.sql).toContain('read_avro($1, md_run = $2)');
+  expect(avro.params).toEqual(['s3://bucket/events.avro', 'remote']);
+  expect(parquetMetadata.sql).toContain('parquet_metadata($1)');
+  expect(parquetMetadata.params).toEqual(['s3://bucket/events.parquet']);
+  expect(spatial.sql).toContain('st_read($1)');
+  expect(spatial.params).toEqual(['s3://bucket/map.gpkg']);
+  expect(icebergStats.sql).toContain('iceberg_column_stats($1)');
+  expect(icebergStats.params).toEqual(['s3://bucket/warehouse/table']);
+  expect(duckLakeOptions.sql).toContain('ducklake_options($1)');
+  expect(duckLakeOptions.params).toEqual(['ducklake:md:metadata']);
+});
+
 test('MotherDuck scan helpers reject unsafe named parameters', () => {
   expect(() =>
     motherDuckTableFunction('read_parquet', ['s3://bucket/file.parquet'], {
