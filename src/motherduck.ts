@@ -133,21 +133,21 @@ export interface MotherDuckCreateFlightOptions {
   name: string | SQLWrapper;
   accessTokenName: string | SQLWrapper;
   sourceCode: string | SQLWrapper;
-  flightSecretNames?: readonly string[] | SQLWrapper;
-  scheduleCron?: string | SQLWrapper;
-  config?: Record<string, string> | SQLWrapper;
-  requirementsTxt?: string | SQLWrapper;
+  flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
+  scheduleCron?: string | SQLWrapper | null;
+  config?: Record<string, string | null> | SQLWrapper | null;
+  requirementsTxt?: string | SQLWrapper | null;
 }
 
 export interface MotherDuckUpdateFlightOptions {
   flightId: string | SQLWrapper;
-  name?: string | SQLWrapper;
-  scheduleCron?: string | SQLWrapper;
-  config?: Record<string, string> | SQLWrapper;
-  sourceCode?: string | SQLWrapper;
-  requirementsTxt?: string | SQLWrapper;
-  accessTokenName?: string | SQLWrapper;
-  flightSecretNames?: readonly string[] | SQLWrapper;
+  name?: string | SQLWrapper | null;
+  scheduleCron?: string | SQLWrapper | null;
+  config?: Record<string, string | null> | SQLWrapper | null;
+  sourceCode?: string | SQLWrapper | null;
+  requirementsTxt?: string | SQLWrapper | null;
+  accessTokenName?: string | SQLWrapper | null;
+  flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
 }
 
 /** @deprecated Use MotherDuckCreateFlightOptions. */
@@ -155,22 +155,22 @@ export interface MotherDuckCreateJobOptions {
   name: string | SQLWrapper;
   mdTokenName: string | SQLWrapper;
   sourceCode: string | SQLWrapper;
-  mdSecretNames?: readonly string[] | SQLWrapper;
-  scheduleCron?: string | SQLWrapper;
-  config?: Record<string, string> | SQLWrapper;
-  requirementsTxt?: string | SQLWrapper;
+  mdSecretNames?: readonly (string | null)[] | SQLWrapper | null;
+  scheduleCron?: string | SQLWrapper | null;
+  config?: Record<string, string | null> | SQLWrapper | null;
+  requirementsTxt?: string | SQLWrapper | null;
 }
 
 /** @deprecated Use MotherDuckUpdateFlightOptions. */
 export interface MotherDuckUpdateJobOptions {
   jobId: string | SQLWrapper;
-  name?: string | SQLWrapper;
-  scheduleCron?: string | SQLWrapper;
-  config?: Record<string, string> | SQLWrapper;
-  sourceCode?: string | SQLWrapper;
-  requirementsTxt?: string | SQLWrapper;
-  mdTokenName?: string | SQLWrapper;
-  mdSecretNames?: readonly string[] | SQLWrapper;
+  name?: string | SQLWrapper | null;
+  scheduleCron?: string | SQLWrapper | null;
+  config?: Record<string, string | null> | SQLWrapper | null;
+  sourceCode?: string | SQLWrapper | null;
+  requirementsTxt?: string | SQLWrapper | null;
+  mdTokenName?: string | SQLWrapper | null;
+  mdSecretNames?: readonly (string | null)[] | SQLWrapper | null;
 }
 
 export type MotherDuckRunMode = 'auto' | 'local' | 'remote';
@@ -234,10 +234,14 @@ function motherDuckArg(value: MotherDuckSqlArgument): SQLWrapper {
 }
 
 function motherDuckMapArg(
-  value: Record<string, string> | SQLWrapper
+  value: Record<string, string | null> | SQLWrapper | null
 ): SQLWrapper {
-  if (isSQLWrapper(value)) {
+  if (value !== null && isSQLWrapper(value)) {
     return value;
+  }
+
+  if (value === null) {
+    return sql.param(null);
   }
 
   return sql`MAP(${sql.param(Object.keys(value))}, ${sql.param(

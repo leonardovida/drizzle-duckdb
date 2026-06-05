@@ -235,6 +235,10 @@ const runs = await db.execute(sql`
 
 The older `mdJobs()` helper family is still exported for deployments that have
 not moved to Flights yet, but new code should use the Flight helpers.
+For optional Flight fields, `undefined` omits the named parameter and `null`
+emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
+or empty values for nullable Flight options such as `requirementsTxt`, `config`,
+and `flightSecretNames`.
 
 ## Querying
 
