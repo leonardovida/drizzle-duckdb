@@ -365,9 +365,7 @@ test('MotherDuck scan helpers support remote extension metadata functions', () =
     })
   );
   const parquetMetadata = dialect.sqlToQuery(
-    motherDuckTableFunction('parquet_metadata', [
-      's3://bucket/events.parquet',
-    ])
+    motherDuckTableFunction('parquet_metadata', ['s3://bucket/events.parquet'])
   );
   const spatial = dialect.sqlToQuery(
     motherDuckTableFunction('st_read', ['s3://bucket/map.gpkg'])
