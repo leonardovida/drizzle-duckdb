@@ -132,6 +132,56 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
   );
 });
 
+test('MotherDuck flight helpers emit explicit null optional parameters', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  const createFlight = dialect.sqlToQuery(sql`
+    from ${mdCreateFlight({
+      name: 'null-options',
+      accessTokenName: 'pipeline_token',
+      sourceCode: 'print("hello")',
+      flightSecretNames: null,
+      scheduleCron: null,
+      config: { keep: 'value', clear: null },
+      requirementsTxt: null,
+    })}
+  `);
+
+  expect(createFlight.sql).toContain(
+    'from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)'
+  );
+  expect(createFlight.params).toEqual([
+    'null-options',
+    'pipeline_token',
+    'print("hello")',
+    null,
+    null,
+    ['keep', 'clear'],
+    ['value', null],
+    null,
+  ]);
+
+  const updateFlight = dialect.sqlToQuery(sql`
+    from ${mdUpdateFlight({
+      flightId,
+      config: null,
+      flightSecretNames: [null, 'warehouse'],
+      requirementsTxt: null,
+    })}
+  `);
+
+  expect(updateFlight.sql).toContain(
+    'from md_update_flight(flight_id = $1, config = $2, requirements_txt = $3, flight_secret_names = $4)'
+  );
+  expect(updateFlight.params).toEqual([
+    flightId,
+    null,
+    null,
+    [null, 'warehouse'],
+  ]);
+});
+
 test('MotherDuck job helpers emit named-parameter table functions', () => {
   const dialect = new DuckDBDialect();
   const jobId = '80000000-0000-0000-0000-000000000001';
