@@ -249,6 +249,12 @@ function motherDuckMapArg(
   )})`;
 }
 
+function motherDuckOptionalMapArg(
+  value: Record<string, string | null> | SQLWrapper | null | undefined
+): SQLWrapper | undefined {
+  return value === undefined ? undefined : motherDuckMapArg(value);
+}
+
 function motherDuckNamedParams(parameters: NamedParameter[]): SQL {
   const chunks: SQL[] = [];
 
@@ -261,13 +267,28 @@ function motherDuckNamedParams(parameters: NamedParameter[]): SQL {
   return sql.join(chunks, sql`, `);
 }
 
-function motherDuckPagedNamedParams(
-  options: MotherDuckPaginationOptions = {}
+function motherDuckNamedFunction(
+  name: string,
+  parameters: NamedParameter[] = []
 ): SQL {
-  return motherDuckNamedParams([
+  return sql`${sql.raw(name)}(${motherDuckNamedParams(parameters)})`;
+}
+
+function motherDuckPagedParams(
+  options: MotherDuckPaginationOptions = {}
+): NamedParameter[] {
+  return [
     { name: '"LIMIT"', value: options.limit },
     { name: '"OFFSET"', value: options.offset },
-  ]);
+  ];
+}
+
+function motherDuckIdPagedParams(
+  idName: string,
+  idValue: string | SQLWrapper,
+  options: MotherDuckPaginationOptions
+): NamedParameter[] {
+  return [{ name: idName, value: idValue }, ...motherDuckPagedParams(options)];
 }
 
 function assertTableFunctionName(
@@ -344,179 +365,153 @@ export const motherDuckReadJsonAuto = (
 ) => motherDuckTableFunction('read_json_auto', [path], options);
 
 export function mdFlights(options: MotherDuckPaginationOptions = {}): SQL {
-  return sql`md_flights(${motherDuckPagedNamedParams(options)})`;
+  return motherDuckNamedFunction('md_flights', motherDuckPagedParams(options));
 }
 
 export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
-  return sql`md_create_flight(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_create_flight', [
     { name: 'name', value: options.name },
     { name: 'access_token_name', value: options.accessTokenName },
     { name: 'source_code', value: options.sourceCode },
     { name: 'flight_secret_names', value: options.flightSecretNames },
     { name: 'schedule_cron', value: options.scheduleCron },
-    {
-      name: 'config',
-      value:
-        options.config === undefined
-          ? undefined
-          : motherDuckMapArg(options.config),
-    },
+    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'requirements_txt', value: options.requirementsTxt },
-  ])})`;
+  ]);
 }
 
 export function mdGetFlight(flightId: string | SQLWrapper): SQL {
-  return sql`md_get_flight(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_get_flight', [
     { name: 'flight_id', value: flightId },
-  ])})`;
+  ]);
 }
 
 export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
-  return sql`md_update_flight(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_update_flight', [
     { name: 'flight_id', value: options.flightId },
     { name: 'name', value: options.name },
     { name: 'schedule_cron', value: options.scheduleCron },
-    {
-      name: 'config',
-      value:
-        options.config === undefined
-          ? undefined
-          : motherDuckMapArg(options.config),
-    },
+    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'source_code', value: options.sourceCode },
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'access_token_name', value: options.accessTokenName },
     { name: 'flight_secret_names', value: options.flightSecretNames },
-  ])})`;
+  ]);
 }
 
 export function mdDeleteFlight(flightId: string | SQLWrapper): SQL {
-  return sql`md_delete_flight(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_delete_flight', [
     { name: 'flight_id', value: flightId },
-  ])})`;
+  ]);
 }
 
 export function mdRunFlight(flightId: string | SQLWrapper): SQL {
-  return sql`md_run_flight(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_run_flight', [
     { name: 'flight_id', value: flightId },
-  ])})`;
+  ]);
 }
 
 export function mdCancelFlightRun(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return sql`md_cancel_flight_run(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_cancel_flight_run', [
     { name: 'flight_id', value: flightId },
     { name: 'run_number', value: runNumber },
-  ])})`;
+  ]);
 }
 
 export function mdFlightRuns(
   flightId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return sql`md_flight_runs(${motherDuckNamedParams([
-    { name: 'flight_id', value: flightId },
-    { name: '"LIMIT"', value: options.limit },
-    { name: '"OFFSET"', value: options.offset },
-  ])})`;
+  return motherDuckNamedFunction(
+    'md_flight_runs',
+    motherDuckIdPagedParams('flight_id', flightId, options)
+  );
 }
 
 export function mdFlightLogs(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return sql`md_flight_logs(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_flight_logs', [
     { name: 'flight_id', value: flightId },
     { name: 'run_number', value: runNumber },
-  ])})`;
+  ]);
 }
 
 export function mdFlightVersions(
   flightId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return sql`md_flight_versions(${motherDuckNamedParams([
-    { name: 'flight_id', value: flightId },
-    { name: '"LIMIT"', value: options.limit },
-    { name: '"OFFSET"', value: options.offset },
-  ])})`;
+  return motherDuckNamedFunction(
+    'md_flight_versions',
+    motherDuckIdPagedParams('flight_id', flightId, options)
+  );
 }
 
 export function mdGetFlightVersion(
   flightId: string | SQLWrapper,
   versionNumber: number | SQLWrapper
 ): SQL {
-  return sql`md_get_flight_version(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_get_flight_version', [
     { name: 'flight_id', value: flightId },
     { name: 'version_number', value: versionNumber },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdFlights. */
 export function mdJobs(options: MotherDuckPaginationOptions = {}): SQL {
-  return sql`md_jobs(${motherDuckPagedNamedParams(options)})`;
+  return motherDuckNamedFunction('md_jobs', motherDuckPagedParams(options));
 }
 
 /** @deprecated Use mdCreateFlight. */
 export function mdCreateJob(options: MotherDuckCreateJobOptions): SQL {
-  return sql`md_create_job(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_create_job', [
     { name: 'name', value: options.name },
     { name: 'md_token_name', value: options.mdTokenName },
     { name: 'source_code', value: options.sourceCode },
     { name: 'md_secret_names', value: options.mdSecretNames },
     { name: 'schedule_cron', value: options.scheduleCron },
-    {
-      name: 'config',
-      value:
-        options.config === undefined
-          ? undefined
-          : motherDuckMapArg(options.config),
-    },
+    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'requirements_txt', value: options.requirementsTxt },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdGetFlight. */
 export function mdGetJob(jobId: string | SQLWrapper): SQL {
-  return sql`md_get_job(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_get_job', [
     { name: 'job_id', value: jobId },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdUpdateFlight. */
 export function mdUpdateJob(options: MotherDuckUpdateJobOptions): SQL {
-  return sql`md_update_job(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_update_job', [
     { name: 'job_id', value: options.jobId },
     { name: 'name', value: options.name },
     { name: 'schedule_cron', value: options.scheduleCron },
-    {
-      name: 'config',
-      value:
-        options.config === undefined
-          ? undefined
-          : motherDuckMapArg(options.config),
-    },
+    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'source_code', value: options.sourceCode },
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'md_token_name', value: options.mdTokenName },
     { name: 'md_secret_names', value: options.mdSecretNames },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdDeleteFlight. */
 export function mdDeleteJob(jobId: string | SQLWrapper): SQL {
-  return sql`md_delete_job(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_delete_job', [
     { name: 'job_id', value: jobId },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdRunFlight. */
 export function mdRunJob(jobId: string | SQLWrapper): SQL {
-  return sql`md_run_job(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_run_job', [
     { name: 'job_id', value: jobId },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdCancelFlightRun. */
@@ -524,10 +519,10 @@ export function mdCancelJobRun(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return sql`md_cancel_job_run(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_cancel_job_run', [
     { name: 'job_id', value: jobId },
     { name: 'run_number', value: runNumber },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdFlightRuns. */
@@ -535,11 +530,10 @@ export function mdJobRuns(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return sql`md_job_runs(${motherDuckNamedParams([
-    { name: 'job_id', value: jobId },
-    { name: '"LIMIT"', value: options.limit },
-    { name: '"OFFSET"', value: options.offset },
-  ])})`;
+  return motherDuckNamedFunction(
+    'md_job_runs',
+    motherDuckIdPagedParams('job_id', jobId, options)
+  );
 }
 
 /** @deprecated Use mdFlightLogs. */
@@ -547,10 +541,10 @@ export function mdJobRunLogs(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return sql`md_job_run_logs(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_job_run_logs', [
     { name: 'job_id', value: jobId },
     { name: 'run_number', value: runNumber },
-  ])})`;
+  ]);
 }
 
 /** @deprecated Use mdFlightVersions. */
@@ -558,11 +552,10 @@ export function mdJobVersions(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return sql`md_job_versions(${motherDuckNamedParams([
-    { name: 'job_id', value: jobId },
-    { name: '"LIMIT"', value: options.limit },
-    { name: '"OFFSET"', value: options.offset },
-  ])})`;
+  return motherDuckNamedFunction(
+    'md_job_versions',
+    motherDuckIdPagedParams('job_id', jobId, options)
+  );
 }
 
 /** @deprecated Use mdGetFlightVersion. */
@@ -570,8 +563,8 @@ export function mdGetJobVersion(
   jobId: string | SQLWrapper,
   versionNumber: number | SQLWrapper
 ): SQL {
-  return sql`md_get_job_version(${motherDuckNamedParams([
+  return motherDuckNamedFunction('md_get_job_version', [
     { name: 'job_id', value: jobId },
     { name: 'version_number', value: versionNumber },
-  ])})`;
+  ]);
 }
