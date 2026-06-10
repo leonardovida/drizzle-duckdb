@@ -175,60 +175,6 @@ export interface MotherDuckUpdateJobOptions {
 
 export type MotherDuckRunMode = 'auto' | 'local' | 'remote';
 
-export type MotherDuckTableFunction =
-  | 'read_parquet'
-  | 'parquet_scan'
-  | 'parquet_schema'
-  | 'parquet_metadata'
-  | 'parquet_file_metadata'
-  | 'parquet_kv_metadata'
-  | 'parquet_bloom_probe'
-  | 'parquet_full_metadata'
-  | 'read_csv'
-  | 'read_csv_auto'
-  | 'sniff_csv'
-  | 'read_json'
-  | 'read_json_auto'
-  | 'read_ndjson'
-  | 'read_ndjson_auto'
-  | 'read_json_objects'
-  | 'read_json_objects_auto'
-  | 'read_ndjson_objects'
-  | 'read_text'
-  | 'read_blob'
-  | 'read_duckdb'
-  | 'read_avro'
-  | 'glob'
-  | 'dbgen'
-  | 'dsdgen'
-  | 'delta_scan'
-  | 'delta_list_files'
-  | 'iceberg_snapshots'
-  | 'iceberg_metadata'
-  | 'iceberg_scan'
-  | 'iceberg_partition_stats'
-  | 'iceberg_column_stats'
-  | 'st_read'
-  | 'st_readosm'
-  | 'ducklake_snapshots'
-  | 'ducklake_list_files'
-  | 'ducklake_table_info'
-  | 'ducklake_table_insertions'
-  | 'ducklake_table_deletions'
-  | 'ducklake_current_snapshot'
-  | 'ducklake_last_committed_snapshot'
-  | 'ducklake_merge_adjacent_files'
-  | 'ducklake_cleanup_old_files'
-  | 'ducklake_expire_snapshots'
-  | 'ducklake_set_option'
-  | 'ducklake_options'
-  | 'ducklake_add_data_files'
-  | 'ducklake_delete_orphaned_files'
-  | 'ducklake_set_commit_message'
-  | 'ducklake_rewrite_data_files'
-  | 'ducklake_flush_inlined_data'
-  | 'ducklake_settings';
-
 type MotherDuckSqlArgument =
   | SQLWrapper
   | string
@@ -248,7 +194,7 @@ type NamedParameter = {
   value: MotherDuckSqlArgument | undefined;
 };
 
-const motherDuckTableFunctionNames = new Set<MotherDuckTableFunction>([
+const motherDuckTableFunctionNameList = [
   'read_parquet',
   'parquet_scan',
   'parquet_schema',
@@ -301,7 +247,14 @@ const motherDuckTableFunctionNames = new Set<MotherDuckTableFunction>([
   'ducklake_rewrite_data_files',
   'ducklake_flush_inlined_data',
   'ducklake_settings',
-]);
+] as const;
+
+export type MotherDuckTableFunction =
+  (typeof motherDuckTableFunctionNameList)[number];
+
+const motherDuckTableFunctionNames = new Set<MotherDuckTableFunction>(
+  motherDuckTableFunctionNameList
+);
 
 function motherDuckArg(value: MotherDuckSqlArgument): SQLWrapper {
   return value !== null && isSQLWrapper(value) ? value : sql.param(value);
