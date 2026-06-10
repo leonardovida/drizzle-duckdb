@@ -81,6 +81,22 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
     'duckdb==1.0.0',
   ]);
 
+  const createFlightWithoutToken = dialect.sqlToQuery(sql`
+    select flight_id
+    from ${mdCreateFlight({
+      name: 'tokenless-refresh',
+      sourceCode: 'print("hello")',
+    })}
+  `);
+
+  expect(createFlightWithoutToken.sql).toContain(
+    'from md_create_flight(name = $1, source_code = $2)'
+  );
+  expect(createFlightWithoutToken.params).toEqual([
+    'tokenless-refresh',
+    'print("hello")',
+  ]);
+
   const flights = dialect.sqlToQuery(sql`
     select flight_name
     from ${mdFlights({ limit: 10, offset: 20 })}
@@ -112,6 +128,19 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
   expect(dialect.sqlToQuery(sql`from ${mdRunFlight(flightId)}`).sql).toContain(
     'from md_run_flight(flight_id = $1)'
   );
+  const runWithConfig = dialect.sqlToQuery(sql`
+    from ${mdRunFlight(flightId, {
+      config: { region: 'eu-west-1', dry_run: 'true' },
+    })}
+  `);
+  expect(runWithConfig.sql).toContain(
+    'from md_run_flight(flight_id = $1, config = MAP($2, $3))'
+  );
+  expect(runWithConfig.params).toEqual([
+    flightId,
+    ['region', 'dry_run'],
+    ['eu-west-1', 'true'],
+  ]);
   expect(
     dialect.sqlToQuery(sql`from ${mdCancelFlightRun(flightId, 2)}`).sql
   ).toContain('from md_cancel_flight_run(flight_id = $1, run_number = $2)');

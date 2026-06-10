@@ -44,6 +44,7 @@ export interface MotherDuckFlightRunRow {
   flight_id: string;
   flight_name: string;
   flight_version: number;
+  config: Record<string, string> | Map<string, string> | null;
   run_number: number | bigint;
   is_scheduled: boolean;
   status: string;
@@ -131,7 +132,7 @@ export interface MotherDuckPaginationOptions {
 
 export interface MotherDuckCreateFlightOptions {
   name: string | SQLWrapper;
-  accessTokenName: string | SQLWrapper;
+  accessTokenName?: string | SQLWrapper;
   sourceCode: string | SQLWrapper;
   flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
   scheduleCron?: string | SQLWrapper | null;
@@ -148,6 +149,10 @@ export interface MotherDuckUpdateFlightOptions {
   requirementsTxt?: string | SQLWrapper | null;
   accessTokenName?: string | SQLWrapper | null;
   flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
+}
+
+export interface MotherDuckRunFlightOptions {
+  config?: Record<string, string | null> | SQLWrapper | null;
 }
 
 /** @deprecated Use MotherDuckCreateFlightOptions. */
@@ -479,9 +484,13 @@ export function mdDeleteFlight(flightId: string | SQLWrapper): SQL {
   ]);
 }
 
-export function mdRunFlight(flightId: string | SQLWrapper): SQL {
+export function mdRunFlight(
+  flightId: string | SQLWrapper,
+  options: MotherDuckRunFlightOptions = {}
+): SQL {
   return motherDuckNamedFunction('md_run_flight', [
     { name: 'flight_id', value: flightId },
+    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
   ]);
 }
 
