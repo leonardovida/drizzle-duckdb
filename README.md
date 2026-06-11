@@ -208,8 +208,8 @@ MotherDuck table function helpers are composable SQL fragments:
 import { sql } from 'drizzle-orm';
 import {
   mdCreateFlight,
-  mdFlightRuns,
   mdFlights,
+  mdRunFlight,
 } from '@duckdbfan/drizzle-duckdb';
 
 const flights = await db.execute(sql`
@@ -221,7 +221,6 @@ const [flight] = await db.execute(sql`
   select flight_id, status
   from ${mdCreateFlight({
     name: 'daily-refresh',
-    accessTokenName: 'pipeline_token',
     sourceCode: 'print("hello")',
     scheduleCron: '0 0 * * *',
   })}
@@ -229,7 +228,9 @@ const [flight] = await db.execute(sql`
 
 const runs = await db.execute(sql`
   select run_number, status, created_at
-  from ${mdFlightRuns(String(flight.flight_id))}
+  from ${mdRunFlight(String(flight.flight_id), {
+    config: { region: 'eu-west-1' },
+  })}
 `);
 ```
 
