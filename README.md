@@ -242,9 +242,11 @@ or empty values for nullable Flight options such as `requirementsTxt`, `config`,
 and `flightSecretNames`.
 
 `config` entries are exposed to Flight code as environment variables using the
-config key. `flightSecretNames` references MotherDuck `TYPE flights` secrets;
-each secret param is exposed as `<SECRET_NAME>_<KEY>`, so a secret named
-`api_secret` with param `API_KEY` becomes `API_SECRET_API_KEY`.
+config key. Config keys must not be empty and cannot contain `=` or NULL bytes;
+config values cannot contain NULL bytes. `flightSecretNames` references
+MotherDuck `TYPE flights` secrets; each secret param is exposed as
+`<SECRET_NAME>_<KEY>`, so a secret named `api_secret` with param `API_KEY`
+becomes `API_SECRET_API_KEY`.
 
 ## Querying
 

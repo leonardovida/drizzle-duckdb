@@ -276,9 +276,39 @@ function motherDuckMapArg(
     return sql.param(null);
   }
 
+  validateMotherDuckConfigMap(value);
+
   return sql`MAP(${sql.param(Object.keys(value))}, ${sql.param(
     Object.values(value)
   )})`;
+}
+
+function validateMotherDuckConfigMap(
+  value: Record<string, string | null>
+): void {
+  for (const [key, configValue] of Object.entries(value)) {
+    if (key === '') {
+      throw new Error('MotherDuck Flight config keys must not be empty');
+    }
+
+    if (key.includes('=')) {
+      throw new Error(
+        `MotherDuck Flight config key "${key}" must not contain "="`
+      );
+    }
+
+    if (key.includes('\0')) {
+      throw new Error(
+        `MotherDuck Flight config key "${key}" must not contain a NULL byte`
+      );
+    }
+
+    if (configValue?.includes('\0')) {
+      throw new Error(
+        `MotherDuck Flight config value for key "${key}" must not contain a NULL byte`
+      );
+    }
+  }
 }
 
 function motherDuckOptionalMapArg(
