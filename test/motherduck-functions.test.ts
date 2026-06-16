@@ -211,6 +211,77 @@ test('MotherDuck flight helpers emit explicit null optional parameters', () => {
   ]);
 });
 
+test('MotherDuck flight config helpers reject invalid environment keys', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdCreateFlight({
+        name: 'bad-config',
+        sourceCode: 'print("hello")',
+        config: { '': 'value' },
+      })}
+    `)
+  ).toThrow(/config keys must not be empty/i);
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdRunFlight(flightId, {
+        config: { 'KEY=value': 'bad' },
+      })}
+    `)
+  ).toThrow(/must not contain "="/i);
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdUpdateFlight({
+        flightId,
+        config: { 'BAD\0KEY': 'value' },
+      })}
+    `)
+  ).toThrow(/must not contain a NULL byte/i);
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdUpdateFlight({
+        flightId,
+        config: { GOOD_KEY: 'bad\0value' },
+      })}
+    `)
+  ).toThrow(/value for key "GOOD_KEY" must not contain a NULL byte/i);
+});
+
+test('MotherDuck config validation preserves nulls and SQL wrapper escape hatches', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  const explicitNullValue = dialect.sqlToQuery(sql`
+    from ${mdUpdateFlight({
+      flightId,
+      config: { OPTIONAL_KEY: null },
+    })}
+  `);
+  expect(explicitNullValue.sql).toContain(
+    'from md_update_flight(flight_id = $1, config = MAP($2, $3))'
+  );
+  expect(explicitNullValue.params).toEqual([
+    flightId,
+    ['OPTIONAL_KEY'],
+    [null],
+  ]);
+
+  const sqlWrapperConfig = dialect.sqlToQuery(sql`
+    from ${mdRunFlight(flightId, {
+      config: sql`MAP([''], ['advanced'])`,
+    })}
+  `);
+  expect(sqlWrapperConfig.sql).toContain(
+    "from md_run_flight(flight_id = $1, config = MAP([''], ['advanced']))"
+  );
+  expect(sqlWrapperConfig.params).toEqual([flightId]);
+});
+
 test('MotherDuck job helpers emit named-parameter table functions', () => {
   const dialect = new DuckDBDialect();
   const jobId = '80000000-0000-0000-0000-000000000001';
@@ -288,4 +359,28 @@ test('MotherDuck job helpers emit named-parameter table functions', () => {
   expect(
     dialect.sqlToQuery(sql`from ${mdGetJobVersion(jobId, 1)}`).sql
   ).toContain('from md_get_job_version(job_id = $1, version_number = $2)');
+});
+
+test('deprecated MotherDuck job config helpers share Flight validation', () => {
+  const dialect = new DuckDBDialect();
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdCreateJob({
+        name: 'bad-config',
+        mdTokenName: 'pipeline_token',
+        sourceCode: 'print("hello")',
+        config: { 'BAD=KEY': 'value' },
+      })}
+    `)
+  ).toThrow(/must not contain "="/i);
+
+  expect(() =>
+    dialect.sqlToQuery(sql`
+      from ${mdUpdateJob({
+        jobId: '80000000-0000-0000-0000-000000000001',
+        config: { GOOD_KEY: 'bad\0value' },
+      })}
+    `)
+  ).toThrow(/value for key "GOOD_KEY" must not contain a NULL byte/i);
 });
