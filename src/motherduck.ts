@@ -315,12 +315,44 @@ function motherDuckPagedParams(
   ];
 }
 
+function motherDuckIdParams(
+  idName: string,
+  idValue: string | SQLWrapper
+): NamedParameter[] {
+  return [{ name: idName, value: idValue }];
+}
+
 function motherDuckIdPagedParams(
   idName: string,
   idValue: string | SQLWrapper,
   options: MotherDuckPaginationOptions
 ): NamedParameter[] {
-  return [{ name: idName, value: idValue }, ...motherDuckPagedParams(options)];
+  return [
+    ...motherDuckIdParams(idName, idValue),
+    ...motherDuckPagedParams(options),
+  ];
+}
+
+function motherDuckIdRunParams(
+  idName: string,
+  idValue: string | SQLWrapper,
+  runNumber: number | bigint | SQLWrapper
+): NamedParameter[] {
+  return [
+    ...motherDuckIdParams(idName, idValue),
+    { name: 'run_number', value: runNumber },
+  ];
+}
+
+function motherDuckIdVersionParams(
+  idName: string,
+  idValue: string | SQLWrapper,
+  versionNumber: number | SQLWrapper
+): NamedParameter[] {
+  return [
+    ...motherDuckIdParams(idName, idValue),
+    { name: 'version_number', value: versionNumber },
+  ];
 }
 
 function assertTableFunctionName(
@@ -413,9 +445,10 @@ export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
 }
 
 export function mdGetFlight(flightId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction('md_get_flight', [
-    { name: 'flight_id', value: flightId },
-  ]);
+  return motherDuckNamedFunction(
+    'md_get_flight',
+    motherDuckIdParams('flight_id', flightId)
+  );
 }
 
 export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
@@ -432,9 +465,10 @@ export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
 }
 
 export function mdDeleteFlight(flightId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction('md_delete_flight', [
-    { name: 'flight_id', value: flightId },
-  ]);
+  return motherDuckNamedFunction(
+    'md_delete_flight',
+    motherDuckIdParams('flight_id', flightId)
+  );
 }
 
 export function mdRunFlight(
@@ -451,10 +485,10 @@ export function mdCancelFlightRun(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_cancel_flight_run', [
-    { name: 'flight_id', value: flightId },
-    { name: 'run_number', value: runNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_cancel_flight_run',
+    motherDuckIdRunParams('flight_id', flightId, runNumber)
+  );
 }
 
 export function mdFlightRuns(
@@ -471,10 +505,10 @@ export function mdFlightLogs(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_flight_logs', [
-    { name: 'flight_id', value: flightId },
-    { name: 'run_number', value: runNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_flight_logs',
+    motherDuckIdRunParams('flight_id', flightId, runNumber)
+  );
 }
 
 export function mdFlightVersions(
@@ -491,10 +525,10 @@ export function mdGetFlightVersion(
   flightId: string | SQLWrapper,
   versionNumber: number | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_get_flight_version', [
-    { name: 'flight_id', value: flightId },
-    { name: 'version_number', value: versionNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_get_flight_version',
+    motherDuckIdVersionParams('flight_id', flightId, versionNumber)
+  );
 }
 
 /** @deprecated Use mdFlights. */
@@ -517,9 +551,10 @@ export function mdCreateJob(options: MotherDuckCreateJobOptions): SQL {
 
 /** @deprecated Use mdGetFlight. */
 export function mdGetJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction('md_get_job', [
-    { name: 'job_id', value: jobId },
-  ]);
+  return motherDuckNamedFunction(
+    'md_get_job',
+    motherDuckIdParams('job_id', jobId)
+  );
 }
 
 /** @deprecated Use mdUpdateFlight. */
@@ -538,16 +573,18 @@ export function mdUpdateJob(options: MotherDuckUpdateJobOptions): SQL {
 
 /** @deprecated Use mdDeleteFlight. */
 export function mdDeleteJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction('md_delete_job', [
-    { name: 'job_id', value: jobId },
-  ]);
+  return motherDuckNamedFunction(
+    'md_delete_job',
+    motherDuckIdParams('job_id', jobId)
+  );
 }
 
 /** @deprecated Use mdRunFlight. */
 export function mdRunJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction('md_run_job', [
-    { name: 'job_id', value: jobId },
-  ]);
+  return motherDuckNamedFunction(
+    'md_run_job',
+    motherDuckIdParams('job_id', jobId)
+  );
 }
 
 /** @deprecated Use mdCancelFlightRun. */
@@ -555,10 +592,10 @@ export function mdCancelJobRun(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_cancel_job_run', [
-    { name: 'job_id', value: jobId },
-    { name: 'run_number', value: runNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_cancel_job_run',
+    motherDuckIdRunParams('job_id', jobId, runNumber)
+  );
 }
 
 /** @deprecated Use mdFlightRuns. */
@@ -577,10 +614,10 @@ export function mdJobRunLogs(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_job_run_logs', [
-    { name: 'job_id', value: jobId },
-    { name: 'run_number', value: runNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_job_run_logs',
+    motherDuckIdRunParams('job_id', jobId, runNumber)
+  );
 }
 
 /** @deprecated Use mdFlightVersions. */
@@ -599,8 +636,8 @@ export function mdGetJobVersion(
   jobId: string | SQLWrapper,
   versionNumber: number | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction('md_get_job_version', [
-    { name: 'job_id', value: jobId },
-    { name: 'version_number', value: versionNumber },
-  ]);
+  return motherDuckNamedFunction(
+    'md_get_job_version',
+    motherDuckIdVersionParams('job_id', jobId, versionNumber)
+  );
 }
