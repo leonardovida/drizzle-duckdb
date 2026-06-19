@@ -170,6 +170,11 @@ const tokens = await db.execute(sql`
   order by token_name
 `);
 
+const activeTokens = await db.execute(sql`
+  select token_name, token_type
+  from ${mdAccessTokens({ activeOnly: true })}
+`);
+
 const divesWithResources = await db.execute(sql`
   select id, required_resources
   from ${mdListDives()}
@@ -177,7 +182,7 @@ const divesWithResources = await db.execute(sql`
 `);
 ```
 
-`mdListDives()` includes `required_resources` on supported MotherDuck deployments. The column is a list of structs with `name`, `alias`, `url`, `id`, and `resource_type` fields.
+`mdAccessTokens({ activeOnly: true })` filters out rows whose `expire_at` is in the past. `mdListDives()` includes `required_resources` on supported MotherDuck deployments. The column is a list of structs with `name`, `alias`, `url`, `id`, and `resource_type` fields.
 
 ## MotherDuck Flight table functions
 
@@ -186,6 +191,7 @@ inspecting MotherDuck Flights through Drizzle SQL templates:
 
 ```typescript
 import {
+  mdAccessTokens,
   mdCreateFlight,
   mdFlightRuns,
   mdFlights,
@@ -194,6 +200,11 @@ import {
 const flights = await db.execute(sql`
   select flight_id, flight_name, current_version
   from ${mdFlights({ limit: 25 })}
+`);
+
+const activeTokens = await db.execute(sql`
+  select token_name, token_type
+  from ${mdAccessTokens({ activeOnly: true })}
 `);
 
 const [flight] = await db.execute(sql`

@@ -50,6 +50,24 @@ test('MotherDuck table function helpers emit callable SQL', () => {
   expect(dives.params).toEqual([]);
 });
 
+test('MotherDuck access token helper can filter expired tokens', () => {
+  const dialect = new DuckDBDialect();
+
+  const activeTokens = dialect.sqlToQuery(sql`
+    select token_name
+    from ${mdAccessTokens({
+      activeOnly: true,
+      asOf: '2026-06-19T00:00:00.000Z',
+    })}
+    order by token_name
+  `);
+
+  expect(activeTokens.sql).toContain(
+    'from (select token_name, token_type, created_ts, expire_at from md_access_tokens() where expire_at is null or expire_at > $1) as active_access_tokens'
+  );
+  expect(activeTokens.params).toEqual(['2026-06-19T00:00:00.000Z']);
+});
+
 test('MotherDuck flight helpers emit named-parameter table functions', () => {
   const dialect = new DuckDBDialect();
   const flightId = '80000000-0000-0000-0000-000000000001';
