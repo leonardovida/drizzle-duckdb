@@ -30,6 +30,7 @@ type DecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>> =
   Parameters<TDecoder['mapFromDriverValue']>[0];
 
 type NullifyMap = Record<string, string | false>;
+type ResultRow = Record<string, unknown>;
 
 const passthroughDecoder: DriverValueDecoder<unknown, unknown> = {
   mapFromDriverValue: (value) => value,
@@ -315,39 +316,59 @@ function mapDriverValue(
   return decoder.mapFromDriverValue(toDecoderInput(decoder, rawValue));
 }
 
+function mapFieldValue(
+  decoder: DriverValueDecoder<unknown, unknown>,
+  rawValue: unknown
+): unknown {
+  const normalized = normalizeInet(rawValue);
+  return normalized === null ? null : mapDriverValue(decoder, normalized);
+}
+
+function assignResultPath(
+  result: ResultRow,
+  path: string[],
+  value: unknown
+): void {
+  if (path.length === 0) {
+    return;
+  }
+
+  let node = result;
+  for (
+    let pathChunkIndex = 0;
+    pathChunkIndex < path.length - 1;
+    pathChunkIndex += 1
+  ) {
+    const pathChunk = path[pathChunkIndex] as string;
+
+    if (!(pathChunk in node)) {
+      node[pathChunk] = {};
+    }
+
+    node = node[pathChunk] as ResultRow;
+  }
+
+  node[path[path.length - 1] as string] = value;
+}
+
 export function mapResultRow<TResult>(
   columns: SelectedFieldsOrdered<AnyColumn>,
   row: unknown[],
   joinsNotNullableMap: Record<string, boolean> | undefined
 ): TResult {
   const nullifyMap: NullifyMap = {};
+  const result: ResultRow = {};
 
-  const result = columns.reduce<Record<string, any>>(
-    (acc, { path, field }, columnIndex) => {
-      const decoder = resolveFieldDecoder(field);
-      let node = acc;
-      for (const [pathChunkIndex, pathChunk] of path.entries()) {
-        if (pathChunkIndex < path.length - 1) {
-          if (!(pathChunk in node)) {
-            node[pathChunk] = {};
-          }
-          node = node[pathChunk];
-          continue;
-        }
+  for (const [columnIndex, { path, field }] of columns.entries()) {
+    const decoder = resolveFieldDecoder(field);
+    const value = mapFieldValue(decoder, row[columnIndex]!);
 
-        const rawValue = normalizeInet(row[columnIndex]!);
+    assignResultPath(result, path, value);
 
-        const value = (node[pathChunk] =
-          rawValue === null ? null : mapDriverValue(decoder, rawValue));
-
-        if (joinsNotNullableMap) {
-          trackJoinedObjectNullability(nullifyMap, field, path, value);
-        }
-      }
-      return acc;
-    },
-    {}
-  );
+    if (joinsNotNullableMap) {
+      trackJoinedObjectNullability(nullifyMap, field, path, value);
+    }
+  }
 
   if (joinsNotNullableMap && Object.keys(nullifyMap).length > 0) {
     for (const [objectName, tableName] of Object.entries(nullifyMap)) {
