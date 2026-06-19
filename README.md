@@ -207,6 +207,7 @@ MotherDuck table function helpers are composable SQL fragments:
 ```typescript
 import { sql } from 'drizzle-orm';
 import {
+  mdAccessTokens,
   mdCreateFlight,
   mdFlights,
   mdRunFlight,
@@ -215,6 +216,11 @@ import {
 const flights = await db.execute(sql`
   select flight_id, flight_name, current_version
   from ${mdFlights({ limit: 25 })}
+`);
+
+const activeTokens = await db.execute(sql`
+  select token_name, token_type
+  from ${mdAccessTokens({ activeOnly: true })}
 `);
 
 const [flight] = await db.execute(sql`

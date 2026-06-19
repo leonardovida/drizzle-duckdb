@@ -8,6 +8,11 @@ export interface MotherDuckAccessTokenRow {
   expire_at: Date | string | null;
 }
 
+export interface MotherDuckAccessTokenOptions {
+  activeOnly?: boolean;
+  asOf?: string | SQLWrapper;
+}
+
 export interface MotherDuckRequiredResource {
   name: string | null;
   alias: string | null;
@@ -408,8 +413,17 @@ function assertRunMode(mode: MotherDuckRunMode): MotherDuckRunMode {
   return mode;
 }
 
-export function mdAccessTokens(): SQL {
-  return sql`md_access_tokens()`;
+export function mdAccessTokens(
+  options: MotherDuckAccessTokenOptions = {}
+): SQL {
+  if (!options.activeOnly) {
+    return sql`md_access_tokens()`;
+  }
+
+  const asOf =
+    options.asOf === undefined ? sql`now()` : motherDuckArg(options.asOf);
+
+  return sql`(select token_name, token_type, created_ts, expire_at from md_access_tokens() where expire_at is null or expire_at > ${asOf}) as active_access_tokens`;
 }
 
 export function mdListDives(): SQL {
