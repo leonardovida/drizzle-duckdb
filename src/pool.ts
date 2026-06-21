@@ -128,10 +128,21 @@ export function createDuckDBConnectionPool(
     metadata.delete(connection);
   };
 
-  const rejectWaiter = (waiter: WaitingRequest): void => {
+  const resolveWaiter = (
+    waiter: WaitingRequest,
+    connection: DuckDBConnection
+  ): void => {
     clearTimeout(waiter.timeoutId);
-    waiter.reject(new Error(POOL_CLOSED_MESSAGE));
+    waiter.resolve(connection);
   };
+
+  const rejectWaiter = (waiter: WaitingRequest, error: Error): void => {
+    clearTimeout(waiter.timeoutId);
+    waiter.reject(error);
+  };
+
+  const toError = (error: unknown): Error =>
+    error instanceof Error ? error : new Error(String(error));
 
   const hasExceededMaxLifetime = (
     meta: ConnectionMetadata,
@@ -248,13 +259,12 @@ export function createDuckDBConnectionPool(
 
     const waiter = waiting.shift();
     if (waiter) {
-      clearTimeout(waiter.timeoutId);
       const now = Date.now();
       const meta = readMetadata(connection, now);
 
       if (closed) {
         await dropConnection(connection);
-        waiter.reject(new Error(POOL_CLOSED_MESSAGE));
+        rejectWaiter(waiter, new Error(POOL_CLOSED_MESSAGE));
         return;
       }
 
@@ -262,16 +272,16 @@ export function createDuckDBConnectionPool(
         await dropConnection(connection);
         try {
           const replacement = await acquire();
-          waiter.resolve(replacement);
+          resolveWaiter(waiter, replacement);
         } catch (error) {
-          waiter.reject(error as Error);
+          rejectWaiter(waiter, toError(error));
         }
         return;
       }
 
       markConnectionUsed(connection, meta, now);
       leased.add(connection);
-      waiter.resolve(connection);
+      resolveWaiter(waiter, connection);
       return;
     }
 
@@ -301,7 +311,7 @@ export function createDuckDBConnectionPool(
     // Clear all waiting requests with their timeouts
     const waiters = waiting.splice(0, waiting.length);
     for (const waiter of waiters) {
-      rejectWaiter(waiter);
+      rejectWaiter(waiter, new Error(POOL_CLOSED_MESSAGE));
     }
 
     // Close all idle connections (use allSettled to ensure all are attempted)
