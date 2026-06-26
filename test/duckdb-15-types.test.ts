@@ -19,7 +19,7 @@ afterAll(() => {
   instance?.closeSync?.();
 });
 
-test('VARIANT columns materialize with node-api 1.5.3', async () => {
+test('VARIANT columns materialize with node-api 1.5.x', async () => {
   try {
     await db.execute(
       sql`create table duckdb_variant_test (id integer, data variant)`

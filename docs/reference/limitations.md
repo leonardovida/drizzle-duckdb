@@ -23,7 +23,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | Concurrent queries                   | Partial | One query per connection; use pooling for parallelism                                                                                    |
 | Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`; no named statements                                                                    |
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                               |
-| `VARIANT` / `GEOMETRY` raw JS values | Partial | `VARIANT` materializes with `@duckdb/node-api@1.5.3-r.3`; project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output. |
+| `VARIANT` / `GEOMETRY` raw JS values | Partial | `VARIANT` materializes with `@duckdb/node-api@1.5.4-r.1`; project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output. |
 | Streaming results                    | Partial | Default materialized; use `executeBatches()` / `executeArrow()` for chunks                                                               |
 | Relational queries                   | Full    | With schema configuration                                                                                                                |
 
@@ -52,7 +52,7 @@ await db.transaction(async (tx) => {
 
 ## DuckDB 1.5 Core Types
 
-DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. With `@duckdb/node-api@1.5.3-r.3`, `VARIANT` values materialize into JavaScript values.
+DuckDB 1.5 adds native `VARIANT` and built-in `GEOMETRY` columns. With `@duckdb/node-api@1.5.4-r.1`, `VARIANT` values materialize into JavaScript values.
 
 Use explicit projections when you need stable text or binary output:
 
