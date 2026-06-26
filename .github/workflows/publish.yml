@@ -34,7 +34,7 @@ jobs:
       - name: Build package
         run: bun run build
 
-      - name: Publish packages
-        run: bun run publish:dual
+      - name: Publish to npm (@duckdbfan/drizzle-duckdb)
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
