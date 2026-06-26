@@ -13,7 +13,6 @@ DuckDB dialect for Drizzle ORM with full TypeScript inference, DuckDB-native typ
 {: .warning }
 
 > Install `@duckdbfan/drizzle-duckdb`.
-> The previous package `@leonardovida-md/drizzle-neo-duckdb` is in deprecation and receives updates only through May 2, 2026.
 
 [Get Started]({{ '/getting-started/' | relative_url }}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/leonardovida/drizzle-duckdb){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }

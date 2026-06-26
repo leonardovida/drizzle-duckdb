@@ -13,7 +13,6 @@ Drizzle DuckDB brings [Drizzle ORM](https://orm.drizzle.team/) to [DuckDB](https
 {: .warning }
 
 > Install `@duckdbfan/drizzle-duckdb`.
-> The older package `@leonardovida-md/drizzle-neo-duckdb` is being deprecated and stops receiving updates after May 2, 2026.
 
 ## What is Drizzle DuckDB?
 
