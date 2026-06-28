@@ -1,6 +1,9 @@
 import { sql, type SQL } from 'drizzle-orm';
 import type { RowData } from './client.ts';
 import type { DuckDBDatabase } from './driver.ts';
+import { splitTopLevel } from './sql/split-top-level.ts';
+
+export { splitTopLevel } from './sql/split-top-level.ts';
 
 const SYSTEM_SCHEMAS = new Set(['information_schema', 'pg_catalog']);
 
@@ -938,27 +941,6 @@ export function parseMapValue(raw: string): string {
     return 'TEXT';
   }
   return normalizeTypeLiteral(parts[1] ?? 'TEXT');
-}
-
-export function splitTopLevel(input: string, delimiter: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (let i = 0; i < input.length; i += 1) {
-    const char = input[i]!;
-    if (char === '(') depth += 1;
-    if (char === ')') depth = Math.max(0, depth - 1);
-    if (char === delimiter && depth === 0) {
-      parts.push(current);
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  if (current) {
-    parts.push(current);
-  }
-  return parts;
 }
 
 function tableKey(schema: string, table: string): string {

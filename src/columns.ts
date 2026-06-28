@@ -16,6 +16,7 @@ import {
   type TimestampValueWrapper,
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
+import { splitTopLevel } from './sql/split-top-level.ts';
 
 export { coerceArrayString } from './array-literals.ts';
 
@@ -82,30 +83,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStructType(typeHint: string | undefined): typeHint is StructColType {
   return /^STRUCT\s*\(/i.test(typeHint?.trim() ?? '');
-}
-
-function splitTopLevel(input: string, delimiter: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = '';
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index]!;
-    if (char === '(') depth += 1;
-    if (char === ')') depth = Math.max(0, depth - 1);
-    if (char === delimiter && depth === 0) {
-      parts.push(current);
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-
-  if (current) {
-    parts.push(current);
-  }
-
-  return parts;
 }
 
 function parseStructSchema(
