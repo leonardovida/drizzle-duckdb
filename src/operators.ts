@@ -4,15 +4,10 @@
  */
 
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
-import { buildListLiteral } from './columns.ts';
-
-type ArrayPredicateValue<T> = T[] | SQLWrapper;
-
-function normalizeArrayPredicateValue<T>(
-  values: ArrayPredicateValue<T>
-): SQL | SQLWrapper {
-  return Array.isArray(values) ? buildListLiteral(values) : values;
-}
+import {
+  normalizeArrayPredicateValue,
+  type ArrayPredicateValue,
+} from './columns.ts';
 
 export function arrayHasAll<T>(
   column: SQLWrapper,
