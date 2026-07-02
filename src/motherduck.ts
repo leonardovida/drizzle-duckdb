@@ -254,7 +254,13 @@ export interface MotherDuckUpdateJobOptions {
 export type MotherDuckRunMode = 'auto' | 'local' | 'remote';
 
 type MotherDuckSqlArgument =
-  SQLWrapper | string | number | bigint | boolean | readonly unknown[] | null;
+  | SQLWrapper
+  | string
+  | number
+  | bigint
+  | boolean
+  | readonly unknown[]
+  | null;
 
 export interface MotherDuckTableFunctionOptions {
   mdRun?: MotherDuckRunMode;
