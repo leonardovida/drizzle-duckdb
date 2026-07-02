@@ -208,10 +208,33 @@ MotherDuck table function helpers are composable SQL fragments:
 import { sql } from 'drizzle-orm';
 import {
   mdAccessTokens,
+  mdCreateDive,
   mdCreateFlight,
   mdFlights,
+  mdGetDive,
+  mdListDives,
   mdRunFlight,
 } from '@duckdbfan/drizzle-duckdb';
+
+const dives = await db.execute(sql`
+  select id, title, owner_name, updated_at
+  from ${mdListDives({ limit: 10, includeOrgShares: true })}
+  order by updated_at desc
+`);
+
+const [dive] = await db.execute(sql`
+  select id, title, current_version
+  from ${mdCreateDive({
+    title: 'Revenue Trends',
+    content: 'export default function Dive() { return null }',
+    description: 'Monthly revenue dashboard',
+  })}
+`);
+
+const [diveContent] = await db.execute(sql`
+  select title, content
+  from ${mdGetDive(String(dive.id))}
+`);
 
 const flights = await db.execute(sql`
   select flight_id, flight_name, current_version
@@ -239,6 +262,12 @@ const runs = await db.execute(sql`
   })}
 `);
 ```
+
+The Dives helper family covers the public preview table functions for listing,
+reading, creating, updating, deleting, and versioning Dives: `mdListDives()`,
+`mdGetDive()`, `mdCreateDive()`, `mdUpdateDiveMetadata()`,
+`mdUpdateDiveContent()`, `mdDeleteDive()`, `mdListDiveVersions()`, and
+`mdGetDiveVersion()`.
 
 The older `mdJobs()` helper family is still exported for deployments that have
 not moved to Flights yet, but new code should use the Flight helpers.
