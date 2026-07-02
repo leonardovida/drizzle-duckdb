@@ -4,14 +4,18 @@ import {
   mdAccessTokens,
   mdCancelFlightRun,
   mdCancelJobRun,
+  mdCreateDive,
   mdCreateFlight,
   mdCreateJob,
+  mdDeleteDive,
   mdDeleteFlight,
   mdDeleteJob,
   mdFlightLogs,
   mdFlightRuns,
   mdFlights,
   mdFlightVersions,
+  mdGetDive,
+  mdGetDiveVersion,
   mdGetFlight,
   mdGetFlightVersion,
   mdGetJob,
@@ -20,9 +24,12 @@ import {
   mdJobRuns,
   mdJobs,
   mdJobVersions,
+  mdListDiveVersions,
   mdListDives,
   mdRunFlight,
   mdRunJob,
+  mdUpdateDiveContent,
+  mdUpdateDiveMetadata,
   mdUpdateFlight,
   mdUpdateJob,
 } from '../src/motherduck.ts';
@@ -48,6 +55,101 @@ test('MotherDuck table function helpers emit callable SQL', () => {
   expect(dives.sql).toContain('from md_list_dives()');
   expect(dives.sql).toContain('required_resources');
   expect(dives.params).toEqual([]);
+});
+
+test('MotherDuck Dive helpers emit named-parameter table functions', () => {
+  const dialect = new DuckDBDialect();
+  const diveId = '90000000-0000-0000-0000-000000000001';
+
+  const sharedDives = dialect.sqlToQuery(sql`
+    select id, title
+    from ${mdListDives({ limit: 10, offset: 20, includeOrgShares: true })}
+  `);
+
+  expect(sharedDives.sql).toContain(
+    'from md_list_dives("LIMIT" = $1, "OFFSET" = $2, include_org_shares = $3)'
+  );
+  expect(sharedDives.params).toEqual([10, 20, true]);
+
+  const createDive = dialect.sqlToQuery(sql`
+    select id, current_version
+    from ${mdCreateDive({
+      title: 'Revenue Trends',
+      content: 'export default function Dive() { return null }',
+      description: 'Monthly revenue dashboard',
+      apiVersion: 1,
+    })}
+  `);
+
+  expect(createDive.sql).toContain(
+    'from md_create_dive(title = $1, content = $2, description = $3, api_version = $4)'
+  );
+  expect(createDive.params).toEqual([
+    'Revenue Trends',
+    'export default function Dive() { return null }',
+    'Monthly revenue dashboard',
+    1,
+  ]);
+
+  const createDiveWithRequiredOnly = dialect.sqlToQuery(sql`
+    from ${mdCreateDive({
+      title: 'Minimal Dive',
+      content: 'export default function Dive() { return null }',
+    })}
+  `);
+
+  expect(createDiveWithRequiredOnly.sql).toContain(
+    'from md_create_dive(title = $1, content = $2)'
+  );
+  expect(createDiveWithRequiredOnly.params).toEqual([
+    'Minimal Dive',
+    'export default function Dive() { return null }',
+  ]);
+
+  expect(dialect.sqlToQuery(sql`from ${mdGetDive(diveId)}`).sql).toContain(
+    'from md_get_dive(id = $1)'
+  );
+
+  const updateMetadata = dialect.sqlToQuery(sql`
+    from ${mdUpdateDiveMetadata({
+      id: diveId,
+      title: 'Q1 Revenue Dashboard',
+      description: null,
+    })}
+  `);
+  expect(updateMetadata.sql).toContain(
+    'from md_update_dive_metadata(id = $1, title = $2, description = $3)'
+  );
+  expect(updateMetadata.params).toEqual([diveId, 'Q1 Revenue Dashboard', null]);
+
+  const updateContent = dialect.sqlToQuery(sql`
+    from ${mdUpdateDiveContent({
+      id: diveId,
+      content: sql`${'export default function Dive() { return null }'}`,
+      description: 'Refresh chart copy',
+      apiVersion: 1,
+    })}
+  `);
+  expect(updateContent.sql).toContain(
+    'from md_update_dive_content(id = $1, content = $2, description = $3, api_version = $4)'
+  );
+  expect(updateContent.params).toEqual([
+    diveId,
+    'export default function Dive() { return null }',
+    'Refresh chart copy',
+    1,
+  ]);
+
+  expect(dialect.sqlToQuery(sql`from ${mdDeleteDive(diveId)}`).sql).toContain(
+    'from md_delete_dive(id = $1)'
+  );
+  expect(
+    dialect.sqlToQuery(sql`from ${mdListDiveVersions(diveId, { limit: 5 })}`)
+      .sql
+  ).toContain('from md_list_dive_versions(id = $1, "LIMIT" = $2)');
+  expect(
+    dialect.sqlToQuery(sql`from ${mdGetDiveVersion(diveId, 0)}`).sql
+  ).toContain('from md_get_dive_version(id = $1, version = $2)');
 });
 
 test('MotherDuck access token helper can filter expired tokens', () => {

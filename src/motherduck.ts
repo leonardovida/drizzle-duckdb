@@ -21,6 +21,50 @@ export interface MotherDuckRequiredResource {
   resource_type: string | null;
 }
 
+export interface MotherDuckDiveSummaryRow {
+  id: string;
+  title: string;
+  description: string | null;
+  owner_id: string;
+  current_version: number;
+  created_at: Date | string;
+  updated_at: Date | string;
+  owner_name: string;
+  required_resources?: MotherDuckRequiredResource[] | null;
+}
+
+export interface MotherDuckDiveDetailRow extends MotherDuckDiveSummaryRow {
+  version_id: string;
+  version_storage_url: string;
+  version_description: string | null;
+  version_created_at: Date | string;
+  version_api_version: number;
+  content: string;
+  version_required_resources?: MotherDuckRequiredResource[] | null;
+}
+
+export type MotherDuckDiveCreateRow = Omit<
+  MotherDuckDiveDetailRow,
+  'content' | 'required_resources' | 'version_required_resources'
+>;
+
+export interface MotherDuckDiveVersionSummaryRow {
+  id: string;
+  version: number;
+  storage_url: string;
+  description: string | null;
+  created_at: Date | string;
+  api_version: number;
+}
+
+export interface MotherDuckDiveVersionDetailRow extends MotherDuckDiveVersionSummaryRow {
+  content: string;
+}
+
+export interface MotherDuckDiveDeleteRow {
+  success: boolean;
+}
+
 export interface MotherDuckFlightSummaryRow {
   flight_id: string;
   flight_name: string;
@@ -133,6 +177,30 @@ export interface MotherDuckJobCancelRunRow {
 export interface MotherDuckPaginationOptions {
   limit?: number | SQLWrapper;
   offset?: number | SQLWrapper;
+}
+
+export interface MotherDuckListDivesOptions extends MotherDuckPaginationOptions {
+  includeOrgShares?: boolean | SQLWrapper;
+}
+
+export interface MotherDuckCreateDiveOptions {
+  title: string | SQLWrapper;
+  content: string | SQLWrapper;
+  description?: string | SQLWrapper | null;
+  apiVersion?: number | SQLWrapper;
+}
+
+export interface MotherDuckUpdateDiveMetadataOptions {
+  id: string | SQLWrapper;
+  title?: string | SQLWrapper | null;
+  description?: string | SQLWrapper | null;
+}
+
+export interface MotherDuckUpdateDiveContentOptions {
+  id: string | SQLWrapper;
+  content: string | SQLWrapper;
+  description?: string | SQLWrapper | null;
+  apiVersion?: number | SQLWrapper;
 }
 
 export interface MotherDuckCreateFlightOptions {
@@ -350,6 +418,15 @@ function motherDuckPagedParams(
   ];
 }
 
+function motherDuckDivePagedParams(
+  options: MotherDuckListDivesOptions = {}
+): NamedParameter[] {
+  return [
+    ...motherDuckPagedParams(options),
+    { name: 'include_org_shares', value: options.includeOrgShares },
+  ];
+}
+
 function motherDuckIdParams(
   idName: string,
   idValue: string | SQLWrapper
@@ -390,6 +467,16 @@ function motherDuckIdVersionParams(
   ];
 }
 
+function motherDuckIdVersionParam(
+  idValue: string | SQLWrapper,
+  version: number | SQLWrapper
+): NamedParameter[] {
+  return [
+    ...motherDuckIdParams('id', idValue),
+    { name: 'version', value: version },
+  ];
+}
+
 function assertTableFunctionName(
   name: MotherDuckTableFunction
 ): MotherDuckTableFunction {
@@ -426,8 +513,72 @@ export function mdAccessTokens(
   return sql`(select token_name, token_type, created_ts, expire_at from md_access_tokens() where expire_at is null or expire_at > ${asOf}) as active_access_tokens`;
 }
 
-export function mdListDives(): SQL {
-  return sql`md_list_dives()`;
+export function mdListDives(options: MotherDuckListDivesOptions = {}): SQL {
+  return motherDuckNamedFunction(
+    'md_list_dives',
+    motherDuckDivePagedParams(options)
+  );
+}
+
+export function mdGetDive(id: string | SQLWrapper): SQL {
+  return motherDuckNamedFunction('md_get_dive', motherDuckIdParams('id', id));
+}
+
+export function mdCreateDive(options: MotherDuckCreateDiveOptions): SQL {
+  return motherDuckNamedFunction('md_create_dive', [
+    { name: 'title', value: options.title },
+    { name: 'content', value: options.content },
+    { name: 'description', value: options.description },
+    { name: 'api_version', value: options.apiVersion },
+  ]);
+}
+
+export function mdUpdateDiveMetadata(
+  options: MotherDuckUpdateDiveMetadataOptions
+): SQL {
+  return motherDuckNamedFunction('md_update_dive_metadata', [
+    { name: 'id', value: options.id },
+    { name: 'title', value: options.title },
+    { name: 'description', value: options.description },
+  ]);
+}
+
+export function mdUpdateDiveContent(
+  options: MotherDuckUpdateDiveContentOptions
+): SQL {
+  return motherDuckNamedFunction('md_update_dive_content', [
+    { name: 'id', value: options.id },
+    { name: 'content', value: options.content },
+    { name: 'description', value: options.description },
+    { name: 'api_version', value: options.apiVersion },
+  ]);
+}
+
+export function mdDeleteDive(id: string | SQLWrapper): SQL {
+  return motherDuckNamedFunction(
+    'md_delete_dive',
+    motherDuckIdParams('id', id)
+  );
+}
+
+export function mdListDiveVersions(
+  id: string | SQLWrapper,
+  options: MotherDuckPaginationOptions = {}
+): SQL {
+  return motherDuckNamedFunction(
+    'md_list_dive_versions',
+    motherDuckIdPagedParams('id', id, options)
+  );
+}
+
+export function mdGetDiveVersion(
+  id: string | SQLWrapper,
+  version: number | SQLWrapper
+): SQL {
+  return motherDuckNamedFunction(
+    'md_get_dive_version',
+    motherDuckIdVersionParam(id, version)
+  );
 }
 
 export function motherDuckTableFunction(

@@ -159,10 +159,17 @@ await db.execute(sql`
 
 ## MotherDuck metadata table functions
 
-Use `mdAccessTokens()` and `mdListDives()` when querying the matching MotherDuck table functions through Drizzle SQL templates:
+Use `mdAccessTokens()` and the Dives helpers when querying the matching
+MotherDuck table functions through Drizzle SQL templates:
 
 ```typescript
-import { mdAccessTokens, mdListDives } from '@duckdbfan/drizzle-duckdb';
+import {
+  mdAccessTokens,
+  mdCreateDive,
+  mdGetDive,
+  mdListDives,
+  mdListDiveVersions,
+} from '@duckdbfan/drizzle-duckdb';
 
 const tokens = await db.execute(sql`
   select token_name, token_type, created_ts, expire_at
@@ -176,13 +183,38 @@ const activeTokens = await db.execute(sql`
 `);
 
 const divesWithResources = await db.execute(sql`
-  select id, required_resources
-  from ${mdListDives()}
+  select id, title, owner_name, updated_at, required_resources
+  from ${mdListDives({ limit: 25, includeOrgShares: true })}
   where len(required_resources) > 0
+`);
+
+const [dive] = await db.execute(sql`
+  select id, title, current_version
+  from ${mdCreateDive({
+    title: 'Revenue Trends',
+    content: 'export default function Dive() { return null }',
+    description: 'Monthly revenue dashboard',
+  })}
+`);
+
+const [diveContent] = await db.execute(sql`
+  select title, content
+  from ${mdGetDive(String(dive.id))}
+`);
+
+const versions = await db.execute(sql`
+  select version, description, created_at
+  from ${mdListDiveVersions(String(dive.id), { limit: 5 })}
 `);
 ```
 
-`mdAccessTokens({ activeOnly: true })` filters out rows whose `expire_at` is in the past. `mdListDives()` includes `required_resources` on supported MotherDuck deployments. The column is a list of structs with `name`, `alias`, `url`, `id`, and `resource_type` fields.
+`mdAccessTokens({ activeOnly: true })` filters out rows whose `expire_at` is in
+the past. `mdListDives()` accepts pagination plus `includeOrgShares` for Dives
+shared with the organization. The Dives helper family covers listing, reading,
+creating, updating metadata or content, deleting, listing versions, and reading
+a specific version. `mdListDives()` includes `required_resources` on supported
+MotherDuck deployments. The column is a list of structs with `name`, `alias`,
+`url`, `id`, and `resource_type` fields.
 
 ## MotherDuck Flight table functions
 
