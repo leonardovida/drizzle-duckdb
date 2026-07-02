@@ -77,6 +77,8 @@ type ArrayDriverValue =
   | ListValueWrapper
   | ArrayValueWrapper;
 
+export type ArrayPredicateValue<T> = T[] | SQLWrapper;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -182,6 +184,12 @@ export function buildListLiteral(values: unknown[], elementType?: string): SQL {
   }
   const chunks = values.map((v) => valueToSqlLiteral(v, elementType));
   return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
+}
+
+export function normalizeArrayPredicateValue<T>(
+  values: ArrayPredicateValue<T>
+): SQL | SQLWrapper {
+  return Array.isArray(values) ? buildListLiteral(values) : values;
 }
 
 function valueToSqlLiteral(value: unknown, typeHint?: string): SQL {
@@ -578,24 +586,24 @@ export const duckDbTime = (name: string, options: TimeOptions = {}) =>
 
 export function duckDbArrayContains(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: ArrayPredicateValue<unknown>
 ): SQL {
-  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_all(${column}, ${rhs})`;
 }
 
 export function duckDbArrayContained(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: ArrayPredicateValue<unknown>
 ): SQL {
-  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_all(${rhs}, ${column})`;
 }
 
 export function duckDbArrayOverlaps(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: ArrayPredicateValue<unknown>
 ): SQL {
-  const rhs = Array.isArray(values) ? buildListLiteral(values) : values;
+  const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_any(${column}, ${rhs})`;
 }
