@@ -41,8 +41,8 @@ const allUsers = await db.select().from(users);
 - Migrations and schema introspection
 - MotherDuck cloud support
 - DuckLake catalog attach support
-- MotherDuck metadata and Dives table function helpers: mdAccessTokens(), mdAccessTokens({ activeOnly: true }), mdListDives(), mdGetDive(), mdCreateDive(), mdUpdateDiveMetadata(), mdUpdateDiveContent(), mdDeleteDive(), mdListDiveVersions(), mdGetDiveVersion()
-- MotherDuck Flight table function helpers: mdFlights(), mdCreateFlight(), mdFlightRuns()
+- MotherDuck metadata and Dives table function helpers: mdAccessTokens(), mdAccessTokens({ activeOnly: true }), mdListDives(), mdGetDive(), mdCreateDive(), mdUpdateDiveMetadata(), mdUpdateDiveContent(), mdDeleteDive(), mdListDiveVersions(), mdGetDiveVersion(). Dive listing and version rows may include required_resources.
+- MotherDuck Flight table function helpers: mdFlights(), mdCreateFlight(), mdGetFlight(), mdUpdateFlight(), mdDeleteFlight(), mdRunFlight(), mdCancelFlightRun(), mdFlightRuns(), mdFlightLogs(), mdFlightVersions(), mdGetFlightVersion()
 - Flight helper optional fields use undefined to omit a parameter and null to emit SQL NULL. Config keys must not be empty and cannot contain = or NULL bytes. Flight secret params are exposed as <SECRET_NAME>_<KEY> environment variables.
 
 ## Important Notes

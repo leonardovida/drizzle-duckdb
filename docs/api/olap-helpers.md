@@ -212,9 +212,10 @@ const versions = await db.execute(sql`
 the past. `mdListDives()` accepts pagination plus `includeOrgShares` for Dives
 shared with the organization. The Dives helper family covers listing, reading,
 creating, updating metadata or content, deleting, listing versions, and reading
-a specific version. `mdListDives()` includes `required_resources` on supported
-MotherDuck deployments. The column is a list of structs with `name`, `alias`,
-`url`, `id`, and `resource_type` fields.
+a specific version. `mdListDives()`, `mdListDiveVersions()`, and
+`mdGetDiveVersion()` include `required_resources` on supported MotherDuck
+deployments. The column is a list of structs with `name`, `alias`, `url`, `id`,
+and `resource_type` fields.
 
 ## MotherDuck Flight table functions
 

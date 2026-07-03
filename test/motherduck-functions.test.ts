@@ -32,6 +32,7 @@ import {
   mdUpdateDiveMetadata,
   mdUpdateFlight,
   mdUpdateJob,
+  type MotherDuckDiveVersionSummaryRow,
 } from '../src/motherduck.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 
@@ -150,6 +151,28 @@ test('MotherDuck Dive helpers emit named-parameter table functions', () => {
   expect(
     dialect.sqlToQuery(sql`from ${mdGetDiveVersion(diveId, 0)}`).sql
   ).toContain('from md_get_dive_version(id = $1, version = $2)');
+});
+
+test('MotherDuck Dive version row types include required resources', () => {
+  const row: MotherDuckDiveVersionSummaryRow = {
+    id: '90000000-0000-0000-0000-000000000001',
+    version: 1,
+    storage_url: 's3://example/dive/1',
+    description: null,
+    created_at: '2026-07-03T00:00:00Z',
+    api_version: 1,
+    required_resources: [
+      {
+        name: 'analytics',
+        alias: 'analytics',
+        url: 'md:analytics',
+        id: '90000000-0000-0000-0000-000000000002',
+        resource_type: 'database',
+      },
+    ],
+  };
+
+  expect(row.required_resources?.[0]?.resource_type).toBe('database');
 });
 
 test('MotherDuck access token helper can filter expired tokens', () => {

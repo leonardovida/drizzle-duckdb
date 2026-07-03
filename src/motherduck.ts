@@ -55,6 +55,7 @@ export interface MotherDuckDiveVersionSummaryRow {
   description: string | null;
   created_at: Date | string;
   api_version: number;
+  required_resources?: MotherDuckRequiredResource[] | null;
 }
 
 export interface MotherDuckDiveVersionDetailRow extends MotherDuckDiveVersionSummaryRow {
