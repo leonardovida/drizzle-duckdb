@@ -267,7 +267,8 @@ The Dives helper family covers the public preview table functions for listing,
 reading, creating, updating, deleting, and versioning Dives: `mdListDives()`,
 `mdGetDive()`, `mdCreateDive()`, `mdUpdateDiveMetadata()`,
 `mdUpdateDiveContent()`, `mdDeleteDive()`, `mdListDiveVersions()`, and
-`mdGetDiveVersion()`.
+`mdGetDiveVersion()`. Dive listing and version rows include
+`required_resources` on supported MotherDuck deployments.
 
 The older `mdJobs()` helper family is still exported for deployments that have
 not moved to Flights yet, but new code should use the Flight helpers.
