@@ -226,13 +226,13 @@ inspecting MotherDuck Flights through Drizzle SQL templates:
 import {
   mdAccessTokens,
   mdCreateFlight,
-  mdFlightRuns,
-  mdFlights,
+  mdListFlightRuns,
+  mdListFlights,
 } from '@duckdbfan/drizzle-duckdb';
 
 const flights = await db.execute(sql`
   select flight_id, flight_name, current_version
-  from ${mdFlights({ limit: 25 })}
+  from ${mdListFlights({ limit: 25 })}
 `);
 
 const activeTokens = await db.execute(sql`
@@ -252,23 +252,26 @@ const [flight] = await db.execute(sql`
 
 const runs = await db.execute(sql`
   select run_number, status, created_at
-  from ${mdFlightRuns(String(flight.flight_id))}
+  from ${mdListFlightRuns(String(flight.flight_id))}
 `);
 ```
 
 The older Job helper names are still exported for older MotherDuck deployments,
-but new code should use the Flight helpers.
+and the earlier `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and
+`mdFlightVersions()` TypeScript helper names remain as deprecated aliases. New
+code should use the verb-style Flight helpers.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
 and `flightSecretNames`.
 
 `config` entries are exposed to Flight code as environment variables using the
-config key. Config keys must not be empty and cannot contain `=` or NULL bytes;
-config values cannot contain NULL bytes. `flightSecretNames` references
-MotherDuck `TYPE flights` secrets; each secret param is exposed as
-`<SECRET_NAME>_<KEY>`, so a secret named `api_secret` with param `API_KEY`
-becomes `API_SECRET_API_KEY`.
+config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and
+cannot use reserved runtime names such as `MOTHERDUCK_TOKEN` or
+`MOTHERDUCK_FLIGHTS_RUN`. Config values cannot contain NULL bytes.
+`flightSecretNames` references MotherDuck `TYPE flights` secrets; each secret
+param is exposed as `<SECRET_NAME>_<KEY>`, so a secret named `api_secret` with
+param `API_KEY` becomes `API_SECRET_API_KEY`.
 
 ## OLAP builder (grouped measures)
 

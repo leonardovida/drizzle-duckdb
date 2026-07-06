@@ -273,6 +273,11 @@ type NamedParameter = {
   value: MotherDuckSqlArgument | undefined;
 };
 
+const motherDuckFlightReservedConfigKeys = new Set([
+  'MOTHERDUCK_TOKEN',
+  'MOTHERDUCK_FLIGHTS_RUN',
+]);
+
 const motherDuckTableFunctionNameList = [
   'read_parquet',
   'parquet_scan',
@@ -363,6 +368,12 @@ function validateMotherDuckConfigMap(
   for (const [key, configValue] of Object.entries(value)) {
     if (key === '') {
       throw new Error('MotherDuck Flight config keys must not be empty');
+    }
+
+    if (motherDuckFlightReservedConfigKeys.has(key)) {
+      throw new Error(
+        `MotherDuck Flight config key "${key}" is reserved and cannot be set`
+      );
     }
 
     if (key.includes('=')) {
@@ -624,8 +635,16 @@ export const motherDuckReadJsonAuto = (
   options?: MotherDuckTableFunctionOptions
 ) => motherDuckTableFunction('read_json_auto', [path], options);
 
+export function mdListFlights(options: MotherDuckPaginationOptions = {}): SQL {
+  return motherDuckNamedFunction(
+    'md_list_flights',
+    motherDuckPagedParams(options)
+  );
+}
+
+/** @deprecated Use mdListFlights. */
 export function mdFlights(options: MotherDuckPaginationOptions = {}): SQL {
-  return motherDuckNamedFunction('md_flights', motherDuckPagedParams(options));
+  return mdListFlights(options);
 }
 
 export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
@@ -687,34 +706,58 @@ export function mdCancelFlightRun(
   );
 }
 
+export function mdListFlightRuns(
+  flightId: string | SQLWrapper,
+  options: MotherDuckPaginationOptions = {}
+): SQL {
+  return motherDuckNamedFunction(
+    'md_list_flight_runs',
+    motherDuckIdPagedParams('flight_id', flightId, options)
+  );
+}
+
+/** @deprecated Use mdListFlightRuns. */
 export function mdFlightRuns(
   flightId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_flight_runs',
-    motherDuckIdPagedParams('flight_id', flightId, options)
-  );
+  return mdListFlightRuns(flightId, options);
 }
 
-export function mdFlightLogs(
+export function mdGetFlightLogs(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
   return motherDuckNamedFunction(
-    'md_flight_logs',
+    'md_get_flight_logs',
     motherDuckIdRunParams('flight_id', flightId, runNumber)
   );
 }
 
-export function mdFlightVersions(
+/** @deprecated Use mdGetFlightLogs. */
+export function mdFlightLogs(
+  flightId: string | SQLWrapper,
+  runNumber: number | bigint | SQLWrapper
+): SQL {
+  return mdGetFlightLogs(flightId, runNumber);
+}
+
+export function mdListFlightVersions(
   flightId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
   return motherDuckNamedFunction(
-    'md_flight_versions',
+    'md_list_flight_versions',
     motherDuckIdPagedParams('flight_id', flightId, options)
   );
+}
+
+/** @deprecated Use mdListFlightVersions. */
+export function mdFlightVersions(
+  flightId: string | SQLWrapper,
+  options: MotherDuckPaginationOptions = {}
+): SQL {
+  return mdListFlightVersions(flightId, options);
 }
 
 export function mdGetFlightVersion(
@@ -727,7 +770,7 @@ export function mdGetFlightVersion(
   );
 }
 
-/** @deprecated Use mdFlights. */
+/** @deprecated Use mdListFlights. */
 export function mdJobs(options: MotherDuckPaginationOptions = {}): SQL {
   return motherDuckNamedFunction('md_jobs', motherDuckPagedParams(options));
 }
@@ -794,7 +837,7 @@ export function mdCancelJobRun(
   );
 }
 
-/** @deprecated Use mdFlightRuns. */
+/** @deprecated Use mdListFlightRuns. */
 export function mdJobRuns(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
@@ -805,7 +848,7 @@ export function mdJobRuns(
   );
 }
 
-/** @deprecated Use mdFlightLogs. */
+/** @deprecated Use mdGetFlightLogs. */
 export function mdJobRunLogs(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
@@ -816,7 +859,7 @@ export function mdJobRunLogs(
   );
 }
 
-/** @deprecated Use mdFlightVersions. */
+/** @deprecated Use mdListFlightVersions. */
 export function mdJobVersions(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
