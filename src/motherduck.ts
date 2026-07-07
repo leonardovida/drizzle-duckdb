@@ -421,6 +421,75 @@ function motherDuckNamedFunction(
   return sql`${sql.raw(name)}(${motherDuckNamedParams(parameters)})`;
 }
 
+type MotherDuckColumnAlias = readonly [sourceName: string, targetName: string];
+
+function motherDuckColumnProjection(
+  column: string | MotherDuckColumnAlias
+): SQL {
+  if (typeof column === 'string') {
+    return sql.raw(column);
+  }
+
+  const [sourceName, targetName] = column;
+  return sql`${sql.raw(sourceName)} as ${sql.raw(targetName)}`;
+}
+
+function motherDuckCompatibilityView(
+  source: SQL,
+  alias: string,
+  columns: readonly (string | MotherDuckColumnAlias)[]
+): SQL {
+  return sql`(select ${sql.join(
+    columns.map((column) => motherDuckColumnProjection(column)),
+    sql`, `
+  )} from ${source}) as ${sql.raw(alias)}`;
+}
+
+function motherDuckJobSummaryView(source: SQL): SQL {
+  return motherDuckCompatibilityView(source, 'md_jobs', [
+    ['flight_id', 'job_id'],
+    ['flight_name', 'job_name'],
+    'schedule_cron',
+    'schedule_status',
+    'status',
+    'current_version',
+    'created_at',
+    'updated_at',
+  ]);
+}
+
+function motherDuckJobRunView(source: SQL): SQL {
+  return motherDuckCompatibilityView(source, 'md_job_runs', [
+    'run_id',
+    ['flight_id', 'job_id'],
+    ['flight_name', 'job_name'],
+    ['flight_version', 'job_version'],
+    'run_number',
+    'is_scheduled',
+    'status',
+    'created_at',
+    'started_at',
+    'ended_at',
+    'scheduled_at',
+    'cancelled_at',
+    'exit_code',
+  ]);
+}
+
+function motherDuckJobVersionView(source: SQL): SQL {
+  return motherDuckCompatibilityView(source, 'md_job_versions', [
+    'version_id',
+    ['flight_id', 'job_id'],
+    ['flight_version', 'version'],
+    'created_at',
+    ['access_token_name', 'md_token_name'],
+    ['flight_secret_names', 'md_secret_names'],
+    'config',
+    'source_code',
+    'requirements_txt',
+  ]);
+}
+
 function motherDuckPagedParams(
   options: MotherDuckPaginationOptions = {}
 ): NamedParameter[] {
@@ -772,58 +841,53 @@ export function mdGetFlightVersion(
 
 /** @deprecated Use mdListFlights. */
 export function mdJobs(options: MotherDuckPaginationOptions = {}): SQL {
-  return motherDuckNamedFunction('md_jobs', motherDuckPagedParams(options));
+  return motherDuckJobSummaryView(mdListFlights(options));
 }
 
 /** @deprecated Use mdCreateFlight. */
 export function mdCreateJob(options: MotherDuckCreateJobOptions): SQL {
-  return motherDuckNamedFunction('md_create_job', [
-    { name: 'name', value: options.name },
-    { name: 'md_token_name', value: options.mdTokenName },
-    { name: 'source_code', value: options.sourceCode },
-    { name: 'md_secret_names', value: options.mdSecretNames },
-    { name: 'schedule_cron', value: options.scheduleCron },
-    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
-    { name: 'requirements_txt', value: options.requirementsTxt },
-  ]);
+  return motherDuckJobSummaryView(
+    mdCreateFlight({
+      name: options.name,
+      accessTokenName: options.mdTokenName,
+      sourceCode: options.sourceCode,
+      flightSecretNames: options.mdSecretNames,
+      scheduleCron: options.scheduleCron,
+      config: options.config,
+      requirementsTxt: options.requirementsTxt,
+    })
+  );
 }
 
 /** @deprecated Use mdGetFlight. */
 export function mdGetJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction(
-    'md_get_job',
-    motherDuckIdParams('job_id', jobId)
-  );
+  return motherDuckJobSummaryView(mdGetFlight(jobId));
 }
 
 /** @deprecated Use mdUpdateFlight. */
 export function mdUpdateJob(options: MotherDuckUpdateJobOptions): SQL {
-  return motherDuckNamedFunction('md_update_job', [
-    { name: 'job_id', value: options.jobId },
-    { name: 'name', value: options.name },
-    { name: 'schedule_cron', value: options.scheduleCron },
-    { name: 'config', value: motherDuckOptionalMapArg(options.config) },
-    { name: 'source_code', value: options.sourceCode },
-    { name: 'requirements_txt', value: options.requirementsTxt },
-    { name: 'md_token_name', value: options.mdTokenName },
-    { name: 'md_secret_names', value: options.mdSecretNames },
-  ]);
+  return motherDuckJobSummaryView(
+    mdUpdateFlight({
+      flightId: options.jobId,
+      name: options.name,
+      scheduleCron: options.scheduleCron,
+      config: options.config,
+      sourceCode: options.sourceCode,
+      requirementsTxt: options.requirementsTxt,
+      accessTokenName: options.mdTokenName,
+      flightSecretNames: options.mdSecretNames,
+    })
+  );
 }
 
 /** @deprecated Use mdDeleteFlight. */
 export function mdDeleteJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction(
-    'md_delete_job',
-    motherDuckIdParams('job_id', jobId)
-  );
+  return mdDeleteFlight(jobId);
 }
 
 /** @deprecated Use mdRunFlight. */
 export function mdRunJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckNamedFunction(
-    'md_run_job',
-    motherDuckIdParams('job_id', jobId)
-  );
+  return motherDuckJobRunView(mdRunFlight(jobId));
 }
 
 /** @deprecated Use mdCancelFlightRun. */
@@ -831,10 +895,7 @@ export function mdCancelJobRun(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_cancel_job_run',
-    motherDuckIdRunParams('job_id', jobId, runNumber)
-  );
+  return mdCancelFlightRun(jobId, runNumber);
 }
 
 /** @deprecated Use mdListFlightRuns. */
@@ -842,10 +903,7 @@ export function mdJobRuns(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_job_runs',
-    motherDuckIdPagedParams('job_id', jobId, options)
-  );
+  return motherDuckJobRunView(mdListFlightRuns(jobId, options));
 }
 
 /** @deprecated Use mdGetFlightLogs. */
@@ -853,10 +911,7 @@ export function mdJobRunLogs(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_job_run_logs',
-    motherDuckIdRunParams('job_id', jobId, runNumber)
-  );
+  return mdGetFlightLogs(jobId, runNumber);
 }
 
 /** @deprecated Use mdListFlightVersions. */
@@ -864,10 +919,7 @@ export function mdJobVersions(
   jobId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_job_versions',
-    motherDuckIdPagedParams('job_id', jobId, options)
-  );
+  return motherDuckJobVersionView(mdListFlightVersions(jobId, options));
 }
 
 /** @deprecated Use mdGetFlightVersion. */
@@ -875,8 +927,5 @@ export function mdGetJobVersion(
   jobId: string | SQLWrapper,
   versionNumber: number | SQLWrapper
 ): SQL {
-  return motherDuckNamedFunction(
-    'md_get_job_version',
-    motherDuckIdVersionParams('job_id', jobId, versionNumber)
-  );
+  return motherDuckJobVersionView(mdGetFlightVersion(jobId, versionNumber));
 }
