@@ -270,10 +270,12 @@ reading, creating, updating, deleting, and versioning Dives: `mdListDives()`,
 `mdGetDiveVersion()`. Dive listing and version rows include
 `required_resources` on supported MotherDuck deployments.
 
-The older `mdJobs()` helper family is still exported for deployments that have
-not moved to Flights yet. The earlier `mdFlights()`, `mdFlightRuns()`,
-`mdFlightLogs()`, and `mdFlightVersions()` TypeScript helper names remain as
-deprecated aliases, but new code should use the verb-style Flight helpers.
+The older `mdJobs()` helper family remains exported as deprecated compatibility
+aliases. Those helpers call the supported Flight table functions and preserve
+the older `job_*` result column names where the Flight result uses `flight_*`.
+The earlier `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and
+`mdFlightVersions()` TypeScript helper names also remain as deprecated aliases,
+but new code should use the verb-style Flight helpers.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,

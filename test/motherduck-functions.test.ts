@@ -470,7 +470,7 @@ test('MotherDuck config validation preserves nulls and SQL wrapper escape hatche
   expect(sqlWrapperConfig.params).toEqual([flightId]);
 });
 
-test('MotherDuck job helpers emit named-parameter table functions', () => {
+test('deprecated MotherDuck job helpers emit supported Flight functions', () => {
   const dialect = new DuckDBDialect();
   const jobId = '80000000-0000-0000-0000-000000000001';
 
@@ -488,7 +488,7 @@ test('MotherDuck job helpers emit named-parameter table functions', () => {
   `);
 
   expect(createJob.sql).toContain(
-    'from md_create_job(name = $1, md_token_name = $2, source_code = $3, md_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)'
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)) as md_jobs'
   );
   expect(createJob.params).toEqual([
     'daily-refresh',
@@ -506,7 +506,9 @@ test('MotherDuck job helpers emit named-parameter table functions', () => {
     from ${mdJobs({ limit: 10, offset: 20 })}
   `);
 
-  expect(jobs.sql).toContain('from md_jobs("LIMIT" = $1, "OFFSET" = $2)');
+  expect(jobs.sql).toContain(
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_list_flights("LIMIT" = $1, "OFFSET" = $2)) as md_jobs'
+  );
   expect(jobs.params).toEqual([10, 20]);
 
   const updateJob = dialect.sqlToQuery(sql`
@@ -519,34 +521,40 @@ test('MotherDuck job helpers emit named-parameter table functions', () => {
   `);
 
   expect(updateJob.sql).toContain(
-    'from md_update_job(job_id = $1, source_code = source_code || $2, md_secret_names = $3)'
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3)) as md_jobs'
   );
   expect(updateJob.params).toEqual([jobId, '\n# patched', []]);
 
   expect(dialect.sqlToQuery(sql`from ${mdGetJob(jobId)}`).sql).toContain(
-    'from md_get_job(job_id = $1)'
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_get_flight(flight_id = $1)) as md_jobs'
   );
   expect(dialect.sqlToQuery(sql`from ${mdDeleteJob(jobId)}`).sql).toContain(
-    'from md_delete_job(job_id = $1)'
+    'from md_delete_flight(flight_id = $1)'
   );
   expect(dialect.sqlToQuery(sql`from ${mdRunJob(jobId)}`).sql).toContain(
-    'from md_run_job(job_id = $1)'
+    'from (select run_id, flight_id as job_id, flight_name as job_name, flight_version as job_version, run_number, is_scheduled, status, created_at, started_at, ended_at, scheduled_at, cancelled_at, exit_code from md_run_flight(flight_id = $1)) as md_job_runs'
   );
   expect(
     dialect.sqlToQuery(sql`from ${mdCancelJobRun(jobId, 2)}`).sql
-  ).toContain('from md_cancel_job_run(job_id = $1, run_number = $2)');
+  ).toContain('from md_cancel_flight_run(flight_id = $1, run_number = $2)');
   expect(
     dialect.sqlToQuery(sql`from ${mdJobRuns(jobId, { limit: 1 })}`).sql
-  ).toContain('from md_job_runs(job_id = $1, "LIMIT" = $2)');
+  ).toContain(
+    'from (select run_id, flight_id as job_id, flight_name as job_name, flight_version as job_version, run_number, is_scheduled, status, created_at, started_at, ended_at, scheduled_at, cancelled_at, exit_code from md_list_flight_runs(flight_id = $1, "LIMIT" = $2)) as md_job_runs'
+  );
   expect(dialect.sqlToQuery(sql`from ${mdJobRunLogs(jobId, 1)}`).sql).toContain(
-    'from md_job_run_logs(job_id = $1, run_number = $2)'
+    'from md_get_flight_logs(flight_id = $1, run_number = $2)'
   );
   expect(
     dialect.sqlToQuery(sql`from ${mdJobVersions(jobId, { offset: 2 })}`).sql
-  ).toContain('from md_job_versions(job_id = $1, "OFFSET" = $2)');
+  ).toContain(
+    'from (select version_id, flight_id as job_id, flight_version as version, created_at, access_token_name as md_token_name, flight_secret_names as md_secret_names, config, source_code, requirements_txt from md_list_flight_versions(flight_id = $1, "OFFSET" = $2)) as md_job_versions'
+  );
   expect(
     dialect.sqlToQuery(sql`from ${mdGetJobVersion(jobId, 1)}`).sql
-  ).toContain('from md_get_job_version(job_id = $1, version_number = $2)');
+  ).toContain(
+    'from (select version_id, flight_id as job_id, flight_version as version, created_at, access_token_name as md_token_name, flight_secret_names as md_secret_names, config, source_code, requirements_txt from md_get_flight_version(flight_id = $1, version_number = $2)) as md_job_versions'
+  );
 });
 
 test('deprecated MotherDuck job config helpers share Flight validation', () => {

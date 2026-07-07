@@ -256,10 +256,12 @@ const runs = await db.execute(sql`
 `);
 ```
 
-The older Job helper names are still exported for older MotherDuck deployments,
-and the earlier `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and
-`mdFlightVersions()` TypeScript helper names remain as deprecated aliases. New
-code should use the verb-style Flight helpers.
+The older Job helper names remain exported as deprecated compatibility aliases.
+They call the supported Flight table functions and preserve the older `job_*`
+result column names where the Flight result uses `flight_*`. The earlier
+`mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and `mdFlightVersions()`
+TypeScript helper names remain as deprecated aliases too. New code should use
+the verb-style Flight helpers.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
