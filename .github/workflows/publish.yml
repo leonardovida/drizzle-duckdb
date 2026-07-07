@@ -17,13 +17,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          package-manager-cache: false # never use caching in release builds
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -37,4 +30,4 @@ jobs:
         run: bun run build
 
       - name: Publish to npm (@duckdbfan/drizzle-duckdb)
-        run: npm publish --access public
+        run: bun publish --access public
