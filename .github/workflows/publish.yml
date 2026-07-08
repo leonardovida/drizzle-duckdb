@@ -37,4 +37,4 @@ jobs:
         run: bun run build
 
       - name: Publish to npm (@duckdbfan/drizzle-duckdb)
-        run: npm publish --access public
+        run: npm publish --access public --tag latest

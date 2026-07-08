@@ -26,10 +26,22 @@ jobs:
       - name: Build package
         run: bun run build
 
+      - name: Check MotherDuck token
+        id: motherduck-token
+        run: |
+          if [ -n "${MOTHERDUCK_TOKEN:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "MOTHERDUCK_TOKEN is unavailable; skipping cloud integration steps."
+          fi
+
       - name: Run nyc taxi example
+        if: steps.motherduck-token.outputs.available == 'true'
         run: bun example/motherduck-nyc.ts
 
       - name: Seed MotherDuck CI schema
+        if: steps.motherduck-token.outputs.available == 'true'
         run: |
           bun - <<'EOF'
           import { DuckDBInstance } from '@duckdb/node-api';
@@ -57,6 +69,7 @@ jobs:
           EOF
 
       - name: Introspect seeded schema
+        if: steps.motherduck-token.outputs.available == 'true'
         run: |
           mkdir -p /tmp/motherduck
           bun ./dist/duckdb-introspect.mjs --url md: --schemas ci_extension --out /tmp/motherduck/schema.ts
@@ -65,9 +78,11 @@ jobs:
           grep -q "ci_orders" /tmp/motherduck/schema.ts
 
       - name: MotherDuck integration tests
+        if: steps.motherduck-token.outputs.available == 'true'
         run: bun test test/motherduck.integration.test.ts
 
       - name: Complex join & aggregation smoke test
+        if: steps.motherduck-token.outputs.available == 'true'
         run: |
           bun - <<'EOF'
           import { DuckDBInstance } from '@duckdb/node-api';
