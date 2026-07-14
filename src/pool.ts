@@ -141,6 +141,14 @@ export function createDuckDBConnectionPool(
     waiter.reject(error);
   };
 
+  const takeWaiter = (): WaitingRequest | undefined => {
+    const waiter = waiting.shift();
+    if (waiter) {
+      clearTimeout(waiter.timeoutId);
+    }
+    return waiter;
+  };
+
   const toError = (error: unknown): Error =>
     error instanceof Error ? error : new Error(String(error));
 
@@ -175,6 +183,18 @@ export function createDuckDBConnectionPool(
     createdAt: meta.createdAt,
     lastUsedAt: meta.lastUsedAt,
   });
+
+  const retryNextWaiter = (): void => {
+    if (closed) return;
+
+    const waiter = takeWaiter();
+    if (!waiter) return;
+
+    void acquire().then(
+      (connection) => resolveWaiter(waiter, connection),
+      (error) => rejectWaiter(waiter, toError(error))
+    );
+  };
 
   const acquire = async (): Promise<DuckDBConnection> => {
     if (closed) {
@@ -220,6 +240,7 @@ export function createDuckDBConnectionPool(
       } catch (error) {
         if (!slotReleased) {
           decrementTotal();
+          retryNextWaiter();
         }
         throw error;
       } finally {
@@ -257,7 +278,7 @@ export function createDuckDBConnectionPool(
       return;
     }
 
-    const waiter = waiting.shift();
+    const waiter = takeWaiter();
     if (waiter) {
       const now = Date.now();
       const meta = readMetadata(connection, now);
