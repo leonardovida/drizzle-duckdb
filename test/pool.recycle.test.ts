@@ -30,7 +30,36 @@ describe('Pool recycling and resilience', () => {
     expect(createSpy).toHaveBeenCalledTimes(2);
   });
 
-  test('setup failure does not reduce capacity', async () => {
+  test('failed connection creation retries the next queued acquire', async () => {
+    const fakeConn = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+    let rejectFirstCreate: (error: Error) => void = () => undefined;
+    const firstCreate = new Promise<DuckDBConnection>((_, reject) => {
+      rejectFirstCreate = reject;
+    });
+    const createSpy = vi
+      .spyOn(DuckDBConnection, 'create')
+      .mockReturnValueOnce(firstCreate)
+      .mockResolvedValueOnce(fakeConn);
+
+    const pool = createDuckDBConnectionPool({} as any, {
+      size: 1,
+      acquireTimeout: 50,
+    });
+
+    const failedAcquire = pool.acquire();
+    const queuedAcquire = pool.acquire();
+    rejectFirstCreate(new Error('boom'));
+
+    await expect(failedAcquire).rejects.toThrow(/boom/);
+    await expect(queuedAcquire).resolves.toBe(fakeConn);
+
+    await pool.release(fakeConn);
+    await pool.close();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test('setup failure retries the next queued acquire', async () => {
     const conn1 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
     const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
 
@@ -48,10 +77,13 @@ describe('Pool recycling and resilience', () => {
       setup,
     });
 
-    await expect(pool.acquire()).rejects.toThrow(/setup failed/);
+    const failedAcquire = pool.acquire();
+    const queuedAcquire = pool.acquire();
+
+    await expect(failedAcquire).rejects.toThrow(/setup failed/);
     expect(conn1.closeSync).toHaveBeenCalled();
 
-    const conn = await pool.acquire();
+    const conn = await queuedAcquire;
     expect(conn).toBe(conn2);
 
     await pool.release(conn);
