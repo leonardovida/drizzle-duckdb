@@ -1,4 +1,4 @@
-import { DuckDBConnection } from '@duckdb/node-api';
+import { DuckDBConnection, type DuckDBInstance } from '@duckdb/node-api';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createDuckDBConnectionPool } from '../src/pool.ts';
 
@@ -146,6 +146,69 @@ describe('Pool recycling and resilience', () => {
     expect(conn1.closeSync).toHaveBeenCalled();
 
     await pool.release(second);
+    await pool.close();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test('close failure while replacing an expired connection retries the waiter', async () => {
+    const conn1 = {
+      closeSync: vi.fn(() => {
+        throw new Error('close failed');
+      }),
+    } as unknown as DuckDBConnection;
+    const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+
+    const createSpy = vi
+      .spyOn(DuckDBConnection, 'create')
+      .mockResolvedValueOnce(conn1)
+      .mockResolvedValueOnce(conn2);
+
+    const pool = createDuckDBConnectionPool({} as DuckDBInstance, {
+      size: 1,
+      acquireTimeout: 50,
+      maxLifetimeMs: 0,
+    });
+
+    const first = await pool.acquire();
+    const pendingAcquire = pool.acquire();
+
+    await expect(pool.release(first)).rejects.toThrow('close failed');
+    const replacement = await pendingAcquire;
+    expect(replacement).toBe(conn2);
+
+    await pool.release(replacement);
+    await pool.close();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test('close failure while discarding an idle connection preserves capacity', async () => {
+    const conn1 = {
+      closeSync: vi.fn(() => {
+        throw new Error('close failed');
+      }),
+    } as unknown as DuckDBConnection;
+    const conn2 = { closeSync: vi.fn() } as unknown as DuckDBConnection;
+
+    const createSpy = vi
+      .spyOn(DuckDBConnection, 'create')
+      .mockResolvedValueOnce(conn1)
+      .mockResolvedValueOnce(conn2);
+
+    const pool = createDuckDBConnectionPool({} as DuckDBInstance, {
+      size: 1,
+      idleTimeoutMs: 0,
+    });
+
+    const first = await pool.acquire();
+    await pool.release(first);
+
+    await expect(pool.acquire()).rejects.toThrow('close failed');
+    const replacement = await pool.acquire();
+    expect(replacement).toBe(conn2);
+
+    await pool.release(replacement);
     await pool.close();
 
     expect(createSpy).toHaveBeenCalledTimes(2);

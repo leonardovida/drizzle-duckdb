@@ -123,9 +123,12 @@ export function createDuckDBConnectionPool(
   const dropConnection = async (
     connection: DuckDBConnection
   ): Promise<void> => {
-    await closeClientConnection(connection);
-    decrementTotal();
-    metadata.delete(connection);
+    try {
+      await closeClientConnection(connection);
+    } finally {
+      decrementTotal();
+      metadata.delete(connection);
+    }
   };
 
   const resolveWaiter = (
@@ -205,7 +208,12 @@ export function createDuckDBConnectionPool(
       const pooled = idle.pop() as PooledConnection;
       const now = Date.now();
       if (shouldRecycleIdleConnection(pooled, now)) {
-        await dropConnection(pooled.connection);
+        try {
+          await dropConnection(pooled.connection);
+        } catch (error) {
+          retryNextWaiter();
+          throw error;
+        }
         continue;
       }
       markConnectionUsed(pooled.connection, pooled, now);
@@ -278,51 +286,43 @@ export function createDuckDBConnectionPool(
       return;
     }
 
-    const waiter = takeWaiter();
-    if (waiter) {
-      const now = Date.now();
-      const meta = readMetadata(connection, now);
-
-      if (closed) {
-        await dropConnection(connection);
-        rejectWaiter(waiter, new Error(POOL_CLOSED_MESSAGE));
-        return;
-      }
-
-      if (hasExceededMaxLifetime(meta, now)) {
-        await dropConnection(connection);
-        try {
-          const replacement = await acquire();
-          resolveWaiter(waiter, replacement);
-        } catch (error) {
-          rejectWaiter(waiter, toError(error));
-        }
-        return;
-      }
-
-      markConnectionUsed(connection, meta, now);
-      leased.add(connection);
-      resolveWaiter(waiter, connection);
-      return;
-    }
+    const now = Date.now();
+    const meta = readMetadata(connection, now);
 
     if (closed) {
       await dropConnection(connection);
       return;
     }
 
-    const now = Date.now();
-    const existingMeta = markConnectionUsed(
-      connection,
-      readMetadata(connection, now),
-      now
-    );
+    if (hasExceededMaxLifetime(meta, now)) {
+      try {
+        await dropConnection(connection);
+      } catch (error) {
+        retryNextWaiter();
+        throw error;
+      }
 
-    if (hasExceededMaxLifetime(existingMeta, now)) {
-      await dropConnection(connection);
+      const waiter = takeWaiter();
+      if (waiter) {
+        try {
+          const replacement = await acquire();
+          resolveWaiter(waiter, replacement);
+        } catch (error) {
+          rejectWaiter(waiter, toError(error));
+        }
+      }
       return;
     }
 
+    const waiter = takeWaiter();
+    if (waiter) {
+      markConnectionUsed(connection, meta, now);
+      leased.add(connection);
+      resolveWaiter(waiter, connection);
+      return;
+    }
+
+    const existingMeta = markConnectionUsed(connection, meta, now);
     idle.push(toPooledConnection(connection, existingMeta));
   };
 
