@@ -28,6 +28,19 @@ describe('normalizeTypeLiteral', () => {
       'TIMESTAMP WITH TIME ZONE'
     );
   });
+
+  test.each([
+    'smallint',
+    'int2',
+    'int16',
+    'tinyint',
+    'integer',
+    'int',
+    'int4',
+    'signed',
+  ])('canonicalizes integer alias %s', (alias) => {
+    expect(normalizeTypeLiteral(alias)).toBe(alias.toUpperCase());
+  });
 });
 
 describe('parseStructFields', () => {

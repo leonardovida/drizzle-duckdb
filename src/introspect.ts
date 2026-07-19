@@ -7,6 +7,56 @@ export { splitTopLevel } from './sql/split-top-level.ts';
 
 const SYSTEM_SCHEMAS = new Set(['information_schema', 'pg_catalog']);
 
+const CANONICAL_TYPE_PREFIXES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^TIMESTAMP WITHOUT TIME ZONE\b/i, 'TIMESTAMP'],
+  [/^TIMESTAMP WITH TIME ZONE\b/i, 'TIMESTAMP WITH TIME ZONE'],
+  [/^TIMESTAMPTZ\b/i, 'TIMESTAMP WITH TIME ZONE'],
+  [/^TIME WITHOUT TIME ZONE\b/i, 'TIME'],
+  [/^CHARACTER VARYING\b/i, 'VARCHAR'],
+  [/^CHARACTER\b/i, 'CHAR'],
+];
+
+const INTEGER_TYPE_ALIASES = new Set([
+  'SMALLINT',
+  'INT2',
+  'INT16',
+  'TINYINT',
+  'INTEGER',
+  'INT',
+  'INT4',
+  'SIGNED',
+]);
+
+const SIMPLE_TYPE_NAMES = new Set([
+  'BOOLEAN',
+  'BOOL',
+  ...INTEGER_TYPE_ALIASES,
+  'BIGINT',
+  'INT8',
+  'UBIGINT',
+  'DECIMAL',
+  'NUMERIC',
+  'REAL',
+  'FLOAT4',
+  'DOUBLE',
+  'DOUBLE PRECISION',
+  'FLOAT',
+  'CHAR',
+  'VARCHAR',
+  'TEXT',
+  'STRING',
+  'UUID',
+  'JSON',
+  'INET',
+  'INTERVAL',
+  'BLOB',
+  'BYTEA',
+  'VARBINARY',
+  'TIMESTAMP',
+  'TIME',
+  'DATE',
+]);
+
 export interface IntrospectOptions {
   /**
    * Database/catalog to introspect. If not specified, uses the current database
@@ -583,16 +633,7 @@ export function normalizeTypeLiteral(raw: string): string {
     return `${normalizeTypeLiteral(base ?? '')}${suffix ?? ''}`;
   }
 
-  const canonicalPrefixes: Array<[RegExp, string]> = [
-    [/^TIMESTAMP WITHOUT TIME ZONE\b/i, 'TIMESTAMP'],
-    [/^TIMESTAMP WITH TIME ZONE\b/i, 'TIMESTAMP WITH TIME ZONE'],
-    [/^TIMESTAMPTZ\b/i, 'TIMESTAMP WITH TIME ZONE'],
-    [/^TIME WITHOUT TIME ZONE\b/i, 'TIME'],
-    [/^CHARACTER VARYING\b/i, 'VARCHAR'],
-    [/^CHARACTER\b/i, 'CHAR'],
-  ];
-
-  for (const [pattern, replacement] of canonicalPrefixes) {
+  for (const [pattern, replacement] of CANONICAL_TYPE_PREFIXES) {
     const match = pattern.exec(trimmed);
     if (match) {
       return `${replacement}${trimmed.slice(match[0].length)}`;
@@ -600,43 +641,7 @@ export function normalizeTypeLiteral(raw: string): string {
   }
 
   const upper = trimmed.toUpperCase();
-  const simpleTypes = new Set([
-    'BOOLEAN',
-    'BOOL',
-    'SMALLINT',
-    'INT2',
-    'INT16',
-    'TINYINT',
-    'INTEGER',
-    'INT',
-    'INT4',
-    'SIGNED',
-    'BIGINT',
-    'INT8',
-    'UBIGINT',
-    'DECIMAL',
-    'NUMERIC',
-    'REAL',
-    'FLOAT4',
-    'DOUBLE',
-    'DOUBLE PRECISION',
-    'FLOAT',
-    'CHAR',
-    'VARCHAR',
-    'TEXT',
-    'STRING',
-    'UUID',
-    'JSON',
-    'INET',
-    'INTERVAL',
-    'BLOB',
-    'BYTEA',
-    'VARBINARY',
-    'TIMESTAMP',
-    'TIME',
-    'DATE',
-  ]);
-  if (simpleTypes.has(upper)) {
+  if (SIMPLE_TYPE_NAMES.has(upper)) {
     return upper;
   }
 
@@ -656,22 +661,7 @@ function mapDuckDbType(
     return { builder: `boolean(${columnName(column.name)})` };
   }
 
-  if (
-    upper === 'SMALLINT' ||
-    upper === 'INT2' ||
-    upper === 'INT16' ||
-    upper === 'TINYINT'
-  ) {
-    imports.pgCore.add('integer');
-    return { builder: `integer(${columnName(column.name)})` };
-  }
-
-  if (
-    upper === 'INTEGER' ||
-    upper === 'INT' ||
-    upper === 'INT4' ||
-    upper === 'SIGNED'
-  ) {
+  if (INTEGER_TYPE_ALIASES.has(upper)) {
     imports.pgCore.add('integer');
     return { builder: `integer(${columnName(column.name)})` };
   }
