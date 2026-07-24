@@ -87,6 +87,7 @@ export interface MotherDuckFlightVersionRow {
   config: Record<string, string> | Map<string, string> | null;
   source_code: string;
   requirements_txt: string | null;
+  max_runtime_sec?: number;
 }
 
 export interface MotherDuckFlightRunRow {
@@ -212,6 +213,7 @@ export interface MotherDuckCreateFlightOptions {
   scheduleCron?: string | SQLWrapper | null;
   config?: Record<string, string | null> | SQLWrapper | null;
   requirementsTxt?: string | SQLWrapper | null;
+  maxRuntimeSec?: number | SQLWrapper;
 }
 
 export interface MotherDuckUpdateFlightOptions {
@@ -223,6 +225,7 @@ export interface MotherDuckUpdateFlightOptions {
   requirementsTxt?: string | SQLWrapper | null;
   accessTokenName?: string | SQLWrapper | null;
   flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
+  maxRuntimeSec?: number | SQLWrapper;
 }
 
 export interface MotherDuckRunFlightOptions {
@@ -238,6 +241,7 @@ export interface MotherDuckCreateJobOptions {
   scheduleCron?: string | SQLWrapper | null;
   config?: Record<string, string | null> | SQLWrapper | null;
   requirementsTxt?: string | SQLWrapper | null;
+  maxRuntimeSec?: number | SQLWrapper;
 }
 
 /** @deprecated Use MotherDuckUpdateFlightOptions. */
@@ -250,6 +254,7 @@ export interface MotherDuckUpdateJobOptions {
   requirementsTxt?: string | SQLWrapper | null;
   mdTokenName?: string | SQLWrapper | null;
   mdSecretNames?: readonly (string | null)[] | SQLWrapper | null;
+  maxRuntimeSec?: number | SQLWrapper;
 }
 
 export type MotherDuckRunMode = 'auto' | 'local' | 'remote';
@@ -725,6 +730,7 @@ export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
     { name: 'schedule_cron', value: options.scheduleCron },
     { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'requirements_txt', value: options.requirementsTxt },
+    { name: 'max_runtime_sec', value: options.maxRuntimeSec },
   ]);
 }
 
@@ -745,6 +751,7 @@ export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'access_token_name', value: options.accessTokenName },
     { name: 'flight_secret_names', value: options.flightSecretNames },
+    { name: 'max_runtime_sec', value: options.maxRuntimeSec },
   ]);
 }
 
@@ -855,6 +862,7 @@ export function mdCreateJob(options: MotherDuckCreateJobOptions): SQL {
       scheduleCron: options.scheduleCron,
       config: options.config,
       requirementsTxt: options.requirementsTxt,
+      maxRuntimeSec: options.maxRuntimeSec,
     })
   );
 }
@@ -876,6 +884,7 @@ export function mdUpdateJob(options: MotherDuckUpdateJobOptions): SQL {
       requirementsTxt: options.requirementsTxt,
       accessTokenName: options.mdTokenName,
       flightSecretNames: options.mdSecretNames,
+      maxRuntimeSec: options.maxRuntimeSec,
     })
   );
 }
