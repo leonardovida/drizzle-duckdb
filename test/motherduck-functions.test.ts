@@ -211,11 +211,12 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
       scheduleCron: '0 0 * * *',
       config: { retries: '3', owner: 'analytics' },
       requirementsTxt: 'duckdb==1.0.0',
+      maxRuntimeSec: 1_800,
     })}
   `);
 
   expect(createFlight.sql).toContain(
-    'from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)'
+    'from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8, max_runtime_sec = $9)'
   );
   expect(createFlight.params).toEqual([
     'daily-refresh',
@@ -226,6 +227,7 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
     ['retries', 'owner'],
     ['3', 'analytics'],
     'duckdb==1.0.0',
+    1_800,
   ]);
 
   const createFlightWithoutToken = dialect.sqlToQuery(sql`
@@ -260,11 +262,12 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
       flightId,
       sourceCode: sql`source_code || ${'\n# patched'}`,
       flightSecretNames: [],
+      maxRuntimeSec: sql`max_runtime_sec + 60`,
     })}
   `);
 
   expect(updateFlight.sql).toContain(
-    'from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3)'
+    'from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3, max_runtime_sec = max_runtime_sec + 60)'
   );
   expect(updateFlight.params).toEqual([flightId, '\n# patched', []]);
 
@@ -484,11 +487,12 @@ test('deprecated MotherDuck job helpers emit supported Flight functions', () => 
       scheduleCron: '0 0 * * *',
       config: { retries: '3', owner: 'analytics' },
       requirementsTxt: 'duckdb==1.0.0',
+      maxRuntimeSec: 1_800,
     })}
   `);
 
   expect(createJob.sql).toContain(
-    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8)) as md_jobs'
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_create_flight(name = $1, access_token_name = $2, source_code = $3, flight_secret_names = $4, schedule_cron = $5, config = MAP($6, $7), requirements_txt = $8, max_runtime_sec = $9)) as md_jobs'
   );
   expect(createJob.params).toEqual([
     'daily-refresh',
@@ -499,6 +503,7 @@ test('deprecated MotherDuck job helpers emit supported Flight functions', () => 
     ['retries', 'owner'],
     ['3', 'analytics'],
     'duckdb==1.0.0',
+    1_800,
   ]);
 
   const jobs = dialect.sqlToQuery(sql`

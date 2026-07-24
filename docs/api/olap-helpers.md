@@ -247,6 +247,7 @@ const [flight] = await db.execute(sql`
     accessTokenName: 'pipeline_token',
     sourceCode: 'print("hello")',
     scheduleCron: '0 0 * * *',
+    maxRuntimeSec: 1_800,
   })}
 `);
 
@@ -266,6 +267,8 @@ For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
 and `flightSecretNames`.
+Use `maxRuntimeSec` on `mdCreateFlight()` or `mdUpdateFlight()` to cap each run
+in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
 
 `config` entries are exposed to Flight code as environment variables using the
 config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and

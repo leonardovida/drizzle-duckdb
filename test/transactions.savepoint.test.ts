@@ -1,6 +1,7 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
+import { TransactionRollbackError } from 'drizzle-orm/errors';
 import { integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../src';
@@ -49,7 +50,7 @@ test('nested transaction error marks outer transaction for rollback', async () =
         })
       ).rejects.toThrow('boom');
     })
-  ).rejects.toThrow();
+  ).rejects.toThrow(TransactionRollbackError);
 
   const rows = await db.select().from(transactions).orderBy(transactions.id);
 

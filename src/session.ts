@@ -310,7 +310,6 @@ export class DuckDBSession<
       try {
         const result = await transaction(tx);
         if (session.isRollbackOnly()) {
-          await tx.execute(sql`rollback`);
           throw new TransactionRollbackError();
         }
         await tx.execute(sql`commit`);
