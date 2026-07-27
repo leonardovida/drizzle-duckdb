@@ -126,14 +126,13 @@ function buildDuckLakeAttachOptionsSql(
   return options;
 }
 
-export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
-  const normalized = normalizeDuckLakeConfig(config);
-  const options = buildDuckLakeAttachOptionsSql(normalized.attachOptions);
+function buildNormalizedDuckLakeAttachSql(
+  config: NormalizedDuckLakeConfig
+): string {
+  const options = buildDuckLakeAttachOptionsSql(config.attachOptions);
 
   const attachSql = [
-    `ATTACH ${quoteString(normalized.catalog)} AS ${quoteIdentifier(
-      normalized.alias
-    )}`,
+    `ATTACH ${quoteString(config.catalog)} AS ${quoteIdentifier(config.alias)}`,
   ];
 
   if (options.length > 0) {
@@ -143,26 +142,37 @@ export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
   return attachSql.join(' ');
 }
 
+export function buildDuckLakeAttachSql(config: DuckLakeConfig): string {
+  return buildNormalizedDuckLakeAttachSql(normalizeDuckLakeConfig(config));
+}
+
+async function configureNormalizedDuckLake(
+  connection: DuckDBConnection,
+  config: NormalizedDuckLakeConfig
+): Promise<void> {
+  if (config.install) {
+    await connection.run('INSTALL ducklake');
+  }
+
+  if (config.load) {
+    await connection.run('LOAD ducklake');
+  }
+
+  await connection.run(buildNormalizedDuckLakeAttachSql(config));
+
+  if (config.use) {
+    await connection.run(`USE ${quoteIdentifier(config.alias)}`);
+  }
+}
+
 export async function configureDuckLake(
   connection: DuckDBConnection,
   config: DuckLakeConfig
 ): Promise<void> {
-  const normalized = normalizeDuckLakeConfig(config);
-
-  if (normalized.install) {
-    await connection.run('INSTALL ducklake');
-  }
-
-  if (normalized.load) {
-    await connection.run('LOAD ducklake');
-  }
-
-  const attachSql = buildDuckLakeAttachSql(normalized);
-  await connection.run(attachSql);
-
-  if (normalized.use) {
-    await connection.run(`USE ${quoteIdentifier(normalized.alias)}`);
-  }
+  await configureNormalizedDuckLake(
+    connection,
+    normalizeDuckLakeConfig(config)
+  );
 }
 
 function isDuckDBConnection(
