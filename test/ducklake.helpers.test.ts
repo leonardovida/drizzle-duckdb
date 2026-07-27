@@ -2,6 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { describe, expect, test, vi } from 'vitest';
 import {
   buildDuckLakeAttachSql,
+  configureDuckLake,
   isDuckDbFileCatalog,
   normalizeDuckLakeConfig,
   resolveDuckLakePoolSize,
@@ -46,6 +47,28 @@ describe('DuckLake helpers', () => {
     expect(sql).toBe(
       `ATTACH 'ducklake:md:meta''db' AS "lake""name" (METADATA_CATALOG='cat''alog', READ_ONLY=false)`
     );
+  });
+
+  test('configureDuckLake runs normalized setup in order', async () => {
+    const connection = {
+      run: vi.fn(async () => undefined),
+    } as unknown as DuckDBConnection;
+
+    await configureDuckLake(connection, {
+      catalog: 'md:meta_db',
+      alias: 'lake',
+      install: true,
+      load: true,
+    });
+
+    expect(connection.run).toHaveBeenCalledTimes(4);
+    expect(connection.run).toHaveBeenNthCalledWith(1, 'INSTALL ducklake');
+    expect(connection.run).toHaveBeenNthCalledWith(2, 'LOAD ducklake');
+    expect(connection.run).toHaveBeenNthCalledWith(
+      3,
+      `ATTACH 'ducklake:md:meta_db' AS "lake"`
+    );
+    expect(connection.run).toHaveBeenNthCalledWith(4, 'USE "lake"');
   });
 
   test('isDuckDbFileCatalog detects local file catalogs', () => {
