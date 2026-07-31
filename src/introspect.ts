@@ -440,12 +440,17 @@ function emitSchema(
       ? a.name.localeCompare(b.name)
       : a.schema.localeCompare(b.schema)
   );
+  const schemaIdentifiers = buildSchemaIdentifiers(sorted);
+  const tableIdentifiers = buildTableIdentifiers(
+    sorted,
+    new Set(schemaIdentifiers.values())
+  );
 
   const lines: string[] = [];
 
   for (const schema of uniqueSchemas(sorted)) {
     imports.pgCore.add('pgSchema');
-    const schemaVar = toSchemaIdentifier(schema);
+    const schemaVar = schemaIdentifiers.get(schema)!;
     lines.push(
       `export const ${schemaVar} = pgSchema(${JSON.stringify(schema)});`,
       ''
@@ -453,7 +458,16 @@ function emitSchema(
 
     const tables = sorted.filter((table) => table.schema === schema);
     for (const table of tables) {
-      lines.push(...emitTable(schemaVar, table, imports, options));
+      lines.push(
+        ...emitTable(
+          schemaVar,
+          tableIdentifiers.get(tableKey(table.schema, table.name))!,
+          table,
+          tableIdentifiers,
+          imports,
+          options
+        )
+      );
       lines.push('');
     }
   }
@@ -464,11 +478,12 @@ function emitSchema(
 
 function emitTable(
   schemaVar: string,
+  tableVar: string,
   table: IntrospectedTable,
+  tableIdentifiers: ReadonlyMap<string, string>,
   imports: ImportBuckets,
   options: EmitOptions
 ): string[] {
-  const tableVar = toIdentifier(table.name);
   const columnLines: string[] = [];
   for (const column of table.columns) {
     columnLines.push(
@@ -480,7 +495,7 @@ function emitTable(
     );
   }
 
-  const constraintBlock = emitConstraints(table, imports);
+  const constraintBlock = emitConstraints(table, tableIdentifiers, imports);
 
   const tableLines: string[] = [];
   tableLines.push(
@@ -498,6 +513,7 @@ function emitTable(
 
 function emitConstraints(
   table: IntrospectedTable,
+  tableIdentifiers: ReadonlyMap<string, string>,
   imports: ImportBuckets
 ): string {
   const constraints = table.constraints.filter((constraint) =>
@@ -530,7 +546,13 @@ function emitConstraints(
       constraint.referencedTable
     ) {
       imports.pgCore.add('foreignKey');
-      const targetTable = toIdentifier(constraint.referencedTable.name);
+      const targetTable =
+        tableIdentifiers.get(
+          tableKey(
+            constraint.referencedTable.schema,
+            constraint.referencedTable.name
+          )
+        ) ?? toIdentifier(constraint.referencedTable.name);
       entries.push(
         `${key}: foreignKey({ columns: [${constraint.columns
           .map((col) => `t.${toIdentifier(col)}`)
@@ -561,6 +583,62 @@ function emitConstraints(
   }
   lines.push('})');
   return lines.join('\n');
+}
+
+function buildSchemaIdentifiers(
+  tables: IntrospectedTable[]
+): Map<string, string> {
+  const identifiers = new Map<string, string>();
+  const used = new Set<string>();
+
+  for (const schema of uniqueSchemas(tables)) {
+    identifiers.set(
+      schema,
+      allocateIdentifier(toSchemaIdentifier(schema), used)
+    );
+  }
+
+  return identifiers;
+}
+
+function buildTableIdentifiers(
+  tables: IntrospectedTable[],
+  reserved: Set<string>
+): Map<string, string> {
+  const identifiers = new Map<string, string>();
+  const baseCounts = new Map<string, number>();
+
+  for (const table of tables) {
+    const base = toIdentifier(table.name);
+    baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+  }
+
+  for (const table of tables) {
+    const base = toIdentifier(table.name);
+    const preferred =
+      (baseCounts.get(base) ?? 0) > 1
+        ? `${toIdentifier(table.schema)}${capitalize(base)}`
+        : base;
+    identifiers.set(
+      tableKey(table.schema, table.name),
+      allocateIdentifier(preferred, reserved)
+    );
+  }
+
+  return identifiers;
+}
+
+function allocateIdentifier(preferred: string, used: Set<string>): string {
+  let candidate = preferred;
+  let suffix = 2;
+
+  while (used.has(candidate)) {
+    candidate = `${preferred}${suffix}`;
+    suffix += 1;
+  }
+
+  used.add(candidate);
+  return candidate;
 }
 
 interface ColumnEmitOptions extends EmitOptions {}
