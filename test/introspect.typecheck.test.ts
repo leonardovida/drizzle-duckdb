@@ -17,6 +17,8 @@ beforeAll(async () => {
   const db = drizzle(connection);
 
   await db.execute(sql`create schema if not exists tc`);
+  await db.execute(sql`create schema if not exists tc_sales`);
+  await db.execute(sql`create schema if not exists tc_support`);
   await db.execute(sql`
     create table tc.metrics (
       id integer primary key,
@@ -25,6 +27,18 @@ beforeAll(async () => {
       created_at timestamp with time zone
     )
   `);
+  await db.execute(
+    sql`create table tc_sales.customers (id integer primary key)`
+  );
+  await db.execute(sql`
+    create table tc_sales.orders (
+      id integer primary key,
+      customer_id integer references tc_sales.customers(id)
+    )
+  `);
+  await db.execute(
+    sql`create table tc_support.customers (id integer primary key)`
+  );
 });
 
 afterAll(() => {
@@ -40,11 +54,23 @@ test('generated schema type-checks with tsc', async () => {
   const importBasePath = '@duckdbfan/drizzle-duckdb';
 
   const result = await introspect(db, {
-    schemas: ['tc'],
+    schemas: ['tc', 'tc_sales', 'tc_support'],
     importBasePath,
   });
 
   fs.writeFileSync(schemaPath, result.files.schemaTs, 'utf8');
+  expect(result.files.schemaTs).toContain(
+    'export const tcSalesCustomers = tcSalesSchema.table("customers"'
+  );
+  expect(result.files.schemaTs).toContain(
+    'export const tcSupportCustomers = tcSupportSchema.table("customers"'
+  );
+  expect(result.files.schemaTs).toContain(
+    'export const metrics = tcSchema.table("metrics"'
+  );
+  expect(result.files.schemaTs).toContain(
+    'foreignColumns: [tcSalesCustomers.id]'
+  );
 
   const tsconfigPath = path.join(tmpDir, 'tsconfig.generated.json');
   const tsconfig = {
