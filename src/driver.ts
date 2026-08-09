@@ -283,6 +283,15 @@ function resolvePoolOptions(
   return pool;
 }
 
+async function closeDatabaseClient(client: DuckDBClientLike): Promise<void> {
+  if (isPool(client)) {
+    await client.close?.();
+    return;
+  }
+
+  await closeClientConnection(client);
+}
+
 /** Internal: create database from a connection string */
 async function createFromConnectionString<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -295,7 +304,7 @@ async function createFromConnectionString<
   let createdClient: DuckDBClientLike | undefined;
 
   try {
-    const ducklakeConfig = config.ducklake;
+    const { ducklake: ducklakeConfig, ...restConfig } = config;
     const poolOptions = resolvePoolOptions(config.pool);
     const { poolSize, resolvedPoolSize, isLocalCatalog } =
       resolveDuckLakePoolSize(config.pool, ducklakeConfig);
@@ -318,29 +327,20 @@ async function createFromConnectionString<
       if (ducklakeConfig) {
         await configureDuckLake(connection, ducklakeConfig);
       }
-      const { ducklake, ...restConfig } = config;
-      const db = createFromClient(
-        connection,
-        restConfig as DuckDBDrizzleConfig<TSchema>,
-        instance
-      );
-      createdClient = undefined;
-      return db;
+    } else {
+      createdClient = createDuckDBConnectionPool(instance, {
+        ...poolOptions,
+        size: poolSize,
+        setup: ducklakeConfig
+          ? async (connection) => {
+              await configureDuckLake(connection, ducklakeConfig);
+            }
+          : undefined,
+      });
     }
 
-    const pool = createDuckDBConnectionPool(instance, {
-      ...poolOptions,
-      size: poolSize,
-      setup: ducklakeConfig
-        ? async (connection) => {
-            await configureDuckLake(connection, ducklakeConfig);
-          }
-        : undefined,
-    });
-    createdClient = pool;
-    const { ducklake, ...restConfig } = config;
     const db = createFromClient(
-      pool,
+      createdClient,
       restConfig as DuckDBDrizzleConfig<TSchema>,
       instance
     );
@@ -348,11 +348,7 @@ async function createFromConnectionString<
     return db;
   } catch (error) {
     if (createdClient) {
-      if (isPool(createdClient) && createdClient.close) {
-        await createdClient.close();
-      } else if (!isPool(createdClient)) {
-        await closeClientConnection(createdClient);
-      }
+      await closeDatabaseClient(createdClient);
     }
     await closeDuckDbInstance(instance);
     throw error;
@@ -455,12 +451,7 @@ export class DuckDBDatabase<
     let firstError: unknown;
 
     try {
-      if (isPool(this.$client) && this.$client.close) {
-        await this.$client.close();
-      }
-      if (!isPool(this.$client)) {
-        await closeClientConnection(this.$client);
-      }
+      await closeDatabaseClient(this.$client);
     } catch (error) {
       firstError = error;
     }

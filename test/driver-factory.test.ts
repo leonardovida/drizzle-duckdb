@@ -188,6 +188,34 @@ describe('Driver Factory Tests', () => {
       expect(instanceClosed).toBe(1);
     });
 
+    test('close() closes pooled clients and their instance', async () => {
+      const pool = {
+        acquire: vi.fn(),
+        release: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      const instance = {
+        closeSync: vi.fn(),
+      };
+      const dbWithPool = new DuckDBDatabase(
+        new DuckDBDialect(),
+        new DuckDBSession(
+          pool as never,
+          new DuckDBDialect(),
+          undefined,
+          {}
+        ) as never,
+        undefined,
+        pool as never,
+        instance as never
+      );
+
+      await dbWithPool.close();
+
+      expect(pool.close).toHaveBeenCalledTimes(1);
+      expect(instance.closeSync).toHaveBeenCalledTimes(1);
+    });
+
     test('close() ends direct pg-style clients', async () => {
       const end = vi.fn(async () => undefined);
       const pgClient: PgDuckClient = {
