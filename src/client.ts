@@ -3,7 +3,6 @@ import {
   timestampValue,
   type DuckDBConnection,
   type DuckDBInstance,
-  type DuckDBPreparedStatement,
   type DuckDBValue,
 } from '@duckdb/node-api';
 import {
@@ -17,6 +16,11 @@ import {
 } from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
 import type { PgDuckClient, PgDuckField, PgDuckQueryResult } from './pgduck.ts';
+import {
+  bindPreparedStatement,
+  clearPreparedStatementCache,
+  getPreparedStatementCache,
+} from './prepared-statement-cache.ts';
 
 export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
 export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
@@ -41,15 +45,6 @@ export interface ExecuteClientOptions {
 export type ExecuteArraysResult = { columns: string[]; rows: unknown[][] };
 
 type MaterializedRows = ExecuteArraysResult;
-
-type PreparedCacheEntry = {
-  statement: DuckDBPreparedStatement;
-};
-
-type PreparedStatementCache = {
-  size: number;
-  entries: Map<string, PreparedCacheEntry>;
-};
 
 type ResultColumnsLike = {
   columnNames: () => string[];
@@ -76,8 +71,6 @@ type ClosableResource = {
 type DisconnectableResource = ClosableResource & {
   disconnectSync?: () => void;
 };
-
-const PREPARED_CACHE = Symbol.for('drizzle-duckdb:prepared-cache');
 
 interface PreferredResultReader<T> {
   readDefault: () => Promise<T>;
@@ -348,93 +341,6 @@ function normalizeDeduplicatedColumns(
   return changed ? normalized : deduplicatedColumns;
 }
 
-function destroyPreparedStatement(entry: PreparedCacheEntry | undefined): void {
-  if (!entry) return;
-  try {
-    entry.statement.destroySync();
-  } catch {
-    // Ignore cleanup errors
-  }
-}
-
-function getPreparedCache(
-  connection: DuckDBConnection,
-  size: number
-): PreparedStatementCache {
-  const store = connection as unknown as Record<
-    symbol,
-    PreparedStatementCache | undefined
-  >;
-  const existing = store[PREPARED_CACHE];
-  if (existing) {
-    existing.size = size;
-    return existing;
-  }
-
-  const cache: PreparedStatementCache = { size, entries: new Map() };
-  store[PREPARED_CACHE] = cache;
-  return cache;
-}
-
-function evictOldest(cache: PreparedStatementCache): void {
-  const oldest = cache.entries.keys().next();
-  if (!oldest.done) {
-    const key = oldest.value as string;
-    const entry = cache.entries.get(key);
-    cache.entries.delete(key);
-    destroyPreparedStatement(entry);
-  }
-}
-
-function evictCacheEntry(cache: PreparedStatementCache, key: string): void {
-  const entry = cache.entries.get(key);
-  cache.entries.delete(key);
-  destroyPreparedStatement(entry);
-}
-
-function rememberPreparedStatement(
-  cache: PreparedStatementCache,
-  query: string,
-  statement: DuckDBPreparedStatement
-): DuckDBPreparedStatement {
-  cache.entries.delete(query);
-  cache.entries.set(query, { statement });
-  return statement;
-}
-
-async function getOrPrepareStatement(
-  connection: DuckDBConnection,
-  query: string,
-  cacheConfig: PreparedStatementCacheConfig
-): Promise<DuckDBPreparedStatement> {
-  const cache = getPreparedCache(connection, cacheConfig.size);
-  const cached = cache.entries.get(query);
-  if (cached) {
-    return rememberPreparedStatement(cache, query, cached.statement);
-  }
-
-  const statement = await connection.prepare(query);
-  rememberPreparedStatement(cache, query, statement);
-
-  while (cache.entries.size > cache.size) {
-    evictOldest(cache);
-  }
-
-  return statement;
-}
-
-function bindPreparedStatement(
-  statement: DuckDBPreparedStatement,
-  values: DuckDBValue[] | undefined
-): void {
-  if (values) {
-    statement.bind(values);
-    return;
-  }
-
-  statement.clearBindings?.();
-}
-
 function resolveResultColumns(result: ResultColumnsLike): string[] {
   const columns = result.columnNames();
 
@@ -555,20 +461,16 @@ async function executePreparedQuery(
   values: DuckDBValue[] | undefined,
   cacheConfig: PreparedStatementCacheConfig
 ): Promise<MaterializedRows> {
-  const cache = getPreparedCache(connection, cacheConfig.size);
+  const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
   try {
-    const statement = await getOrPrepareStatement(
-      connection,
-      query,
-      cacheConfig
-    );
+    const statement = await cache.getOrPrepare(query);
     bindPreparedStatement(statement, values);
     const result = await statement.run();
-    rememberPreparedStatement(cache, query, statement);
+    cache.remember(query, statement);
     return await materializeResultRows(result);
   } catch (error) {
-    evictCacheEntry(cache, query);
+    cache.evict(query);
     throw error;
   }
 }
@@ -692,19 +594,6 @@ async function materializePgDuckRows(
   );
 }
 
-function clearPreparedCache(connection: DuckDBConnection): void {
-  const store = connection as unknown as Record<
-    symbol,
-    PreparedStatementCache | undefined
-  >;
-  const cache = store[PREPARED_CACHE];
-  if (!cache) return;
-  for (const entry of cache.entries.values()) {
-    destroyPreparedStatement(entry);
-  }
-  cache.entries.clear();
-}
-
 function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
   const mappedRows: RowData[] = new Array(rows.length);
 
@@ -745,7 +634,7 @@ export async function closeClientConnection(
   connection: DuckDBExecutionClient
 ): Promise<void> {
   if (isNodeApiConnection(connection)) {
-    clearPreparedCache(connection);
+    clearPreparedStatementCache(connection);
   }
 
   await closeDuckDbResource(connection as DisconnectableResource, true);
