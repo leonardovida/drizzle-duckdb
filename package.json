@@ -28,16 +28,16 @@
     }
   },
   "devDependencies": {
-    "@duckdb/node-api": "1.5.4-r.1",
+    "@duckdb/node-api": "1.5.5-r.4",
     "@types/bun": "1.3.14",
-    "@types/node": "26.1.2",
-    "@vitest/ui": "4.1.10",
+    "@types/node": "26.2.0",
+    "@vitest/ui": "4.1.11",
     "drizzle-orm": "0.45.2",
     "prettier": "3.8.4",
-    "tinybench": "6.1.2",
+    "tinybench": "6.1.3",
     "typescript": "6.0.3",
     "uuid": "14.0.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "repository": {
     "type": "git",
@@ -82,6 +82,7 @@
   ],
   "overrides": {
     "esbuild": "0.28.0",
+    "nanoid": "3.3.18",
     "postcss": "8.5.25",
     "vite": "8.1.4"
   },
