@@ -39,6 +39,29 @@ test('reuses statements and evicts the least recently used entry', async () => {
   expect(statements[2]?.destroySync).not.toHaveBeenCalled();
 });
 
+test('evicts excess statements immediately when resized', async () => {
+  const statements = [createStatement(), createStatement(), createStatement()];
+  const connection = {
+    prepare: vi
+      .fn()
+      .mockResolvedValueOnce(statements[0])
+      .mockResolvedValueOnce(statements[1])
+      .mockResolvedValueOnce(statements[2]),
+  } as unknown as DuckDBConnection;
+  const cache = getPreparedStatementCache(connection, 3);
+
+  await cache.getOrPrepare('select 1');
+  await cache.getOrPrepare('select 2');
+  await cache.getOrPrepare('select 3');
+  getPreparedStatementCache(connection, 1);
+
+  expect(statements[0]?.destroySync).toHaveBeenCalledTimes(1);
+  expect(statements[1]?.destroySync).toHaveBeenCalledTimes(1);
+  expect(statements[2]?.destroySync).not.toHaveBeenCalled();
+  expect(await cache.getOrPrepare('select 3')).toBe(statements[2]);
+  expect(connection.prepare).toHaveBeenCalledTimes(3);
+});
+
 test('clears cached statements and preserves the cache instance', async () => {
   const statement = createStatement();
   const connection = {

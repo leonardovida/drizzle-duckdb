@@ -30,6 +30,7 @@ export class PreparedStatementCache {
 
   resize(size: number): void {
     this.size = size;
+    this.trimToSize();
   }
 
   async getOrPrepare(query: string): Promise<DuckDBPreparedStatement> {
@@ -41,10 +42,6 @@ export class PreparedStatementCache {
     const statement = await this.connection.prepare(query);
     this.remember(query, statement);
 
-    while (this.entries.size > this.size) {
-      this.evictOldest();
-    }
-
     return statement;
   }
 
@@ -54,6 +51,7 @@ export class PreparedStatementCache {
   ): DuckDBPreparedStatement {
     this.entries.delete(query);
     this.entries.set(query, { statement });
+    this.trimToSize();
     return statement;
   }
 
@@ -74,6 +72,12 @@ export class PreparedStatementCache {
     const oldest = this.entries.keys().next();
     if (!oldest.done) {
       this.evict(oldest.value);
+    }
+  }
+
+  private trimToSize(): void {
+    while (this.entries.size > this.size) {
+      this.evictOldest();
     }
   }
 }
