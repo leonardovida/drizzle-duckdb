@@ -24,6 +24,25 @@ describe('package.json configuration', () => {
     expect(peerDeps['@duckdb/node-api']).toBeDefined();
   });
 
+  test('declares peer ranges for published DuckDB API release lines', () => {
+    const range = packageJson.peerDependencies?.['@duckdb/node-api'];
+    const supportedReleaseLines = [
+      '>=1.4.4-r.1 <1.4.5',
+      '>=1.4.5-r.1 <1.4.6',
+      '>=1.5.0-r.1 <1.5.1',
+      '>=1.5.1-r.1 <1.5.2',
+      '>=1.5.2-r.1 <1.5.3',
+      '>=1.5.3-r.1 <1.5.4',
+      '>=1.5.4-r.1 <1.5.5',
+      '>=1.5.5-r.1 <1.5.6',
+    ];
+
+    expect(range).toBeDefined();
+    for (const releaseLine of supportedReleaseLines) {
+      expect(range.split(' || ')).toContain(releaseLine);
+    }
+  });
+
   test('DuckDB API can be imported and instantiated', async () => {
     const { DuckDBInstance } = await import('@duckdb/node-api');
     const instance = await DuckDBInstance.create(':memory:');

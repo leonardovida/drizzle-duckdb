@@ -39,7 +39,7 @@ pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
 yarn add @duckdbfan/drizzle-duckdb @duckdb/node-api
 ```
 
-Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.4-r.1`. The repo now develops against `1.5.4-r.1`, and `1.4.4-r.1` remains supported.
+Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.5-r.4`. The repo now develops against `1.5.5-r.4`, and `1.4.4-r.1` remains supported.
 
 ## Requirements
 
