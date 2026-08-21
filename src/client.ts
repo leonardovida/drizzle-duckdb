@@ -287,28 +287,30 @@ function toPgDuckValues(params: unknown[]): unknown[] {
 }
 
 function deduplicateColumns(columns: string[]): string[] {
-  const counts = new Map<string, number>();
-  let hasDuplicates = false;
+  const used = new Set<string>();
+  const nextSuffix = new Map<string, number>();
+  let deduplicated: string[] | undefined;
 
-  for (const column of columns) {
-    const next = (counts.get(column) ?? 0) + 1;
-    counts.set(column, next);
-    if (next > 1) {
-      hasDuplicates = true;
-      break;
+  for (let index = 0; index < columns.length; index += 1) {
+    const column = columns[index] as string;
+    let candidate = column;
+
+    if (used.has(candidate)) {
+      let suffix = nextSuffix.get(column) ?? 1;
+      do {
+        candidate = `${column}_${suffix}`;
+        suffix += 1;
+      } while (used.has(candidate));
+
+      nextSuffix.set(column, suffix);
+      deduplicated ??= columns.slice();
+      deduplicated[index] = candidate;
     }
+
+    used.add(candidate);
   }
 
-  if (!hasDuplicates) {
-    return columns;
-  }
-
-  counts.clear();
-  return columns.map((column) => {
-    const count = counts.get(column) ?? 0;
-    counts.set(column, count + 1);
-    return count === 0 ? column : `${column}_${count}`;
-  });
+  return deduplicated ?? columns;
 }
 
 function normalizeDeduplicatedColumns(
@@ -316,10 +318,9 @@ function normalizeDeduplicatedColumns(
   deduplicatedColumns: string[]
 ): string[] {
   if (columns.length !== deduplicatedColumns.length) {
-    return deduplicatedColumns;
+    return deduplicateColumns(deduplicatedColumns);
   }
 
-  let changed = false;
   const normalized = deduplicatedColumns.map((column, index) => {
     const original = columns[index];
     if (column === original) {
@@ -330,7 +331,6 @@ function normalizeDeduplicatedColumns(
     if (column.startsWith(duplicatePrefix)) {
       const suffix = column.slice(duplicatePrefix.length);
       if (/^\d+$/.test(suffix)) {
-        changed = true;
         return `${original}_${suffix}`;
       }
     }
@@ -338,7 +338,7 @@ function normalizeDeduplicatedColumns(
     return column;
   });
 
-  return changed ? normalized : deduplicatedColumns;
+  return deduplicateColumns(normalized);
 }
 
 function resolveResultColumns(result: ResultColumnsLike): string[] {
