@@ -109,3 +109,9 @@ test('duplicate column aliases preserve ordering', async () => {
 
   expect(rows).toEqual([{ first: 1, second: 2 }]);
 });
+
+test('raw duplicate aliases avoid generated name collisions', async () => {
+  const rows = await ctx.db.execute(sql`select 1 as a, 2 as a, 3 as a_1`);
+
+  expect(rows).toEqual([{ a: 1, a_1: 2, a_1_1: 3 }]);
+});

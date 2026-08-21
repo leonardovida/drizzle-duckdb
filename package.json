@@ -3,7 +3,7 @@
   "module": "./dist/index.mjs",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "version": "1.5.4-7",
+  "version": "1.5.4-8",
   "description": "A drizzle ORM client for use with DuckDB. Based on drizzle's Postgres client.",
   "type": "module",
   "scripts": {
@@ -29,14 +29,14 @@
   },
   "devDependencies": {
     "@duckdb/node-api": "1.5.5-r.4",
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.0",
     "@types/node": "26.2.0",
     "@vitest/ui": "4.1.11",
     "drizzle-orm": "0.45.2",
     "prettier": "3.8.4",
     "tinybench": "6.1.3",
     "typescript": "6.0.3",
-    "uuid": "14.0.1",
+    "uuid": "14.0.2",
     "vitest": "4.1.11"
   },
   "repository": {

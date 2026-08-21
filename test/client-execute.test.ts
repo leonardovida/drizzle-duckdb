@@ -383,6 +383,18 @@ describe('executeOnClient', () => {
     expect(rows).toEqual([{ id: 1, id_1: 2 }]);
   });
 
+  test('keeps normalized duplicate column names unique', async () => {
+    const client = makeClient({
+      rows: [[1, 2, 3]],
+      columns: ['id', 'id', 'id_1'],
+      deduplicatedColumns: ['id', 'id:1', 'id_1'],
+    });
+
+    const rows = await executeOnClient(client, 'select', []);
+
+    expect(rows).toEqual([{ id: 1, id_1: 2, id_1_1: 3 }]);
+  });
+
   test('uses JSON materialization for precise time families', async () => {
     const client = makeClient({
       rows: [[new Date('2024-03-01T12:34:56.123Z')]],
@@ -537,6 +549,23 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(chunks).toEqual([{ columns: ['id', 'id_1'], rows: [[1, 2]] }]);
+  });
+
+  test('keeps fallback duplicate column names unique', async () => {
+    const client = makeClient({
+      rows: [[1, 2, 3]],
+      columns: ['id', 'id', 'id_1'],
+      deduplicatedColumns: undefined,
+    });
+    const chunks: Array<{ columns: string[]; rows: unknown[][] }> = [];
+
+    for await (const chunk of executeInBatchesRaw(client, 'select', [])) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      { columns: ['id', 'id_1', 'id_1_1'], rows: [[1, 2, 3]] },
+    ]);
   });
 
   test('closes stream when consumer exits early', async () => {
