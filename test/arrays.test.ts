@@ -2,6 +2,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import {
   duckDbArray,
+  duckDbArrayContained,
   duckDbArrayContains,
   duckDbArrayOverlaps,
   duckDbList,
@@ -29,6 +30,12 @@ interface Context {
 }
 
 let ctx: Context;
+
+test('array predicate names share their implementations', () => {
+  expect(arrayHasAll).toBe(duckDbArrayContains);
+  expect(arrayHasAny).toBe(duckDbArrayOverlaps);
+  expect(arrayContainedBy).toBe(duckDbArrayContained);
+});
 
 beforeAll(async () => {
   const instance = await DuckDBInstance.create(':memory:');
