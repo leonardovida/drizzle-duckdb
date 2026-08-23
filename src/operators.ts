@@ -1,34 +1,8 @@
 /**
- * DuckDB-native array operators. Generate DuckDB-compatible SQL directly
- * without query rewriting.
+ * DuckDB-native names for the array predicate helpers.
  */
-
-import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
-import {
-  normalizeArrayPredicateValue,
-  type ArrayPredicateValue,
+export {
+  duckDbArrayContains as arrayHasAll,
+  duckDbArrayOverlaps as arrayHasAny,
+  duckDbArrayContained as arrayContainedBy,
 } from './columns.ts';
-
-export function arrayHasAll<T>(
-  column: SQLWrapper,
-  values: ArrayPredicateValue<T>
-): SQL {
-  const rhs = normalizeArrayPredicateValue(values);
-  return sql`array_has_all(${column}, ${rhs})`;
-}
-
-export function arrayHasAny<T>(
-  column: SQLWrapper,
-  values: ArrayPredicateValue<T>
-): SQL {
-  const rhs = normalizeArrayPredicateValue(values);
-  return sql`array_has_any(${column}, ${rhs})`;
-}
-
-export function arrayContainedBy<T>(
-  column: SQLWrapper,
-  values: ArrayPredicateValue<T>
-): SQL {
-  const lhs = normalizeArrayPredicateValue(values);
-  return sql`array_has_all(${lhs}, ${column})`;
-}

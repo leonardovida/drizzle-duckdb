@@ -584,25 +584,25 @@ export const duckDbTime = (name: string, options: TimeOptions = {}) =>
     },
   })(name);
 
-export function duckDbArrayContains(
+export function duckDbArrayContains<T>(
   column: SQLWrapper,
-  values: ArrayPredicateValue<unknown>
+  values: ArrayPredicateValue<T>
 ): SQL {
   const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_all(${column}, ${rhs})`;
 }
 
-export function duckDbArrayContained(
+export function duckDbArrayContained<T>(
   column: SQLWrapper,
-  values: ArrayPredicateValue<unknown>
+  values: ArrayPredicateValue<T>
 ): SQL {
   const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_all(${rhs}, ${column})`;
 }
 
-export function duckDbArrayOverlaps(
+export function duckDbArrayOverlaps<T>(
   column: SQLWrapper,
-  values: ArrayPredicateValue<unknown>
+  values: ArrayPredicateValue<T>
 ): SQL {
   const rhs = normalizeArrayPredicateValue(values);
   return sql`array_has_any(${column}, ${rhs})`;
