@@ -277,6 +277,10 @@ the older `job_*` result column names where the Flight result uses `flight_*`.
 The earlier `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and
 `mdFlightVersions()` TypeScript helper names also remain as deprecated aliases,
 but new code should use the verb-style Flight helpers.
+`mdGetFlightLogs()` returns one `MotherDuckFlightLogLineRow` per log line with
+`line_number`, `reported_at`, and `line` fields. The old blob-shaped
+`MotherDuckFlightLogsRow` type remains exported for the deprecated
+`mdFlightLogs()` and `mdJobRunLogs()` compatibility views.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
