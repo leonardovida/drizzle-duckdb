@@ -37,6 +37,8 @@ import {
   mdUpdateFlight,
   mdUpdateJob,
   type MotherDuckDiveVersionSummaryRow,
+  type MotherDuckFlightLogLineRow,
+  type MotherDuckFlightLogsRow,
 } from '../src/motherduck.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 
@@ -315,6 +317,20 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
   );
 });
 
+test('MotherDuck flight log row types preserve line results and legacy imports', () => {
+  const line: MotherDuckFlightLogLineRow = {
+    line_number: 3n,
+    reported_at: '2026-08-26T12:00:00Z',
+    line: 'refresh complete',
+  };
+  const legacy: MotherDuckFlightLogsRow = {
+    logs: 'refresh complete\n',
+  };
+
+  expect(line.line).toBe('refresh complete');
+  expect(legacy.logs).toBe('refresh complete\n');
+});
+
 test('deprecated MotherDuck flight helper aliases emit supported table functions', () => {
   const dialect = new DuckDBDialect();
   const flightId = '80000000-0000-0000-0000-000000000001';
@@ -327,7 +343,9 @@ test('deprecated MotherDuck flight helper aliases emit supported table functions
   ).toContain('from md_list_flight_runs(flight_id = $1, "LIMIT" = $2)');
   expect(
     dialect.sqlToQuery(sql`from ${mdFlightLogs(flightId, 1)}`).sql
-  ).toContain('from md_get_flight_logs(flight_id = $1, run_number = $2)');
+  ).toContain(
+    "from (select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
+  );
   expect(
     dialect.sqlToQuery(sql`from ${mdFlightVersions(flightId, { offset: 2 })}`)
       .sql
@@ -548,7 +566,7 @@ test('deprecated MotherDuck job helpers emit supported Flight functions', () => 
     'from (select run_id, flight_id as job_id, flight_name as job_name, flight_version as job_version, run_number, is_scheduled, status, created_at, started_at, ended_at, scheduled_at, cancelled_at, exit_code from md_list_flight_runs(flight_id = $1, "LIMIT" = $2)) as md_job_runs'
   );
   expect(dialect.sqlToQuery(sql`from ${mdJobRunLogs(jobId, 1)}`).sql).toContain(
-    'from md_get_flight_logs(flight_id = $1, run_number = $2)'
+    "from (select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
   );
   expect(
     dialect.sqlToQuery(sql`from ${mdJobVersions(jobId, { offset: 2 })}`).sql

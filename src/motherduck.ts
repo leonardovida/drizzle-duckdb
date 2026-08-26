@@ -107,6 +107,16 @@ export interface MotherDuckFlightRunRow {
   exit_code: number | null;
 }
 
+export interface MotherDuckFlightLogLineRow {
+  line_number: number | bigint | null;
+  reported_at: Date | string | null;
+  line: string | null;
+}
+
+/**
+ * @deprecated Flight logs are returned one line per row. Use
+ * MotherDuckFlightLogLineRow.
+ */
 export interface MotherDuckFlightLogsRow {
   logs: string;
 }
@@ -495,6 +505,10 @@ function motherDuckJobVersionView(source: SQL): SQL {
   ]);
 }
 
+function motherDuckLegacyFlightLogsView(source: SQL): SQL {
+  return sql`(select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from ${source}) as md_flight_logs`;
+}
+
 function motherDuckPagedParams(
   options: MotherDuckPaginationOptions = {}
 ): NamedParameter[] {
@@ -800,6 +814,7 @@ export function mdFlightRuns(
   return mdListFlightRuns(flightId, options);
 }
 
+/** Return the run log as oldest-first line rows. */
 export function mdGetFlightLogs(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
@@ -810,12 +825,15 @@ export function mdGetFlightLogs(
   );
 }
 
-/** @deprecated Use mdGetFlightLogs. */
+/**
+ * @deprecated Use mdGetFlightLogs for line-oriented log rows. This alias keeps
+ * returning the earlier single-row logs blob.
+ */
 export function mdFlightLogs(
   flightId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return mdGetFlightLogs(flightId, runNumber);
+  return motherDuckLegacyFlightLogsView(mdGetFlightLogs(flightId, runNumber));
 }
 
 export function mdListFlightVersions(
@@ -915,12 +933,15 @@ export function mdJobRuns(
   return motherDuckJobRunView(mdListFlightRuns(jobId, options));
 }
 
-/** @deprecated Use mdGetFlightLogs. */
+/**
+ * @deprecated Use mdGetFlightLogs for line-oriented log rows. This alias keeps
+ * returning the earlier single-row logs blob.
+ */
 export function mdJobRunLogs(
   jobId: string | SQLWrapper,
   runNumber: number | bigint | SQLWrapper
 ): SQL {
-  return mdGetFlightLogs(jobId, runNumber);
+  return motherDuckLegacyFlightLogsView(mdGetFlightLogs(jobId, runNumber));
 }
 
 /** @deprecated Use mdListFlightVersions. */

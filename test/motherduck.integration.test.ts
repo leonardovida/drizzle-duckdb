@@ -9,6 +9,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { drizzle } from '../src';
 import { introspect } from '../src/introspect';
+import { mdFlightLogs, mdGetFlightLogs } from '../src/motherduck.ts';
 import { expect, test } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
@@ -203,6 +204,44 @@ if (skipMotherduck) {
 
         // The generated schema should not reference sample_data
         expect(result.files.schemaTs).not.toContain('sample_data');
+      } finally {
+        connection.closeSync();
+        instance.closeSync();
+      }
+    });
+
+    if (completed === undefined) {
+      return;
+    }
+  }, 120_000);
+
+  test('Flight logs expose line-oriented result columns', async () => {
+    const completed = await runWithMotherDuckAccess(async () => {
+      const instance = await DuckDBInstance.create('md:', {
+        motherduck_token: motherduckToken,
+      });
+      const connection: DuckDBConnection = await instance.connect();
+      const db = drizzle(connection);
+
+      try {
+        const columns = await db.execute<{ column_name: string }>(sql`
+          describe select *
+          from ${mdGetFlightLogs(sql`uuid()`, sql`0::ubigint`)}
+        `);
+
+        expect(columns.map((column) => column.column_name)).toEqual([
+          'line_number',
+          'reported_at',
+          'line',
+        ]);
+
+        const legacyColumns = await db.execute<{ column_name: string }>(sql`
+          describe select *
+          from ${mdFlightLogs(sql`uuid()`, sql`0::ubigint`)}
+        `);
+        expect(legacyColumns.map((column) => column.column_name)).toEqual([
+          'logs',
+        ]);
       } finally {
         connection.closeSync();
         instance.closeSync();
