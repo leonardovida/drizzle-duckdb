@@ -16,6 +16,7 @@ import {
   PgTimestamp,
   PgTimestampString,
 } from 'drizzle-orm/pg-core';
+import { assignOwnProperty } from '../own-property.ts';
 
 type SQLInternal<T = unknown> = SQL<T> & {
   decoder: DriverValueDecoder<T, any>;
@@ -92,8 +93,12 @@ function trackNullifyTarget(
   tableName: string,
   value: unknown
 ): void {
-  if (!(objectName in nullifyMap)) {
-    nullifyMap[objectName] = value === null ? tableName : false;
+  if (!Object.hasOwn(nullifyMap, objectName)) {
+    assignOwnProperty(
+      nullifyMap,
+      objectName,
+      value === null ? tableName : false
+    );
     return;
   }
 
@@ -341,14 +346,14 @@ function assignResultPath(
   ) {
     const pathChunk = path[pathChunkIndex] as string;
 
-    if (!(pathChunk in node)) {
-      node[pathChunk] = {};
+    if (!Object.hasOwn(node, pathChunk)) {
+      assignOwnProperty(node, pathChunk, {});
     }
 
     node = node[pathChunk] as ResultRow;
   }
 
-  node[path[path.length - 1] as string] = value;
+  assignOwnProperty(node, path[path.length - 1] as string, value);
 }
 
 export function mapResultRow<TResult>(
@@ -356,7 +361,7 @@ export function mapResultRow<TResult>(
   row: unknown[],
   joinsNotNullableMap: Record<string, boolean> | undefined
 ): TResult {
-  const nullifyMap: NullifyMap = {};
+  const nullifyMap = Object.create(null) as NullifyMap;
   const result: ResultRow = {};
 
   for (const [columnIndex, { path, field }] of columns.entries()) {
@@ -373,7 +378,7 @@ export function mapResultRow<TResult>(
   if (joinsNotNullableMap && Object.keys(nullifyMap).length > 0) {
     for (const [objectName, tableName] of Object.entries(nullifyMap)) {
       if (typeof tableName === 'string' && !joinsNotNullableMap[tableName]) {
-        result[objectName] = null;
+        assignOwnProperty(result, objectName, null);
       }
     }
   }

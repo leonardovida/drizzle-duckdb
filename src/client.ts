@@ -21,6 +21,7 @@ import {
   clearPreparedStatementCache,
   getPreparedStatementCache,
 } from './prepared-statement-cache.ts';
+import { assignOwnProperty } from './own-property.ts';
 
 export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
 export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
@@ -602,7 +603,11 @@ function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
     const row: RowData = {};
 
     for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
-      row[columns[columnIndex] as string] = values[columnIndex];
+      assignOwnProperty(
+        row,
+        columns[columnIndex] as string,
+        values[columnIndex]
+      );
     }
 
     mappedRows[rowIndex] = row;
@@ -616,14 +621,17 @@ function mapRowsToColumnData(
   rows: unknown[][]
 ): Record<string, unknown[]> {
   const columnData: Record<string, unknown[]> = {};
+  const valuesByColumn: unknown[][] = [];
 
   for (const column of columns) {
-    columnData[column] = [];
+    const values: unknown[] = [];
+    assignOwnProperty(columnData, column, values);
+    valuesByColumn.push(values);
   }
 
   for (const row of rows) {
     for (let index = 0; index < columns.length; index += 1) {
-      columnData[columns[index] as string]?.push(row[index]);
+      valuesByColumn[index]?.push(row[index]);
     }
   }
 

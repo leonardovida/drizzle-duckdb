@@ -226,6 +226,26 @@ describe('executeArrowOnClient', () => {
     expect(data).toEqual({ id: [1], name: ['Ada'] });
     expect(calls[0]).toMatchObject({ text: 'select', rowMode: 'array' });
   });
+
+  test('preserves pg_duckdb __proto__ columns as own data properties', async () => {
+    const client: PgDuckClient = {
+      async query() {
+        return {
+          fields: [{ name: '__proto__' }],
+          rows: [[42]],
+        };
+      },
+    };
+
+    const data = (await executeArrowOnClient(client, 'select', [])) as Record<
+      string,
+      unknown[]
+    >;
+
+    expect(Object.getPrototypeOf(data)).toBe(Object.prototype);
+    expect(Object.hasOwn(data, '__proto__')).toBe(true);
+    expect(data['__proto__']).toEqual([42]);
+  });
 });
 
 describe('executeInBatches', () => {
