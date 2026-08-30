@@ -39,7 +39,7 @@ repos:
       # Tests (run on push for faster commits)
       - id: bun-test
         name: Bun test suite
-        entry: bun run test -- run
+        entry: bun run test
         language: system
         pass_filenames: false
         stages: [pre-push]
