@@ -177,6 +177,24 @@ function walkFrom(from: Select['from'], aliases: Set<string>): boolean {
   return transformed;
 }
 
+function walkOrderBy(
+  orderBy: OrderBy[] | null | undefined,
+  aliases: Set<string>
+): boolean {
+  if (!Array.isArray(orderBy)) return false;
+
+  let transformed = false;
+
+  for (const order of orderBy) {
+    if (order.expr) {
+      transformed =
+        walkExpression(order.expr as ExpressionValue, aliases) || transformed;
+    }
+  }
+
+  return transformed;
+}
+
 function walkSelect(select: Select): boolean {
   let transformed = false;
   const aliases = getGenerateSeriesAliases(select.from);
@@ -222,23 +240,8 @@ function walkSelect(select: Select): boolean {
     }
   }
 
-  if (Array.isArray(select.orderby)) {
-    for (const order of select.orderby as OrderBy[]) {
-      if (order.expr) {
-        transformed =
-          walkExpression(order.expr as ExpressionValue, aliases) || transformed;
-      }
-    }
-  }
-
-  if (select._orderby) {
-    for (const order of select._orderby as OrderBy[]) {
-      if (order.expr) {
-        transformed =
-          walkExpression(order.expr as ExpressionValue, aliases) || transformed;
-      }
-    }
-  }
+  transformed = walkOrderBy(select.orderby, aliases) || transformed;
+  transformed = walkOrderBy(select._orderby, aliases) || transformed;
 
   if (select._next) {
     transformed = walkSelect(select._next) || transformed;

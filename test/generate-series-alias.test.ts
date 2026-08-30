@@ -2,6 +2,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../src/index.ts';
+import { transformSQL } from '../src/sql/ast-transformer.ts';
 
 let db: DuckDBDatabase;
 let instance: DuckDBInstance;
@@ -23,6 +24,23 @@ afterAll(async () => {
 });
 
 describe('generate_series alias compatibility', () => {
+  test.each([
+    {
+      name: 'ordinary queries',
+      query: 'select gs from generate_series(1, 3) as gs order by gs',
+    },
+    {
+      name: 'compound queries',
+      query:
+        '(select gs from generate_series(1, 3) as gs) union all (select gs from generate_series(1, 3) as gs) order by gs',
+    },
+  ])('rewrites ORDER BY aliases in $name', ({ query }) => {
+    const result = transformSQL(query);
+
+    expect(result.transformed).toBe(true);
+    expect(result.sql).toMatch(/ORDER BY "gs"\.generate_series ASC$/);
+  });
+
   test('rewrites gs::date to gs.generate_series::date', async () => {
     const result = await db
       .select({
