@@ -9,7 +9,11 @@ import {
 } from 'drizzle-orm/pg-core';
 import { drizzle } from '../src';
 import { introspect } from '../src/introspect';
-import { mdFlightLogs, mdGetFlightLogs } from '../src/motherduck.ts';
+import {
+  mdFlightLogs,
+  mdGetFlightLogs,
+  mdGetFlightRun,
+} from '../src/motherduck.ts';
 import { expect, test } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
@@ -215,7 +219,7 @@ if (skipMotherduck) {
     }
   }, 120_000);
 
-  test('Flight logs expose line-oriented result columns', async () => {
+  test('Flight run helpers expose current result columns', async () => {
     const completed = await runWithMotherDuckAccess(async () => {
       const instance = await DuckDBInstance.create('md:', {
         motherduck_token: motherduckToken,
@@ -226,7 +230,11 @@ if (skipMotherduck) {
       try {
         const columns = await db.execute<{ column_name: string }>(sql`
           describe select *
-          from ${mdGetFlightLogs(sql`uuid()`, sql`0::ubigint`)}
+          from ${mdGetFlightLogs(sql`uuid()`, sql`0::ubigint`, {
+            limit: 1,
+            offset: 0,
+            order: 'desc',
+          })}
         `);
 
         expect(columns.map((column) => column.column_name)).toEqual([
@@ -241,6 +249,27 @@ if (skipMotherduck) {
         `);
         expect(legacyColumns.map((column) => column.column_name)).toEqual([
           'logs',
+        ]);
+
+        const runColumns = await db.execute<{ column_name: string }>(sql`
+          describe select *
+          from ${mdGetFlightRun(sql`uuid()`, sql`0::ubigint`)}
+        `);
+        expect(runColumns.map((column) => column.column_name)).toEqual([
+          'run_id',
+          'flight_id',
+          'flight_name',
+          'flight_version',
+          'config',
+          'run_number',
+          'is_scheduled',
+          'status',
+          'created_at',
+          'started_at',
+          'ended_at',
+          'scheduled_at',
+          'cancelled_at',
+          'exit_code',
         ]);
       } finally {
         connection.closeSync();

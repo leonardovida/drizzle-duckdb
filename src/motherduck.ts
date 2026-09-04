@@ -191,6 +191,10 @@ export interface MotherDuckPaginationOptions {
   offset?: number | SQLWrapper;
 }
 
+export interface MotherDuckFlightLogOptions extends MotherDuckPaginationOptions {
+  order?: 'asc' | 'desc' | SQLWrapper;
+}
+
 export interface MotherDuckListDivesOptions extends MotherDuckPaginationOptions {
   includeOrgShares?: boolean | SQLWrapper;
 }
@@ -556,6 +560,18 @@ function motherDuckIdRunParams(
   ];
 }
 
+function motherDuckFlightLogParams(
+  flightId: string | SQLWrapper,
+  runNumber: number | bigint | SQLWrapper,
+  options: MotherDuckFlightLogOptions
+): NamedParameter[] {
+  return [
+    ...motherDuckIdRunParams('flight_id', flightId, runNumber),
+    ...motherDuckPagedParams(options),
+    { name: '"ORDER"', value: options.order },
+  ];
+}
+
 function motherDuckIdVersionParams(
   idName: string,
   idValue: string | SQLWrapper,
@@ -806,6 +822,16 @@ export function mdListFlightRuns(
   );
 }
 
+export function mdGetFlightRun(
+  flightId: string | SQLWrapper,
+  runNumber: number | bigint | SQLWrapper
+): SQL {
+  return motherDuckNamedFunction(
+    'md_get_flight_run',
+    motherDuckIdRunParams('flight_id', flightId, runNumber)
+  );
+}
+
 /** @deprecated Use mdListFlightRuns. */
 export function mdFlightRuns(
   flightId: string | SQLWrapper,
@@ -817,11 +843,12 @@ export function mdFlightRuns(
 /** Return the run log as oldest-first line rows. */
 export function mdGetFlightLogs(
   flightId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper
+  runNumber: number | bigint | SQLWrapper,
+  options: MotherDuckFlightLogOptions = {}
 ): SQL {
   return motherDuckNamedFunction(
     'md_get_flight_logs',
-    motherDuckIdRunParams('flight_id', flightId, runNumber)
+    motherDuckFlightLogParams(flightId, runNumber, options)
   );
 }
 
@@ -831,9 +858,12 @@ export function mdGetFlightLogs(
  */
 export function mdFlightLogs(
   flightId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper
+  runNumber: number | bigint | SQLWrapper,
+  options: MotherDuckFlightLogOptions = {}
 ): SQL {
-  return motherDuckLegacyFlightLogsView(mdGetFlightLogs(flightId, runNumber));
+  return motherDuckLegacyFlightLogsView(
+    mdGetFlightLogs(flightId, runNumber, options)
+  );
 }
 
 export function mdListFlightVersions(
@@ -939,9 +969,12 @@ export function mdJobRuns(
  */
 export function mdJobRunLogs(
   jobId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper
+  runNumber: number | bigint | SQLWrapper,
+  options: MotherDuckFlightLogOptions = {}
 ): SQL {
-  return motherDuckLegacyFlightLogsView(mdGetFlightLogs(jobId, runNumber));
+  return motherDuckLegacyFlightLogsView(
+    mdGetFlightLogs(jobId, runNumber, options)
+  );
 }
 
 /** @deprecated Use mdListFlightVersions. */

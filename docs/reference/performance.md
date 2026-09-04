@@ -54,6 +54,11 @@ const db = drizzle(connection);
 2. Subsequent executions with the same SQL reuse the cached statement
 3. LRU eviction removes least-recently-used statements when cache is full
 
+Bindings are mutable on native prepared statements, so cached executions are
+serialized per connection to keep concurrent parameter sets isolated. Use a
+connection pool for parallel query execution. Each pooled connection keeps its
+own cache.
+
 ### Sizing Guidelines
 
 | Workload Type               | Recommended Size |

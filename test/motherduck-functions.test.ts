@@ -17,6 +17,7 @@ import {
   mdGetDive,
   mdGetDiveVersion,
   mdGetFlight,
+  mdGetFlightRun,
   mdGetFlightVersion,
   mdGetJob,
   mdGetJobVersion,
@@ -303,8 +304,22 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
       .sql
   ).toContain('from md_list_flight_runs(flight_id = $1, "LIMIT" = $2)');
   expect(
+    dialect.sqlToQuery(sql`from ${mdGetFlightRun(flightId, 1)}`).sql
+  ).toContain('from md_get_flight_run(flight_id = $1, run_number = $2)');
+  expect(
     dialect.sqlToQuery(sql`from ${mdGetFlightLogs(flightId, 1)}`).sql
   ).toContain('from md_get_flight_logs(flight_id = $1, run_number = $2)');
+  const latestLogs = dialect.sqlToQuery(sql`
+    from ${mdGetFlightLogs(flightId, 1, {
+      limit: 100,
+      offset: 20,
+      order: 'desc',
+    })}
+  `);
+  expect(latestLogs.sql).toContain(
+    'from md_get_flight_logs(flight_id = $1, run_number = $2, "LIMIT" = $3, "OFFSET" = $4, "ORDER" = $5)'
+  );
+  expect(latestLogs.params).toEqual([flightId, 1, 100, 20, 'desc']);
   expect(
     dialect.sqlToQuery(
       sql`from ${mdListFlightVersions(flightId, { offset: 2 })}`

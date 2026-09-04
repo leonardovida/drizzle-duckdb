@@ -464,16 +464,18 @@ async function executePreparedQuery(
 ): Promise<MaterializedRows> {
   const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
-  try {
-    const statement = await cache.getOrPrepare(query);
-    bindPreparedStatement(statement, values);
-    const result = await statement.run();
-    cache.remember(query, statement);
-    return await materializeResultRows(result);
-  } catch (error) {
-    cache.evict(query);
-    throw error;
-  }
+  return await cache.runExclusive(async () => {
+    try {
+      const statement = await cache.getOrPrepare(query);
+      bindPreparedStatement(statement, values);
+      const result = await statement.run();
+      cache.remember(query, statement);
+      return await materializeResultRows(result);
+    } catch (error) {
+      cache.evict(query);
+      throw error;
+    }
+  });
 }
 
 type StreamResultLike = ResultTypeMetadataLike & {

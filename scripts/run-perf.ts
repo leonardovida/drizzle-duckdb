@@ -16,7 +16,7 @@ type CliArgs = {
   runFilters: string[];
 };
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const runFilters: string[] = [];
   let ghaOutput: string | undefined;
 
@@ -80,10 +80,10 @@ async function writeJson(
   await fs.writeFile(outPath, JSON.stringify(rows, null, 2) + '\n', 'utf8');
 }
 
-async function runVitest(
+export function buildVitestArgs(
   outputJson: string,
   runFilters: string[]
-): Promise<void> {
+): string[] {
   const args = [
     'x',
     'vitest',
@@ -93,15 +93,18 @@ async function runVitest(
     '--no-file-parallelism',
     '--outputJson',
     outputJson,
+    '--run',
   ];
 
-  if (runFilters.length) {
-    for (const filter of runFilters) {
-      args.push('--run', filter);
-    }
-  } else {
-    args.push('--run', 'test/perf');
-  }
+  args.push(...(runFilters.length ? runFilters : ['test/perf']));
+  return args;
+}
+
+async function runVitest(
+  outputJson: string,
+  runFilters: string[]
+): Promise<void> {
+  const args = buildVitestArgs(outputJson, runFilters);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn('bun', args, { stdio: 'inherit' });
@@ -136,7 +139,9 @@ async function main(): Promise<void> {
   console.log(`Wrote ${rows.length} benchmarks to ${outPath}`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

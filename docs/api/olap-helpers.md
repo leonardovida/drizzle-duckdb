@@ -226,6 +226,8 @@ inspecting MotherDuck Flights through Drizzle SQL templates:
 import {
   mdAccessTokens,
   mdCreateFlight,
+  mdGetFlightLogs,
+  mdGetFlightRun,
   mdListFlightRuns,
   mdListFlights,
 } from '@duckdbfan/drizzle-duckdb';
@@ -255,6 +257,19 @@ const runs = await db.execute(sql`
   select run_number, status, created_at
   from ${mdListFlightRuns(String(flight.flight_id))}
 `);
+
+const [run] = await db.execute(sql`
+  select run_number, status, created_at, ended_at
+  from ${mdGetFlightRun(String(flight.flight_id), 1)}
+`);
+
+const latestLogs = await db.execute(sql`
+  select line_number, reported_at, line
+  from ${mdGetFlightLogs(String(flight.flight_id), 1, {
+    limit: 100,
+    order: 'desc',
+  })}
+`);
 ```
 
 The older Job helper names remain exported as deprecated compatibility aliases.
@@ -263,6 +278,9 @@ result column names where the Flight result uses `flight_*`. The earlier
 `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and `mdFlightVersions()`
 TypeScript helper names remain as deprecated aliases too. New code should use
 the verb-style Flight helpers.
+`mdGetFlightRun()` fetches one run by Flight ID and run number.
+`mdGetFlightLogs()` returns line-oriented logs and accepts `limit`, `offset`,
+and `order: 'asc' | 'desc'` for pagination from either end of the log.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,

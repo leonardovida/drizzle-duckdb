@@ -90,6 +90,29 @@ test('prepare cache reuses prepared statements', async () => {
   await db.close();
 });
 
+test('prepare cache keeps concurrent parameter bindings isolated', async () => {
+  const { connection, db } = await setupDb({ prepareCache: true });
+  const prepareSpy = vi.spyOn(connection, 'prepare');
+
+  const prepared = db
+    .select({ id: sampleTable.id })
+    .from(sampleTable)
+    .where(eq(sampleTable.id, sql.placeholder('pid')))
+    .prepare('concurrent_cached_select');
+
+  await prepared.execute({ pid: -1 });
+  const ids = Array.from({ length: 32 }, (_, index) => (index % 3) + 1);
+  const rows = await Promise.all(
+    ids.map((id) => prepared.execute({ pid: id }))
+  );
+
+  expect(rows).toEqual(ids.map((id) => [{ id }]));
+  expect(prepareSpy.mock.calls.length).toBe(1);
+
+  prepareSpy.mockRestore();
+  await db.close();
+});
+
 test('prepare cache evicts the least recently used statement', async () => {
   const { connection, db } = await setupDb({ prepareCache: 1 });
   const prepareSpy = vi.spyOn(connection, 'prepare');
