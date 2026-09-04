@@ -211,6 +211,7 @@ import {
   mdCreateDive,
   mdCreateFlight,
   mdGetDive,
+  mdGetFlightRun,
   mdListDives,
   mdListFlights,
   mdRunFlight,
@@ -262,6 +263,11 @@ const runs = await db.execute(sql`
     config: { region: 'eu-west-1' },
   })}
 `);
+
+const [run] = await db.execute(sql`
+  select run_number, status, created_at, ended_at
+  from ${mdGetFlightRun(String(flight.flight_id), 1)}
+`);
 ```
 
 The Dives helper family covers the public preview table functions for listing,
@@ -281,6 +287,9 @@ but new code should use the verb-style Flight helpers.
 `line_number`, `reported_at`, and `line` fields. The old blob-shaped
 `MotherDuckFlightLogsRow` type remains exported for the deprecated
 `mdFlightLogs()` and `mdJobRunLogs()` compatibility views.
+Use `mdGetFlightRun()` to fetch one run by its Flight ID and run number. Pass
+`limit`, `offset`, and `order: 'asc' | 'desc'` to `mdGetFlightLogs()` when you
+only need a page of older or newer log lines.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,

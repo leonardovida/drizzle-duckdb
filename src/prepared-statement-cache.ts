@@ -22,6 +22,7 @@ function destroyPreparedStatement(entry: PreparedCacheEntry | undefined): void {
 
 export class PreparedStatementCache {
   private entries = new Map<string, PreparedCacheEntry>();
+  private executionTail: Promise<void> = Promise.resolve();
 
   constructor(
     private connection: DuckDBConnection,
@@ -43,6 +44,23 @@ export class PreparedStatementCache {
     this.remember(query, statement);
 
     return statement;
+  }
+
+  async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    // Binding mutates a native statement. Keep cached statement use serial on
+    // each connection so concurrent callers cannot overwrite one another.
+    const previous = this.executionTail;
+    let release = () => {};
+    this.executionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   remember(

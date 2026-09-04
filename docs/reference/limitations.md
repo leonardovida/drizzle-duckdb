@@ -97,17 +97,17 @@ The driver checks for Postgres JSON columns and throws a descriptive error if fo
 
 ## Prepared Statements
 
-### No Statement Caching
+### Optional Statement Caching
 
-Unlike the Postgres driver, DuckDB doesn't cache prepared statements. Each query is prepared and executed fresh:
+Prepared statements are not cached unless you enable the per-connection cache:
 
 ```typescript
-// These execute as separate preparations
-const result1 = await db.select().from(users).where(eq(users.id, 1));
-const result2 = await db.select().from(users).where(eq(users.id, 2));
+const db = drizzle(connection, { prepareCache: { size: 32 } });
 ```
 
-This has minimal performance impact for most workloads since DuckDB is optimized for analytical queries.
+Cached executions on one connection run serially because binding mutates the
+native prepared statement. Use a connection pool when queries need to run in
+parallel.
 
 ## Result Handling
 

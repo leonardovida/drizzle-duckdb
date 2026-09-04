@@ -55,7 +55,7 @@ repos:
       # Performance benchmark (manual/CI only - takes ~2min)
       - id: perf
         name: Performance benchmark
-        entry: bun run perf:run -- --repeat 3
+        entry: bun run perf:run
         language: system
         pass_filenames: false
         stages: [manual]

@@ -10,6 +10,10 @@ import {
   parseArgs,
   renderComparison,
 } from '../scripts/compare-perf.ts';
+import {
+  buildVitestArgs,
+  parseArgs as parseRunArgs,
+} from '../scripts/run-perf.ts';
 
 const tempDirs: string[] = [];
 
@@ -145,5 +149,34 @@ describe('package script targets', () => {
       .filter((target) => !existsSync(join(__dirname, '..', target)));
 
     expect(missingTargets).toEqual([]);
+  });
+});
+
+describe('run-perf', () => {
+  test('passes one run flag followed by all benchmark filters', () => {
+    const args = buildVitestArgs('/tmp/bench.json', [
+      'test/perf/query.bench.ts',
+      'test/perf/pool.bench.ts',
+    ]);
+
+    expect(args.filter((arg) => arg === '--run')).toHaveLength(1);
+    expect(args.slice(-3)).toEqual([
+      '--run',
+      'test/perf/query.bench.ts',
+      'test/perf/pool.bench.ts',
+    ]);
+  });
+
+  test('parses benchmark output and filters separately', () => {
+    expect(
+      parseRunArgs([
+        '--gha-output',
+        'action-bench.json',
+        'test/perf/query.bench.ts',
+      ])
+    ).toEqual({
+      ghaOutput: 'action-bench.json',
+      runFilters: ['test/perf/query.bench.ts'],
+    });
   });
 });
