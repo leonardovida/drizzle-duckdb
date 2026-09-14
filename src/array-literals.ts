@@ -22,7 +22,11 @@ export function coerceArrayString(value: string): unknown[] | undefined {
   }
 
   if (isPgArrayLiteral(trimmed)) {
-    const json = trimmed.replace(/{/g, '[').replace(/}/g, ']');
+    // Only structural braces become JSON brackets. Quoted element contents,
+    // including escaped quotes and backslashes, must remain unchanged.
+    const json = trimmed.replace(/"(?:\\.|[^"\\])*"|[{}]/g, (token) =>
+      token === '{' ? '[' : token === '}' ? ']' : token
+    );
     return parseArrayJson(json);
   }
 
