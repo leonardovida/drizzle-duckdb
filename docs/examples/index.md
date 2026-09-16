@@ -12,6 +12,16 @@ This section showcases complete, runnable examples demonstrating Drizzle DuckDB 
 
 ## Available Examples
 
+### [Parquet Analytics]({{ '/examples/parquet-analytics' | relative_url }})
+
+Query local Parquet exports directly with typed selections, schema union,
+Hive partitions, filters, and grouped measures. The example creates and removes
+its own fixtures and requires no cloud account.
+
+```bash
+bun example/parquet-analytics.ts
+```
+
 ### [Analytics Dashboard]({{ '/examples/analytics-dashboard' | relative_url }})
 
 A comprehensive example showing:
