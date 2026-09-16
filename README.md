@@ -455,6 +455,8 @@ See [Limitations Documentation](https://leonardovida.github.io/drizzle-duckdb/re
 
 ## Examples
 
+- **[Parquet Analytics](./example/parquet-analytics.ts)**: Compose typed selections and grouped measures over evolving Parquet files without importing tables
+
 - **[MotherDuck NYC Taxi](./example/motherduck-nyc.ts)**: Query the built-in NYC taxi dataset from MotherDuck cloud
 - **[Analytics Dashboard](./example/analytics-dashboard.ts)**: Local in-memory analytics with DuckDB types and Parquet loading
 
