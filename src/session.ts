@@ -303,11 +303,11 @@ export class DuckDBSession<
     try {
       await tx.execute(sql`BEGIN TRANSACTION;`);
 
-      if (config) {
-        await tx.setTransaction(config);
-      }
-
       try {
+        // Setup failures must roll back before the connection is reused.
+        if (config) {
+          await tx.setTransaction(config);
+        }
         const result = await transaction(tx);
         if (session.isRollbackOnly()) {
           throw new TransactionRollbackError();
