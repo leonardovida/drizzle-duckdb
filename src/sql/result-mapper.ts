@@ -17,6 +17,7 @@ import {
   PgTimestampString,
 } from 'drizzle-orm/pg-core';
 import { assignOwnProperty } from '../own-property.ts';
+import { timeFromMicros } from '../time.ts';
 
 type SQLInternal<T = unknown> = SQL<T> & {
   decoder: DriverValueDecoder<T, any>;
@@ -239,9 +240,7 @@ export function normalizeDateValue(value: unknown): Date | unknown {
 
 export function normalizeTime(value: unknown): string | unknown {
   if (typeof value === 'bigint') {
-    const totalMillis = Number(value) / 1000;
-    const date = new Date(totalMillis);
-    return date.toISOString().split('T')[1]!.replace('Z', '');
+    return timeFromMicros(value);
   }
   if (value instanceof Date) {
     return value.toISOString().split('T')[1]!.replace('Z', '');

@@ -17,6 +17,7 @@ import {
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
+import { timeFromMicros } from './time.ts';
 
 export { coerceArrayString } from './array-literals.ts';
 
@@ -576,9 +577,7 @@ export const duckDbTime = (name: string, options: TimeOptions = {}) =>
     },
     fromDriver(value: string | bigint) {
       if (typeof value === 'bigint') {
-        const totalMillis = Number(value) / 1000;
-        const date = new Date(totalMillis);
-        return date.toISOString().split('T')[1]!.replace('Z', '');
+        return timeFromMicros(value);
       }
       return value;
     },
