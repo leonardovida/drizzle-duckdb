@@ -89,20 +89,21 @@ export class DuckDBDialect extends PgDialect {
   ): Promise<void> {
     const migrationConfig = normalizeMigrationConfig(config);
     const migrationsSchema = migrationConfig.migrationsSchema ?? 'drizzle';
-    const migrationsTable =
+    const migrationsTableName =
       migrationConfig.migrationsTable ?? '__drizzle_migrations';
-    const migrationsSequence = `${migrationsTable}_id_seq`;
+    const migrationsSequence = `${migrationsTableName}_id_seq`;
     const legacySequence = 'migrations_pk_seq';
 
     const escapeIdentifier = (value: string) => value.replace(/"/g, '""');
     const sequenceLiteral = `"${escapeIdentifier(
       migrationsSchema
     )}"."${escapeIdentifier(migrationsSequence)}"`;
+    const migrationTable = sql`${sql.identifier(
+      migrationsSchema
+    )}.${sql.identifier(migrationsTableName)}`;
 
     const migrationTableCreate = sql`
-      CREATE TABLE IF NOT EXISTS ${sql.identifier(migrationsSchema)}.${sql.identifier(
-        migrationsTable
-      )} (
+      CREATE TABLE IF NOT EXISTS ${migrationTable} (
         id integer PRIMARY KEY default nextval('${sql.raw(sequenceLiteral)}'),
         hash text NOT NULL,
         created_at bigint
@@ -131,9 +132,7 @@ export class DuckDBDialect extends PgDialect {
       hash: string;
       created_at: string;
     }>(
-      sql`select id, hash, created_at from ${sql.identifier(
-        migrationsSchema
-      )}.${sql.identifier(migrationsTable)} order by created_at desc limit 1`
+      sql`select id, hash, created_at from ${migrationTable} order by created_at desc limit 1`
     );
 
     const lastDbMigration = dbMigrations[0];
@@ -149,11 +148,7 @@ export class DuckDBDialect extends PgDialect {
           }
 
           await tx.execute(
-            sql`insert into ${sql.identifier(
-              migrationsSchema
-            )}.${sql.identifier(
-              migrationsTable
-            )} ("hash", "created_at") values(${migration.hash}, ${
+            sql`insert into ${migrationTable} ("hash", "created_at") values(${migration.hash}, ${
               migration.folderMillis
             })`
           );
