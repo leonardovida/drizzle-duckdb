@@ -67,6 +67,13 @@ describe('parseStructFields', () => {
     expect(result).toEqual([{ name: 'my_field', type: 'VARCHAR' }]);
   });
 
+  test('parses commas and escaped quotes in field names', () => {
+    expect(parseStructFields('"a,b" INTEGER, "say""hi" VARCHAR')).toEqual([
+      { name: 'a,b', type: 'INTEGER' },
+      { name: 'say"hi', type: 'VARCHAR' },
+    ]);
+  });
+
   test('returns empty array for empty string', () => {
     const result = parseStructFields('');
     expect(result).toEqual([]);
@@ -159,6 +166,13 @@ describe('splitTopLevel', () => {
   test('preserves nested parentheses', () => {
     const result = splitTopLevel('a(1,2), b', ',');
     expect(result).toEqual(['a(1,2)', ' b']);
+  });
+
+  test('ignores separators and parentheses inside quoted names', () => {
+    expect(splitTopLevel('"a,b(" INT, "say""hi" TEXT', ',')).toEqual([
+      '"a,b(" INT',
+      ' "say""hi" TEXT',
+    ]);
   });
 
   test('handles multiple nesting levels', () => {

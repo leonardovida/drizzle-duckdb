@@ -56,6 +56,12 @@ beforeAll(async () => {
       unique(unique_pair, parent_id)
     )
   `);
+
+  await db.execute(sql`
+    create table introspect.quoted_struct (
+      payload struct("a,b" integer, "say""hi" varchar, ordinary integer)
+    )
+  `);
 });
 
 afterAll(() => {
@@ -112,4 +118,14 @@ test('introspects duckdb catalog and maps duckdb-specific types', async () => {
     true
   );
   expect(itemsTable?.constraints.some((c) => c.type === 'UNIQUE')).toBe(true);
+});
+
+test('preserves quoted STRUCT fields in generated schema', async () => {
+  const result = await introspect(drizzle(ctx.connection), {
+    schemas: ['introspect'],
+  });
+
+  expect(result.files.schemaTs).toContain(
+    'duckDbStruct("payload", { "a,b": "INTEGER", "say\\"hi": "VARCHAR", "ordinary": "INTEGER" })'
+  );
 });

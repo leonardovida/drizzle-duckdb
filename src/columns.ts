@@ -105,12 +105,12 @@ function parseStructSchema(
     const trimmed = part.trim();
     if (!trimmed) continue;
     const match =
-      /^"([^"]+)"\s+(.*)$/i.exec(trimmed) ??
+      /^"((?:[^"]|"")+)"\s+(.*)$/i.exec(trimmed) ??
       /^([^\s"]+)\s+(.*)$/i.exec(trimmed);
     if (!match) continue;
 
     const [, key, type] = match;
-    fields[key] = type.trim() as Primitive;
+    fields[key.replace(/""/g, '"')] = type.trim() as Primitive;
   }
 
   return fields;
@@ -303,7 +303,7 @@ export const duckDbStruct = <TData extends Record<string, any>>(
   customType<{ data: TData; driverData: TData }>({
     dataType() {
       const fields = Object.entries(schema).map(
-        ([key, type]) => `${key} ${type}`
+        ([key, type]) => `"${key.replace(/"/g, '""')}" ${type}`
       );
 
       return `STRUCT (${fields.join(', ')})`;

@@ -988,13 +988,16 @@ export function parseStructFields(
     const trimmed = part.trim();
     if (!trimmed) continue;
     const match =
-      /^"([^"]+)"\s+(.*)$/i.exec(trimmed) ??
+      /^"((?:[^"]|"")+)"\s+(.*)$/i.exec(trimmed) ??
       /^([^\s"]+)\s+(.*)$/i.exec(trimmed);
     if (!match) {
       continue;
     }
     const [, name, type] = match;
-    result.push({ name, type: normalizeTypeLiteral(type) });
+    result.push({
+      name: name.replace(/""/g, '"'),
+      type: normalizeTypeLiteral(type),
+    });
   }
   return result;
 }
