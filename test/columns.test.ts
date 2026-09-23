@@ -130,6 +130,28 @@ test('struct column: property access by name', async () => {
   assert.deepEqual(result2, [{ id: 1, name: 'Carmac, John' }]);
 });
 
+test('quoted struct fields round trip through generated column type', async () => {
+  const { db } = ctx;
+  const quotedStructTable = pgTable('quoted_struct_roundtrip', {
+    payload: duckDbStruct<{ 'a,b': number; 'say"hi': string }>('payload', {
+      'a,b': 'INTEGER',
+      'say"hi': 'VARCHAR',
+    }),
+  });
+
+  await db.execute(
+    sql.raw(
+      `create table quoted_struct_roundtrip (payload ${quotedStructTable.payload.getSQLType()})`
+    )
+  );
+  await db.insert(quotedStructTable).values({
+    payload: { 'a,b': 7, 'say"hi': 'hello' },
+  });
+
+  const rows = await db.select().from(quotedStructTable);
+  assert.deepEqual(rows, [{ payload: { 'a,b': 7, 'say"hi': 'hello' } }]);
+});
+
 test('struct column: nested list property', async () => {
   const { db } = ctx;
 
