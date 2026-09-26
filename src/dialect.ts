@@ -127,34 +127,57 @@ export class DuckDBDialect extends PgDialect {
     }
     await session.execute(migrationTableCreate);
 
-    const dbMigrations = await session.all<{
-      id: number;
-      hash: string;
-      created_at: string;
-    }>(
-      sql`select id, hash, created_at from ${migrationTable} order by created_at desc limit 1`
+    // Concurrent migrators must not commit the same migration twice.
+    await session.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
+        `${migrationsTableName}_created_at_unique`
+      )} ON ${migrationTable} (created_at)`
     );
 
-    const lastDbMigration = dbMigrations[0];
+    const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;
 
-    await session.transaction(async (tx) => {
-      for await (const migration of migrations) {
-        if (
-          !lastDbMigration ||
-          Number(lastDbMigration.created_at) < migration.folderMillis
-        ) {
-          for (const stmt of migration.sql) {
-            await tx.execute(sql.raw(stmt));
+    try {
+      await session.transaction(async (tx) => {
+        const dbMigrations = (await tx.execute(latestMigrationQuery)) as {
+          hash: string;
+          created_at: string;
+        }[];
+        const lastDbMigration = dbMigrations[0];
+
+        for (const migration of migrations) {
+          if (
+            !lastDbMigration ||
+            Number(lastDbMigration.created_at) < migration.folderMillis
+          ) {
+            for (const stmt of migration.sql) {
+              await tx.execute(sql.raw(stmt));
+            }
+
+            await tx.execute(
+              sql`insert into ${migrationTable} ("hash", "created_at") values(${migration.hash}, ${
+                migration.folderMillis
+              })`
+            );
           }
-
-          await tx.execute(
-            sql`insert into ${migrationTable} ("hash", "created_at") values(${migration.hash}, ${
-              migration.folderMillis
-            })`
-          );
+        }
+      });
+    } catch (error) {
+      // Another migrator may have committed while this transaction ran.
+      const latestMigration = migrations.at(-1);
+      if (latestMigration) {
+        const [applied] = await session.all<{
+          hash: string;
+          created_at: string;
+        }>(latestMigrationQuery);
+        if (
+          applied?.hash === latestMigration.hash &&
+          Number(applied.created_at) === latestMigration.folderMillis
+        ) {
+          return;
         }
       }
-    });
+      throw error;
+    }
   }
 
   override prepareTyping(
