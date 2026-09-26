@@ -276,48 +276,26 @@ function mapDriverValue(
   decoder: DriverValueDecoder<unknown, unknown>,
   rawValue: unknown
 ): unknown {
-  if (is(decoder, PgTimestampString)) {
-    return decoder.mapFromDriverValue(
-      toDecoderInput(
-        decoder,
-        normalizeTimestampString(rawValue, decoder.withTimezone)
-      )
-    );
-  }
+  let normalized = rawValue;
 
-  if (is(decoder, PgTimestamp)) {
-    const normalized = normalizeTimestamp(rawValue, decoder.withTimezone);
+  if (is(decoder, PgTimestampString)) {
+    normalized = normalizeTimestampString(rawValue, decoder.withTimezone);
+  } else if (is(decoder, PgTimestamp)) {
+    normalized = normalizeTimestamp(rawValue, decoder.withTimezone);
     if (normalized instanceof Date) {
       return normalized;
     }
-    return decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+  } else if (is(decoder, PgDateString)) {
+    normalized = normalizeDateString(rawValue);
+  } else if (is(decoder, PgDate)) {
+    normalized = normalizeDateValue(rawValue);
+  } else if (is(decoder, PgTime)) {
+    normalized = normalizeTime(rawValue);
+  } else if (is(decoder, PgInterval)) {
+    normalized = normalizeInterval(rawValue);
   }
 
-  if (is(decoder, PgDateString)) {
-    return decoder.mapFromDriverValue(
-      toDecoderInput(decoder, normalizeDateString(rawValue))
-    );
-  }
-
-  if (is(decoder, PgDate)) {
-    return decoder.mapFromDriverValue(
-      toDecoderInput(decoder, normalizeDateValue(rawValue))
-    );
-  }
-
-  if (is(decoder, PgTime)) {
-    return decoder.mapFromDriverValue(
-      toDecoderInput(decoder, normalizeTime(rawValue))
-    );
-  }
-
-  if (is(decoder, PgInterval)) {
-    return decoder.mapFromDriverValue(
-      toDecoderInput(decoder, normalizeInterval(rawValue))
-    );
-  }
-
-  return decoder.mapFromDriverValue(toDecoderInput(decoder, rawValue));
+  return decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
 }
 
 function mapFieldValue(
