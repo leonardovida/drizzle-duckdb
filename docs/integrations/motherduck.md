@@ -128,6 +128,27 @@ MOTHERDUCK_TOKEN=xxx bunx duckdb-introspect --url md: --all-databases --out ./sc
 
 See [Introspection]({{ '/features/introspection' | relative_url }}) for more details.
 
+## Classify Text with Jev
+
+MotherDuck [`prompt_jev`](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/) classifies text with a yes/no probability, a choice, or a score. Its question settings must be SQL constants, so use `mdPromptJev` when building a query with Drizzle. The input can be a bound string or a column expression.
+
+Use a current `@duckdb/node-api` 1.5.5 client for this function. In live checks, `1.5.5-r.5` resolved `prompt_jev`, while `1.4.4-r.1` did not expose it.
+
+```typescript
+import { mdPromptJev } from '@duckdbfan/drizzle-duckdb';
+import { sql } from 'drizzle-orm';
+
+const rows = await db.execute(sql`
+  select ${mdPromptJev(sql`message`, {
+    instructions: 'Which team should handle this?',
+    choice: ['billing', 'technical', 'sales'],
+  })} as routing
+  from support_messages
+`);
+```
+
+For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. The helper renders the object as a constant SQL STRUCT. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
+
 ## Hybrid Queries
 
 MotherDuck supports hybrid queries that combine local and cloud data:
