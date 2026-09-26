@@ -28,7 +28,7 @@
     }
   },
   "devDependencies": {
-    "@duckdb/node-api": "1.5.5-r.4",
+    "@duckdb/node-api": "1.5.5-r.5",
     "@types/bun": "1.4.0",
     "@types/node": "26.4.1",
     "@vitest/ui": "4.1.11",

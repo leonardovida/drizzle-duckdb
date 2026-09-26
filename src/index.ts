@@ -11,6 +11,7 @@ export * from './options.ts';
 export * from './operators.ts';
 export * from './pgduck.ts';
 export * from './motherduck.ts';
+export * from './jev.ts';
 export {
   configureDuckLake,
   wrapDuckLakePool,
