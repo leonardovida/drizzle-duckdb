@@ -1,16 +1,24 @@
 import {
+  blobValue,
+  DuckDBTypeId,
   JSDuckDBValueConverter,
   JsonDuckDBValueConverter,
   listValue,
+  timestampTZValue,
   timestampValue,
+  type DuckDBArrayType,
   type DuckDBConnection,
   type DuckDBInstance,
+  type DuckDBListType,
+  type DuckDBType,
   type DuckDBValue,
   type DuckDBValueConverter,
 } from '@duckdb/node-api';
 import {
   DUCKDB_VALUE_MARKER,
   type AnyDuckDBValueWrapper,
+  typedNodeApiParam,
+  withNodeApiItemTypeHint,
   wrapperToNodeApiValue,
 } from './value-wrappers.ts';
 import {
@@ -129,6 +137,99 @@ function isNodeApiConnection(
   return typeof (client as DuckDBConnection).run === 'function';
 }
 
+/*
+ * DuckDB closes a connection's open streaming result when the connection runs
+ * another query, and node-api then reports a normal end of stream. Streams
+ * mark their connection so any other query on it fails instead of cutting the
+ * stream short. The same bookkeeping lets close() tell which connections have
+ * a query in flight.
+ */
+const streamingConnections = new WeakSet<object>();
+const activeOperationCounts = new WeakMap<object, number>();
+const closingConnections = new WeakSet<object>();
+
+const STREAMING_CONNECTION_MESSAGE =
+  'This connection is streaming a result from executeBatches(). Finish or break the stream before running another query on the same connection.';
+const CLOSING_CONNECTION_MESSAGE =
+  'DuckDB connection is closed. The query was interrupted or not started because the connection or its pool was closed.';
+
+/** How long close() waits for interrupted queries to settle. */
+const CLOSE_DRAIN_TIMEOUT_MS = 5_000;
+const CLOSE_DRAIN_POLL_MS = 10;
+
+function beginOperation(connection: DuckDBConnection): void {
+  if (closingConnections.has(connection)) {
+    throw new Error(CLOSING_CONNECTION_MESSAGE);
+  }
+  if (streamingConnections.has(connection)) {
+    throw new Error(STREAMING_CONNECTION_MESSAGE);
+  }
+  activeOperationCounts.set(
+    connection,
+    (activeOperationCounts.get(connection) ?? 0) + 1
+  );
+}
+
+function endOperation(connection: DuckDBConnection): void {
+  const remaining = (activeOperationCounts.get(connection) ?? 1) - 1;
+  if (remaining > 0) {
+    activeOperationCounts.set(connection, remaining);
+  } else {
+    activeOperationCounts.delete(connection);
+  }
+}
+
+async function runNodeApiOperation<T>(
+  connection: DuckDBConnection,
+  operation: () => Promise<T>
+): Promise<T> {
+  beginOperation(connection);
+  try {
+    return await operation();
+  } finally {
+    endOperation(connection);
+  }
+}
+
+function isClientConnectionBusy(connection: object): boolean {
+  return activeOperationCounts.has(connection);
+}
+
+/**
+ * Mark a connection as closing and interrupt its running query, if any. New
+ * queries on it fail. Queries in flight reject with DuckDB's interrupt error.
+ */
+function interruptClientConnection(connection: DuckDBExecutionClient): void {
+  if (!isNodeApiConnection(connection)) {
+    return;
+  }
+
+  closingConnections.add(connection);
+  if (isClientConnectionBusy(connection)) {
+    try {
+      (connection as { interrupt?: () => void }).interrupt?.();
+    } catch {
+      // The connection may already be gone. close() handles the rest.
+    }
+  }
+}
+
+/**
+ * Interrupt a closing connection until its queries settle or the timeout
+ * passes. DuckDB drops an interrupt that arrives before a query starts, so it
+ * is sent again while the connection stays busy.
+ */
+async function waitForClientConnectionIdle(
+  connection: DuckDBExecutionClient,
+  timeoutMs: number = CLOSE_DRAIN_TIMEOUT_MS
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (isClientConnectionBusy(connection) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, CLOSE_DRAIN_POLL_MS));
+    interruptClientConnection(connection);
+  }
+}
+
 async function withConnection<T>(
   client: DuckDBClientLike,
   callback: (connection: DuckDBExecutionClient) => Promise<T>
@@ -205,8 +306,12 @@ export function prepareParams(
  * Convert a value to DuckDB Node API value.
  * Handles wrapper types and plain values for backward compatibility.
  * Optimized for the common case (primitives) in the hot path.
+ *
+ * `typeHint` is the declared type of the value when it is an item of a
+ * wrapper with an element type. A Date bound to TIMESTAMPTZ becomes a
+ * TIMESTAMPTZ value, so DuckDB does not read it in the session time zone.
  */
-function toNodeApiValue(value: unknown): DuckDBValue {
+function toNodeApiValue(value: unknown, typeHint?: DuckDBType): DuckDBValue {
   // Fast path 1: null/undefined
   if (value == null) return null;
 
@@ -226,22 +331,80 @@ function toNodeApiValue(value: unknown): DuckDBValue {
 
   // Legacy path: plain arrays (backward compatibility)
   if (Array.isArray(value)) {
-    return listValue(value.map((inner) => toNodeApiValue(inner)));
+    const itemType =
+      typeHint?.typeId === DuckDBTypeId.LIST ||
+      typeHint?.typeId === DuckDBTypeId.ARRAY
+        ? (typeHint as DuckDBListType | DuckDBArrayType).valueType
+        : undefined;
+    return withNodeApiItemTypeHint(
+      listValue(value.map((inner) => toNodeApiValue(inner, itemType))),
+      itemType
+    );
   }
 
-  // Date conversion to timestamp
+  // Date conversion to timestamp. A bare Date binds as a naive UTC TIMESTAMP.
   if (value instanceof Date) {
-    return timestampValue(BigInt(value.getTime()) * 1000n);
+    const millis = value.getTime();
+    if (Number.isNaN(millis)) {
+      throw new Error('Invalid Date parameter: cannot bind an invalid Date');
+    }
+    const micros = BigInt(millis) * 1000n;
+    return typeHint?.typeId === DuckDBTypeId.TIMESTAMP_TZ
+      ? timestampTZValue(micros)
+      : timestampValue(micros);
+  }
+
+  if (value instanceof Uint8Array) {
+    // node-api expects a plain Uint8Array, as blob wrappers pass it.
+    return blobValue(value instanceof Buffer ? new Uint8Array(value) : value);
   }
 
   // Fallback for unknown objects
   return value as DuckDBValue;
 }
 
-function toNodeApiValues(params: unknown[]): DuckDBValue[] | undefined {
-  return params.length > 0
-    ? (params.map((param) => toNodeApiValue(param)) as DuckDBValue[])
-    : undefined;
+type NodeApiParams = {
+  values: DuckDBValue[] | undefined;
+  /**
+   * Explicit bind types, as a sparse array. node-api infers the type of a
+   * param whose entry is empty.
+   */
+  types: DuckDBType[] | undefined;
+};
+
+const NO_NODE_API_PARAMS: NodeApiParams = {
+  values: undefined,
+  types: undefined,
+};
+
+function toNodeApiParams(params: unknown[]): NodeApiParams {
+  if (params.length === 0) {
+    return NO_NODE_API_PARAMS;
+  }
+
+  const values: DuckDBValue[] = new Array(params.length);
+  let types: DuckDBType[] | undefined;
+
+  for (let index = 0; index < params.length; index += 1) {
+    const value = toNodeApiValue(params[index]);
+    values[index] = value;
+
+    // Primitives other than out-of-range integers bind correctly as they are.
+    if (
+      value !== null &&
+      (typeof value === 'object' ||
+        (typeof value === 'number' && !Number.isSafeInteger(value)))
+    ) {
+      const typed = typedNodeApiParam(value);
+      if (typed) {
+        values[index] = typed.value;
+        types ??= new Array(params.length);
+        types[index] = typed.type;
+      }
+    }
+  }
+
+  return { values, types };
 }
 
 function wrapperToPgDuckValue(wrapper: AnyDuckDBValueWrapper): unknown {
@@ -453,6 +616,17 @@ function wrapUnsupportedNodeApiTypeError(
 }
 
 /**
+ * TIMESTAMP_NS, TIME_TZ and TIME_NS columns read as DuckDB strings, which keep
+ * the precision a JS value would lose. Every other column keeps its JS value,
+ * so a column's shape does not depend on what else is selected. Nested values
+ * use the JS converter, as they do in a result without such columns.
+ */
+const PerColumnValueConverter: DuckDBValueConverter<unknown> = (value, type) =>
+  JSON_RESULT_TYPE_IDS.has(type.typeId)
+    ? JsonDuckDBValueConverter(value, type, JsonDuckDBValueConverter)
+    : JSDuckDBValueConverter(value, type, JSDuckDBValueConverter);
+
+/**
  * Reading chunks consumes a node-api result, so a reader that fails partway
  * must not be retried on the same result: the retry sees no rows. Convert the
  * fetched chunks instead, which can be retried with another converter.
@@ -473,7 +647,7 @@ function convertChunkRows(
 
   if (preferJson) {
     try {
-      return convert(JsonDuckDBValueConverter);
+      return convert(PerColumnValueConverter);
     } catch {
       // Fall back when precision-preserving materialization is unavailable.
     }
@@ -531,18 +705,41 @@ async function materializeResultRows(
   return { columns, rows };
 }
 
+/**
+ * DuckDB prepares one statement at a time. SQL with several statements, or
+ * with only comments, cannot be cached and runs through connection.run().
+ */
+function isUnpreparableQueryError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /Cannot prepare multiple statements at once|No statement to prepare/.test(
+      error.message
+    )
+  );
+}
+
 async function executePreparedQuery(
   connection: DuckDBConnection,
   query: string,
-  values: DuckDBValue[] | undefined,
+  { values, types }: NodeApiParams,
   cacheConfig: PreparedStatementCacheConfig
 ): Promise<MaterializedRows> {
   const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
   return await cache.runExclusive(async () => {
+    let statement;
     try {
-      const statement = await cache.getOrPrepare(query);
-      bindPreparedStatement(statement, values);
+      statement = await cache.getOrPrepare(query);
+    } catch (error) {
+      if (!isUnpreparableQueryError(error)) {
+        throw error;
+      }
+      const result = await connection.run(query, values, types);
+      return await materializeResultRows(result);
+    }
+
+    try {
+      bindPreparedStatement(statement, values, types);
       const result = await statement.run();
       cache.remember(query, statement);
       return await materializeResultRows(result);
@@ -577,9 +774,9 @@ async function* yieldChunkRows(
     let rows: unknown[][] | undefined;
     if (useJson) {
       try {
-        rows = chunk.convertRows(JsonDuckDBValueConverter);
+        rows = chunk.convertRows(PerColumnValueConverter);
       } catch (error) {
-        // Earlier chunks used JSON values; switching now would mix formats.
+        // Earlier chunks used string values. Switching now would mix formats.
         if (yieldedRows) {
           throw error;
         }
@@ -618,19 +815,25 @@ async function materializeRows(
       return await materializePgDuckRows(connection, query, params);
     }
 
-    const values = toNodeApiValues(params);
+    return await runNodeApiOperation(connection, async () => {
+      const nodeApiParams = toNodeApiParams(params);
 
-    if (options.prepareCache && typeof connection.prepare === 'function') {
-      return await executePreparedQuery(
-        connection,
+      if (options.prepareCache && typeof connection.prepare === 'function') {
+        return await executePreparedQuery(
+          connection,
+          query,
+          nodeApiParams,
+          options.prepareCache
+        );
+      }
+
+      const result = await connection.run(
         query,
-        values,
-        options.prepareCache
+        nodeApiParams.values,
+        nodeApiParams.types
       );
-    }
-
-    const result = await connection.run(query, values);
-    return await materializeResultRows(result);
+      return await materializeResultRows(result);
+    });
   });
 }
 
@@ -639,12 +842,32 @@ type NormalizedPgDuckResult = {
   fields?: PgDuckField[];
 };
 
+function isPgDuckQueryResult(value: unknown): value is PgDuckQueryResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Array.isArray((value as PgDuckQueryResult).rows) &&
+    'fields' in value &&
+    ('command' in value || 'rowCount' in value)
+  );
+}
+
 function normalizePgDuckResult(
   result: PgDuckQueryResult | unknown[]
 ): NormalizedPgDuckResult {
-  return Array.isArray(result)
-    ? { rows: result, fields: undefined }
-    : { rows: result.rows, fields: result.fields };
+  if (!Array.isArray(result)) {
+    return { rows: result.rows, fields: result.fields };
+  }
+
+  // node-postgres returns one Result per statement for multi-statement SQL.
+  // Use the last statement's rows, as node-api does.
+  const last = result[result.length - 1];
+  if (isPgDuckQueryResult(last)) {
+    return { rows: last.rows, fields: last.fields };
+  }
+
+  return { rows: result, fields: undefined };
 }
 
 function getPgDuckFieldNames(fields: PgDuckField[] | undefined): string[] {
@@ -677,6 +900,11 @@ function materializePgDuckResultRows(
 
   const firstRow = rows[0];
   if (Array.isArray(firstRow)) {
+    if (fieldColumns.length === 0 && firstRow.length > 0) {
+      throw new Error(
+        'pg_duckdb client returned array rows without field metadata. Return `fields` with rowMode "array" results, or return object rows.'
+      );
+    }
     return materializedRows(fieldColumns, rows as unknown[][]);
   }
 
@@ -748,10 +976,18 @@ function mapRowsToColumnData(
   return columnData;
 }
 
+/**
+ * Close a connection. A query still running on a node-api connection is
+ * interrupted first, because disconnecting under it leaves its promise
+ * pending forever. `drainTimeoutMs` bounds the wait for it to settle.
+ */
 export async function closeClientConnection(
-  connection: DuckDBExecutionClient
+  connection: DuckDBExecutionClient,
+  drainTimeoutMs: number = CLOSE_DRAIN_TIMEOUT_MS
 ): Promise<void> {
   if (isNodeApiConnection(connection)) {
+    interruptClientConnection(connection);
+    await waitForClientConnectionIdle(connection, drainTimeoutMs);
     clearPreparedStatementCache(connection);
   }
 
@@ -891,60 +1127,94 @@ async function* streamRawBatches(
         return;
       }
 
-      const values = toNodeApiValues(params);
-
-      const result = (await connection.stream(
-        query,
-        values
-      )) as StreamResultLike;
-      const columns = resolveResultColumns(result);
-      const fetchChunk =
-        typeof result.fetchChunk === 'function'
-          ? result.fetchChunk.bind(result)
-          : undefined;
-      const preferJson =
-        prefersJsonMaterialization(result) &&
-        typeof result.yieldRowsJson === 'function';
+      // Mark the connection until the stream ends, is broken or throws.
+      beginOperation(connection);
+      streamingConnections.add(connection);
+      let result: StreamResultLike | undefined;
 
       try {
-        try {
-          if (fetchChunk) {
-            yield* chunkRowStream(
-              yieldChunkRows(fetchChunk, prefersJsonMaterialization(result)),
-              columns,
-              rowsPerChunk
-            );
-            return;
-          }
-
-          if (preferJson) {
-            let yieldedJsonRows = false;
-            try {
-              for await (const chunk of chunkRowStream(
-                result.yieldRowsJson!(),
-                columns,
-                rowsPerChunk
-              )) {
-                yieldedJsonRows = true;
-                yield chunk;
-              }
-              return;
-            } catch (error) {
-              if (yieldedJsonRows) {
-                throw error;
-              }
-            }
-          }
-
-          yield* chunkRowStream(result.yieldRowsJs(), columns, rowsPerChunk);
-        } catch (error) {
-          throw wrapUnsupportedNodeApiTypeError(result, error);
-        }
+        const { values, types } = toNodeApiParams(params);
+        result = (await connection.stream(
+          query,
+          values,
+          types
+        )) as StreamResultLike;
+        yield* streamNodeApiResult(connection, result, rowsPerChunk);
       } finally {
-        await closeStreamResult(result);
+        if (result) {
+          await closeStreamResult(result);
+        }
+        streamingConnections.delete(connection);
+        endOperation(connection);
       }
     }
   );
+}
+
+async function* streamNodeApiResult(
+  connection: DuckDBConnection,
+  result: StreamResultLike,
+  rowsPerChunk: number
+): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
+  const columns = resolveResultColumns(result);
+  const resultFetchChunk =
+    typeof result.fetchChunk === 'function'
+      ? result.fetchChunk.bind(result)
+      : undefined;
+  // An interrupt from close() ends the stream with an empty chunk, the same
+  // as its real end. Report it as an error instead of a short result.
+  const fetchChunk = resultFetchChunk
+    ? async () => {
+        if (closingConnections.has(connection)) {
+          throw new Error(CLOSING_CONNECTION_MESSAGE);
+        }
+        const chunk = await resultFetchChunk();
+        if (
+          (!chunk || chunk.rowCount === 0) &&
+          closingConnections.has(connection)
+        ) {
+          throw new Error(CLOSING_CONNECTION_MESSAGE);
+        }
+        return chunk;
+      }
+    : undefined;
+  const preferJson =
+    prefersJsonMaterialization(result) &&
+    typeof result.yieldRowsJson === 'function';
+
+  try {
+    if (fetchChunk) {
+      yield* chunkRowStream(
+        yieldChunkRows(fetchChunk, prefersJsonMaterialization(result)),
+        columns,
+        rowsPerChunk
+      );
+      return;
+    }
+
+    if (preferJson) {
+      let yieldedJsonRows = false;
+      try {
+        for await (const chunk of chunkRowStream(
+          result.yieldRowsJson!(),
+          columns,
+          rowsPerChunk
+        )) {
+          yieldedJsonRows = true;
+          yield chunk;
+        }
+        return;
+      } catch (error) {
+        if (yieldedJsonRows) {
+          throw error;
+        }
+      }
+    }
+
+    yield* chunkRowStream(result.yieldRowsJs(), columns, rowsPerChunk);
+  } catch (error) {
+    throw wrapUnsupportedNodeApiTypeError(result, error);
+  }
 }
 
 /**
@@ -989,44 +1259,43 @@ export async function executeArrowOnClient(
       return mapRowsToColumnData(columns, rows);
     }
 
-    const values = toNodeApiValues(params);
-    const result = await connection.run(query, values);
+    return await runNodeApiOperation(connection, async () => {
+      const { values, types } = toNodeApiParams(params);
+      const result = await connection.run(query, values, types);
 
-    // Runtime detection for Arrow API support (optional method, not in base type)
-    const maybeArrow =
-      (result as unknown as { toArrow?: () => Promise<unknown> }).toArrow ??
-      (result as unknown as { getArrowTable?: () => Promise<unknown> })
-        .getArrowTable;
+      // Runtime detection for Arrow API support (optional method, not in base type)
+      const maybeArrow =
+        (result as unknown as { toArrow?: () => Promise<unknown> }).toArrow ??
+        (result as unknown as { getArrowTable?: () => Promise<unknown> })
+          .getArrowTable;
 
-    if (typeof maybeArrow === 'function') {
-      return await maybeArrow.call(result);
-    }
+      if (typeof maybeArrow === 'function') {
+        return await maybeArrow.call(result);
+      }
 
-    // Fallback: return column-major JS arrays to avoid per-row object creation.
-    const resultMetadata = result as unknown as ResultTypeMetadataLike &
-      ResultChunksLike;
-    if (hasFetchAllChunks(resultMetadata)) {
-      const rows = await readResultChunkRows(resultMetadata);
-      return mapRowsToColumnData(
-        resultMetadata.deduplicatedColumnNames?.() ??
-          resultMetadata.columnNames(),
-        rows
-      );
-    }
+      // Fallback: return column-major JS arrays to avoid per-row object creation.
+      const resultMetadata = result as unknown as ResultTypeMetadataLike &
+        ResultChunksLike;
+      if (hasFetchAllChunks(resultMetadata)) {
+        const rows = await readResultChunkRows(resultMetadata);
+        // Name duplicate columns the same way execute() does.
+        return mapRowsToColumnData(resolveResultColumns(resultMetadata), rows);
+      }
 
-    const resultJsonRows = result as ResultJsonRowsLike;
-    const getColumnsObjectJson =
-      typeof resultJsonRows.getColumnsObjectJson === 'function'
-        ? resultJsonRows.getColumnsObjectJson.bind(result)
-        : undefined;
-    return await readPreferredResult({
-      readDefault: () => result.getColumnsObjectJS(),
-      readPreferred:
-        prefersJsonMaterialization(resultMetadata) && getColumnsObjectJson
-          ? () => getColumnsObjectJson()
-          : undefined,
-      wrapError: (error) =>
-        wrapUnsupportedNodeApiTypeError(resultMetadata, error),
+      const resultJsonRows = result as ResultJsonRowsLike;
+      const getColumnsObjectJson =
+        typeof resultJsonRows.getColumnsObjectJson === 'function'
+          ? resultJsonRows.getColumnsObjectJson.bind(result)
+          : undefined;
+      return await readPreferredResult({
+        readDefault: () => result.getColumnsObjectJS(),
+        readPreferred:
+          prefersJsonMaterialization(resultMetadata) && getColumnsObjectJson
+            ? () => getColumnsObjectJson()
+            : undefined,
+        wrapError: (error) =>
+          wrapUnsupportedNodeApiTypeError(resultMetadata, error),
+      });
     });
   });
 }

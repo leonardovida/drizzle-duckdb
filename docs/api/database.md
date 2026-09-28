@@ -210,6 +210,8 @@ The transaction object `tx` also has `executeBatches()`, `executeBatchesRaw()` a
 
 Stream a query in chunks of row objects instead of materializing the whole result. `rowsPerChunk` defaults to 100,000. On a pool, one connection is held until the generator finishes.
 
+While the stream is open, its connection cannot run other queries. DuckDB would close the open result, so on a single connection or inside a transaction any other query throws `This connection is streaming a result from executeBatches()` until the loop finishes or breaks. On a pool outside a transaction, other queries run on other connections.
+
 ```typescript
 for await (const chunk of db.executeBatches<{ id: number }>(
   sql`select id from ${ordersTable} order by id`,
@@ -256,6 +258,8 @@ try {
 ```
 
 If you passed your own client, `close()` closes that client too, but not the `DuckDBInstance` it came from.
+
+Queries still running when you call `close()` are interrupted and reject with DuckDB's interrupt error. `close()` waits up to 5 seconds for them to settle before it disconnects. An open `executeBatches()` loop throws on its next chunk, and new queries on the closed connections throw.
 
 ### $client and $instance
 

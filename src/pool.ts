@@ -68,18 +68,52 @@ type PooledConnection = ConnectionMetadata & {
 type WaitingRequest = {
   resolve: (conn: DuckDBConnection) => void;
   reject: (error: Error) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
+  timeoutId: ReturnType<typeof setTimeout> | undefined;
 };
 
 const POOL_CLOSED_MESSAGE = 'DuckDB connection pool is closed';
+
+/** The largest delay setTimeout accepts. Larger values fire after 1 ms. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * Resolve acquireTimeout. `0` and `Infinity` wait without a timeout, and
+ * values above the setTimeout limit are clamped to it.
+ */
+function resolveAcquireTimeout(value: number | undefined): number | undefined {
+  if (value === undefined) return 30_000;
+  if (typeof value !== 'number' || Number.isNaN(value) || value < 0) {
+    throw new Error(
+      `acquireTimeout must be a non-negative number of milliseconds, 0 or Infinity for no timeout. Received ${String(value)}`
+    );
+  }
+  if (value === 0 || value === Infinity) return undefined;
+  return Math.min(value, MAX_TIMEOUT_MS);
+}
+
+function resolveMaxWaitingRequests(value: number | undefined): number {
+  if (value === undefined) return 100;
+  if (
+    typeof value !== 'number' ||
+    value < 0 ||
+    (!Number.isInteger(value) && value !== Infinity)
+  ) {
+    throw new Error(
+      `maxWaitingRequests must be a non-negative integer or Infinity. Received ${String(value)}`
+    );
+  }
+  return value;
+}
 
 export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
 ): DuckDBConnectionPool & { size: number } {
   const size = normalizePositiveInteger(options.size, DEFAULT_POOL_SIZE);
-  const acquireTimeout = options.acquireTimeout ?? 30_000;
-  const maxWaitingRequests = options.maxWaitingRequests ?? 100;
+  const acquireTimeout = resolveAcquireTimeout(options.acquireTimeout);
+  const maxWaitingRequests = resolveMaxWaitingRequests(
+    options.maxWaitingRequests
+  );
   const maxLifetimeMs = options.maxLifetimeMs;
   const idleTimeoutMs = options.idleTimeoutMs;
   const setup = options.setup;
@@ -264,20 +298,23 @@ export function createDuckDBConnectionPool(
     }
 
     return await new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        // Remove this waiter from the queue
-        const idx = waiting.findIndex((w) => w.timeoutId === timeoutId);
-        if (idx !== -1) {
-          waiting.splice(idx, 1);
-        }
-        reject(
-          new Error(
-            `DuckDB connection pool acquire timeout after ${acquireTimeout}ms`
-          )
-        );
-      }, acquireTimeout);
+      const waiter: WaitingRequest = { resolve, reject, timeoutId: undefined };
+      if (acquireTimeout !== undefined) {
+        waiter.timeoutId = setTimeout(() => {
+          // Remove this waiter from the queue
+          const idx = waiting.indexOf(waiter);
+          if (idx !== -1) {
+            waiting.splice(idx, 1);
+          }
+          reject(
+            new Error(
+              `DuckDB connection pool acquire timeout after ${acquireTimeout}ms`
+            )
+          );
+        }, acquireTimeout);
+      }
 
-      waiting.push({ resolve, reject, timeoutId });
+      waiting.push(waiter);
     });
   };
 
@@ -343,6 +380,10 @@ export function createDuckDBConnectionPool(
     total = Math.max(0, total - toClose.length);
     toClose.forEach((item) => metadata.delete(item.connection));
 
+    // closeClientConnection interrupts a query still running on a leased
+    // connection and waits (bounded) for it to settle before disconnecting,
+    // so the caller's promise rejects instead of staying pending. A later
+    // release() of these connections is a no-op.
     const active = Array.from(leased);
     leased.clear();
     await Promise.allSettled(

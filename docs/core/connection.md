@@ -262,8 +262,8 @@ const db = drizzle(pool);
 
 Auto-created pools support the same tuning options through `drizzle('path', { pool: { ... } })`, and `createDuckDBConnectionPool` exposes the same controls for manual pools:
 
-- `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time
-- `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full
+- `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time. `0` or `Infinity` waits without a timeout. Negative values and `NaN` throw
+- `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full. `0` allows no waiting and `Infinity` removes the cap
 - `maxLifetimeMs`: recycle connections after this age
 - `idleTimeoutMs`: recycle idle connections after this idle period
 
