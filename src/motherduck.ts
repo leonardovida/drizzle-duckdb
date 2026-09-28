@@ -376,9 +376,23 @@ function motherDuckMapArg(
 
   validateMotherDuckConfigMap(value);
 
-  return sql`MAP(${sql.param(Object.keys(value))}, ${sql.param(
-    Object.values(value)
-  )})`;
+  const keys = Object.keys(value);
+  if (keys.length === 0) {
+    // node-api cannot bind an empty JS array because it infers LIST(ANY).
+    return sql`MAP {}::MAP(VARCHAR, VARCHAR)`;
+  }
+
+  return sql`MAP(${sql.param(keys)}, ${sql.param(Object.values(value))})`;
+}
+
+function motherDuckStringListArg(
+  value: readonly (string | null)[] | SQLWrapper | null | undefined
+): MotherDuckSqlArgument | undefined {
+  if (Array.isArray(value) && value.length === 0) {
+    // node-api cannot bind an empty JS array because it infers LIST(ANY).
+    return sql`CAST([] AS VARCHAR[])`;
+  }
+  return value;
 }
 
 function validateMotherDuckConfigMap(
@@ -509,8 +523,25 @@ function motherDuckJobVersionView(source: SQL): SQL {
   ]);
 }
 
-function motherDuckLegacyFlightLogsView(source: SQL): SQL {
-  return sql`(select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from ${source}) as md_flight_logs`;
+function motherDuckLegacyFlightLogsOrder(
+  order: MotherDuckFlightLogOptions['order']
+): SQL {
+  if (order === 'desc') {
+    return sql`line_number desc`;
+  }
+  if (order !== undefined && isSQLWrapper(order)) {
+    return sql`case when lower(${order}) = 'desc' then -line_number else line_number end`;
+  }
+  return sql`line_number`;
+}
+
+function motherDuckLegacyFlightLogsView(
+  source: SQL,
+  order: MotherDuckFlightLogOptions['order']
+): SQL {
+  return sql`(select coalesce(string_agg(coalesce(line, ''), chr(10) order by ${motherDuckLegacyFlightLogsOrder(
+    order
+  )}), '') as logs from ${source}) as md_flight_logs`;
 }
 
 function motherDuckPagedParams(
@@ -756,7 +787,10 @@ export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
     { name: 'name', value: options.name },
     { name: 'access_token_name', value: options.accessTokenName },
     { name: 'source_code', value: options.sourceCode },
-    { name: 'flight_secret_names', value: options.flightSecretNames },
+    {
+      name: 'flight_secret_names',
+      value: motherDuckStringListArg(options.flightSecretNames),
+    },
     { name: 'schedule_cron', value: options.scheduleCron },
     { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'requirements_txt', value: options.requirementsTxt },
@@ -780,7 +814,10 @@ export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
     { name: 'source_code', value: options.sourceCode },
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'access_token_name', value: options.accessTokenName },
-    { name: 'flight_secret_names', value: options.flightSecretNames },
+    {
+      name: 'flight_secret_names',
+      value: motherDuckStringListArg(options.flightSecretNames),
+    },
     { name: 'max_runtime_sec', value: options.maxRuntimeSec },
   ]);
 }
@@ -862,7 +899,8 @@ export function mdFlightLogs(
   options: MotherDuckFlightLogOptions = {}
 ): SQL {
   return motherDuckLegacyFlightLogsView(
-    mdGetFlightLogs(flightId, runNumber, options)
+    mdGetFlightLogs(flightId, runNumber, options),
+    options.order
   );
 }
 
@@ -973,7 +1011,8 @@ export function mdJobRunLogs(
   options: MotherDuckFlightLogOptions = {}
 ): SQL {
   return motherDuckLegacyFlightLogsView(
-    mdGetFlightLogs(jobId, runNumber, options)
+    mdGetFlightLogs(jobId, runNumber, options),
+    options.order
   );
 }
 

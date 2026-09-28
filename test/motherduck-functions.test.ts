@@ -270,9 +270,9 @@ test('MotherDuck flight helpers emit named-parameter table functions', () => {
   `);
 
   expect(updateFlight.sql).toContain(
-    'from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3, max_runtime_sec = max_runtime_sec + 60)'
+    'from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = CAST([] AS VARCHAR[]), max_runtime_sec = max_runtime_sec + 60)'
   );
-  expect(updateFlight.params).toEqual([flightId, '\n# patched', []]);
+  expect(updateFlight.params).toEqual([flightId, '\n# patched']);
 
   expect(dialect.sqlToQuery(sql`from ${mdGetFlight(flightId)}`).sql).toContain(
     'from md_get_flight(flight_id = $1)'
@@ -359,7 +359,7 @@ test('deprecated MotherDuck flight helper aliases emit supported table functions
   expect(
     dialect.sqlToQuery(sql`from ${mdFlightLogs(flightId, 1)}`).sql
   ).toContain(
-    "from (select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
+    "from (select coalesce(string_agg(coalesce(line, ''), chr(10) order by line_number), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
   );
   expect(
     dialect.sqlToQuery(sql`from ${mdFlightVersions(flightId, { offset: 2 })}`)
@@ -559,9 +559,9 @@ test('deprecated MotherDuck job helpers emit supported Flight functions', () => 
   `);
 
   expect(updateJob.sql).toContain(
-    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = $3)) as md_jobs'
+    'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_update_flight(flight_id = $1, source_code = source_code || $2, flight_secret_names = CAST([] AS VARCHAR[]))) as md_jobs'
   );
-  expect(updateJob.params).toEqual([jobId, '\n# patched', []]);
+  expect(updateJob.params).toEqual([jobId, '\n# patched']);
 
   expect(dialect.sqlToQuery(sql`from ${mdGetJob(jobId)}`).sql).toContain(
     'from (select flight_id as job_id, flight_name as job_name, schedule_cron, schedule_status, status, current_version, created_at, updated_at from md_get_flight(flight_id = $1)) as md_jobs'
@@ -581,7 +581,7 @@ test('deprecated MotherDuck job helpers emit supported Flight functions', () => 
     'from (select run_id, flight_id as job_id, flight_name as job_name, flight_version as job_version, run_number, is_scheduled, status, created_at, started_at, ended_at, scheduled_at, cancelled_at, exit_code from md_list_flight_runs(flight_id = $1, "LIMIT" = $2)) as md_job_runs'
   );
   expect(dialect.sqlToQuery(sql`from ${mdJobRunLogs(jobId, 1)}`).sql).toContain(
-    "from (select coalesce(string_agg(coalesce(line, ''), chr(10)), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
+    "from (select coalesce(string_agg(coalesce(line, ''), chr(10) order by line_number), '') as logs from md_get_flight_logs(flight_id = $1, run_number = $2)) as md_flight_logs"
   );
   expect(
     dialect.sqlToQuery(sql`from ${mdJobVersions(jobId, { offset: 2 })}`).sql

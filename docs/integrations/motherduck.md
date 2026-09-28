@@ -147,7 +147,7 @@ const rows = await db.execute(sql`
 `);
 ```
 
-For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. The helper renders the object as a constant SQL STRUCT. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
+For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. The helper renders the object as a constant SQL STRUCT. It throws on an empty `questions` object, missing or empty `instructions`, an empty criteria list, and a `choice` or `score` question without `criteria`. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
 
 ## Hybrid Queries
 

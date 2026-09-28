@@ -3,8 +3,10 @@ import { sql } from 'drizzle-orm';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../src/driver.ts';
+import { createDuckDBConnectionPool } from '../src/pool.ts';
 
 async function canLoadDuckLake(): Promise<boolean> {
   const instance = await DuckDBInstance.create(':memory:');
@@ -94,6 +96,105 @@ describe.skipIf(!ducklakeAvailable)('DuckLake attach integration', () => {
         )
       ).resolves.toEqual([{ database: 'ducklake' }]);
       expect(warn).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('throws when the main database already uses the DuckLake alias', async () => {
+    // DuckDB names the main database after the file, so it takes the default
+    // "ducklake" alias and ATTACH IF NOT EXISTS would silently do nothing.
+    await expect(
+      drizzle(join(directory, 'ducklake.duckdb'), {
+        pool: false,
+        ducklake: {
+          catalog: join(directory, 'meta.ducklake'),
+          attachOptions: { dataPath: join(directory, 'data') },
+        },
+      })
+    ).rejects.toThrow(
+      /DuckLake alias "ducklake" is already used by a duckdb database .*Set ducklake.alias/
+    );
+
+    const db = await drizzle(join(directory, 'ducklake.duckdb'), {
+      pool: false,
+      ducklake: {
+        catalog: join(directory, 'meta.ducklake'),
+        alias: 'lake',
+        attachOptions: { dataPath: join(directory, 'data') },
+      },
+    });
+    try {
+      await expect(
+        db.execute(sql`select current_database() as database`)
+      ).resolves.toEqual([{ database: 'lake' }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('throws when a shared pool already attached another catalog under the alias', async () => {
+    const instance = await DuckDBInstance.create(':memory:');
+    const pool = createDuckDBConnectionPool(instance, { size: 2 });
+    const first = drizzle({
+      client: pool,
+      ducklake: {
+        catalog: join(directory, 'a.ducklake'),
+        attachOptions: { dataPath: join(directory, 'a-data') },
+      },
+    });
+    const second = drizzle({
+      client: pool,
+      ducklake: {
+        catalog: join(directory, 'b.ducklake'),
+        attachOptions: { dataPath: join(directory, 'b-data') },
+      },
+    });
+    const sameCatalog = drizzle({
+      client: pool,
+      ducklake: {
+        // The same catalog spelled as a file URL still matches.
+        catalog: pathToFileURL(join(directory, 'a.ducklake')).href,
+        attachOptions: { dataPath: join(directory, 'a-data') },
+      },
+    });
+
+    try {
+      await first.execute(sql`create table meant_for_a (id integer)`);
+      await expect(
+        second.execute(sql`create table meant_for_b (id integer)`)
+      ).rejects.toThrow(
+        /DuckLake alias "ducklake" is already attached to catalog '.*a\.ducklake', so catalog '.*b\.ducklake' was not attached/
+      );
+      await expect(
+        sameCatalog.execute<{ total: number }>(
+          sql`select count(*)::int as total from meant_for_a`
+        )
+      ).resolves.toEqual([{ total: 0 }]);
+    } finally {
+      await pool.close();
+      instance.closeSync();
+    }
+  });
+
+  test('metaParameters pass META_ options to the metadata catalog', async () => {
+    const db = await drizzle(':memory:', {
+      ducklake: {
+        catalog: join(directory, 'meta.ducklake'),
+        attachOptions: {
+          dataPath: join(directory, 'data'),
+          metaParameters: { type: 'duckdb' },
+        },
+      },
+    });
+
+    try {
+      await db.execute(sql`create table items (id integer)`);
+      await expect(
+        db.execute<{ type: string }>(
+          sql`select type from duckdb_databases() where database_name = 'ducklake'`
+        )
+      ).resolves.toEqual([{ type: 'ducklake' }]);
     } finally {
       await db.close();
     }
