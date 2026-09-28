@@ -263,9 +263,11 @@ Options:
 - `use` boolean. Optional. Defaults to `true`.
 - `install` boolean. Optional. Defaults to `false`.
 - `load` boolean. Optional. Defaults to `false`.
-- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameterName`, `metadataCatalog`, `overrideDataPath`, and `readOnly`.
+- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. The deprecated `metaParameterName` field throws, because DuckLake has no `META_PARAMETER_NAME` option.
 
-When the DuckLake catalog is local and `pool` is not set, `drizzle()` uses a pool of size 1. A catalog counts as local when it is `:memory:`, ends in `.duckdb`, `.ddb` or `.ducklake`, or looks like a file path. `md:` catalogs, URLs and Postgres, MySQL or SQLite connection strings do not. A larger `pool` works in one process because all connections share the attached catalog and the driver sets up one connection at a time. With a local catalog and a pool size above 1, `drizzle()` logs a `[ducklake]` warning. See [DuckLake pooling]({{ '/integrations/ducklake#pooling-guidance' | relative_url }}).
+The driver throws after the attach when the alias already names a different database, such as a main database file named `ducklake.duckdb` or another DuckLake catalog. Set `alias` to a different name in that case.
+
+When the DuckLake catalog is local and `pool` is not set, `drizzle()` uses a pool of size 1. A catalog counts as local when it is `:memory:`, starts with `duckdb:` or `file:`, or has no scheme and looks like a file path, such as `meta.db` or `./lake/meta`. Catalogs with another scheme, such as `md:`, `s3:`, `postgres:` or `sqlite:`, do not. A bare name such as `my_lake` does not either, because DuckLake reads it as a secret name. A larger `pool` works in one process because all connections share the attached catalog and the driver sets up one connection at a time. With a local catalog and a pool size above 1, `drizzle()` logs a `[ducklake]` warning. See [DuckLake pooling]({{ '/integrations/ducklake#pooling-guidance' | relative_url }}).
 
 ## migrate() Options
 

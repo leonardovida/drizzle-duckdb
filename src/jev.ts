@@ -32,6 +32,7 @@ type JevQuestionOptions = {
 };
 
 type JevSingleQuestionOptions = {
+  questions?: never;
   instructions: string;
   batchSize?: number;
 } & (
@@ -46,16 +47,31 @@ export type MotherDuckPromptJevOptions =
   | JevSingleQuestionOptions;
 
 function constantString(value: string): SQL {
+  if (typeof value !== 'string') {
+    throw new Error('prompt_jev constant arguments must be strings');
+  }
   if (value.includes('\0')) {
     throw new Error('prompt_jev constant arguments cannot contain a NULL byte');
   }
   return sql.raw(`'${value.replaceAll("'", "''")}'`);
 }
 
-function constantCriteria(criteria: MotherDuckJevCriteria): SQL {
-  const values = criteria.map((item) => {
+function constantCriteria(criteria: MotherDuckJevCriteria, name: string): SQL {
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    throw new Error(`prompt_jev ${name} must be a non-empty array`);
+  }
+
+  const values = criteria.map((item: string | MotherDuckJevLabel) => {
     if (typeof item === 'string') {
       return constantString(item);
+    }
+    if (item === null || typeof item !== 'object') {
+      throw new Error(
+        `prompt_jev ${name} items must be strings or { label, description } objects`
+      );
+    }
+    if (typeof item.label !== 'string') {
+      throw new Error(`prompt_jev ${name} labels must be strings`);
     }
 
     return sql`{label: ${constantString(item.label)}, description: ${
@@ -68,16 +84,57 @@ function constantCriteria(criteria: MotherDuckJevCriteria): SQL {
   return sql`[${sql.join(values, sql`, `)}]`;
 }
 
+function requireNonEmptyString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`prompt_jev ${name} must be a non-empty string`);
+  }
+  return value;
+}
+
 function constantQuestions(
   questions: Record<string, MotherDuckJevQuestion>
 ): SQL {
-  const fields = Object.entries(questions).map(([name, question]) => {
+  if (
+    questions === null ||
+    typeof questions !== 'object' ||
+    Array.isArray(questions)
+  ) {
+    throw new Error(
+      'prompt_jev questions must be a JSON string or a record of questions'
+    );
+  }
+
+  const entries = Object.entries(questions);
+  if (entries.length === 0) {
+    throw new Error('prompt_jev questions must contain at least one question');
+  }
+
+  const fields = entries.map(([name, question]) => {
+    if (question === null || typeof question !== 'object') {
+      throw new Error(`prompt_jev question "${name}" must be an object`);
+    }
     const settings = [
-      sql`type: ${constantString(question.type)}`,
-      sql`instructions: ${constantString(question.instructions)}`,
+      sql`type: ${constantString(
+        requireNonEmptyString(question.type, `question "${name}" type`)
+      )}`,
+      sql`instructions: ${constantString(
+        requireNonEmptyString(
+          question.instructions,
+          `question "${name}" instructions`
+        )
+      )}`,
     ];
     if (question.criteria !== undefined) {
-      settings.push(sql`criteria: ${constantCriteria(question.criteria)}`);
+      settings.push(
+        sql`criteria: ${constantCriteria(
+          question.criteria,
+          `question "${name}" criteria`
+        )}`
+      );
+    } else if (question.type === 'choice' || question.type === 'score') {
+      throw new Error(
+        `prompt_jev question "${name}" of type '${question.type}' requires criteria`
+      );
     }
     return sql`${constantString(name)}: {${sql.join(settings, sql`, `)}}`;
   });
@@ -105,7 +162,10 @@ export function mdPromptJev(
     throw new Error('prompt_jev question modes cannot be combined');
   }
 
-  if ('questions' in options) {
+  if (options.questions !== undefined) {
+    if (typeof options.questions === 'string' && !options.questions.trim()) {
+      throw new Error('prompt_jev questions JSON must not be empty');
+    }
     const questions =
       typeof options.questions === 'string'
         ? sql`${constantString(options.questions)}::JSON`
@@ -113,14 +173,17 @@ export function mdPromptJev(
     return sql`prompt_jev(${inputExpression}, questions := ${questions})`;
   }
 
-  const args: SQL[] = [inputExpression, constantString(options.instructions)];
+  const args: SQL[] = [
+    inputExpression,
+    constantString(requireNonEmptyString(options.instructions, 'instructions')),
+  ];
 
   if (options.choice !== undefined) {
-    args.push(sql`choice := ${constantCriteria(options.choice)}`);
+    args.push(sql`choice := ${constantCriteria(options.choice, 'choice')}`);
   } else if (options.score !== undefined) {
-    args.push(sql`score := ${constantCriteria(options.score)}`);
+    args.push(sql`score := ${constantCriteria(options.score, 'score')}`);
   } else if (options.noul !== undefined) {
-    args.push(sql`noul := ${constantCriteria(options.noul)}`);
+    args.push(sql`noul := ${constantCriteria(options.noul, 'noul')}`);
   }
 
   if (options.batchSize !== undefined) {

@@ -95,3 +95,73 @@ test('prompt_jev rejects invalid inlined constants', () => {
     } as unknown as MotherDuckPromptJevOptions)
   ).toThrow(/cannot be combined/);
 });
+
+test('prompt_jev rejects question sets that would produce invalid SQL', () => {
+  expect(() => mdPromptJev('message', { questions: {} })).toThrow(
+    /at least one question/
+  );
+  expect(() => mdPromptJev('message', { questions: '  ' })).toThrow(
+    /questions JSON must not be empty/
+  );
+  expect(() =>
+    mdPromptJev('message', {
+      questions: { team: { type: 'choice', instructions: 'Team?' } },
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/question "team" of type 'choice' requires criteria/);
+  expect(() =>
+    mdPromptJev('message', {
+      questions: {
+        team: { type: 'choice', instructions: 'Team?', criteria: [] },
+      },
+    })
+  ).toThrow(/question "team" criteria must be a non-empty array/);
+  expect(() =>
+    mdPromptJev('message', {
+      questions: { refund: { type: 'noul' } },
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/question "refund" instructions must be a non-empty string/);
+  expect(() =>
+    mdPromptJev('message', {
+      questions: { refund: { instructions: 'Refund?' } },
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/question "refund" type must be a non-empty string/);
+});
+
+test('prompt_jev treats an undefined questions key as single question mode', () => {
+  const query = dialect.sqlToQuery(sql`
+    select ${mdPromptJev('message', {
+      questions: undefined,
+      instructions: 'Refund?',
+    })}
+  `);
+  expect(query.sql).toContain("prompt_jev(CAST($1 AS VARCHAR), 'Refund?')");
+
+  expect(() =>
+    mdPromptJev('message', {
+      questions: undefined,
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/instructions must be a non-empty string/);
+});
+
+test('prompt_jev validates single question instructions and criteria', () => {
+  expect(() =>
+    mdPromptJev('message', {} as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/instructions must be a non-empty string/);
+  expect(() =>
+    mdPromptJev('message', {
+      instructions: 42,
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/instructions must be a non-empty string/);
+  expect(() =>
+    mdPromptJev('message', { instructions: 'Team?', choice: [] })
+  ).toThrow(/choice must be a non-empty array/);
+  expect(() =>
+    mdPromptJev('message', { instructions: 'Severity?', score: [] })
+  ).toThrow(/score must be a non-empty array/);
+  expect(() =>
+    mdPromptJev('message', {
+      instructions: 'Refund?',
+      noul: [{ description: 'missing label' }],
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/noul labels must be strings/);
+});
