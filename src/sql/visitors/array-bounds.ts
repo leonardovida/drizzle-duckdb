@@ -14,6 +14,7 @@ import type {
   Select,
   From,
   Join,
+  OrderBy,
 } from 'node-sql-parser';
 
 function getFunctionName(expr: Record<string, unknown>): string | undefined {
@@ -128,7 +129,10 @@ function walkExpression(
       transformArrayBoundsFunction(exprObj, parent, key) || transformed;
   }
 
-  if ('type' in expr && exprObj.type === 'unary_expr') {
+  if (
+    'type' in expr &&
+    (exprObj.type === 'unary_expr' || exprObj.type === 'cast')
+  ) {
     if ('expr' in exprObj) {
       transformed =
         walkExpression(exprObj.expr as ExpressionValue, exprObj, 'expr') ||
@@ -203,6 +207,51 @@ function walkExpression(
     }
   }
 
+  // ARRAY[...] constructors keep their items in expr_list.
+  if ('type' in expr && exprObj.type === 'array' && exprObj.expr_list) {
+    transformed =
+      walkExpression(
+        exprObj.expr_list as ExpressionValue,
+        exprObj,
+        'expr_list'
+      ) || transformed;
+  }
+
+  return transformed;
+}
+
+function walkList(list: ExpressionValue[]): boolean {
+  let transformed = false;
+  for (let i = 0; i < list.length; i++) {
+    transformed = walkExpression(list[i], list, String(i)) || transformed;
+  }
+  return transformed;
+}
+
+function walkOrderBy(orderby: OrderBy[] | null | undefined): boolean {
+  if (!Array.isArray(orderby)) return false;
+  let transformed = false;
+  for (const order of orderby) {
+    transformed =
+      walkExpression(order.expr as ExpressionValue, order, 'expr') ||
+      transformed;
+  }
+  return transformed;
+}
+
+type UpdateStatement = {
+  set?: Array<{ value?: ExpressionValue }>;
+  from?: From[] | null;
+  where?: ExpressionValue | null;
+};
+
+function walkUpdate(update: UpdateStatement): boolean {
+  let transformed = false;
+  for (const item of update.set ?? []) {
+    transformed = walkExpression(item.value, item, 'value') || transformed;
+  }
+  transformed = walkFrom(update.from) || transformed;
+  transformed = walkExpression(update.where, update, 'where') || transformed;
   return transformed;
 }
 
@@ -264,6 +313,17 @@ function walkSelectImpl(select: Select): boolean {
     }
   }
 
+  // The parser returns GROUP BY as { columns: [...] }.
+  const groupby = select.groupby as
+    | { columns?: ExpressionValue[] | null }
+    | null
+    | undefined;
+  if (Array.isArray(groupby?.columns)) {
+    transformed = walkList(groupby.columns) || transformed;
+  }
+
+  transformed = walkOrderBy(select.orderby) || transformed;
+
   if (select._next) {
     transformed = walkSelectImpl(select._next) || transformed;
   }
@@ -278,6 +338,9 @@ export function transformArrayBounds(ast: AST | AST[]): boolean {
   for (const stmt of statements) {
     if (stmt.type === 'select') {
       transformed = walkSelectImpl(stmt as Select) || transformed;
+    } else if (stmt.type === 'update') {
+      transformed =
+        walkUpdate(stmt as unknown as UpdateStatement) || transformed;
     }
   }
 

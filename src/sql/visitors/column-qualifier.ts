@@ -1,6 +1,17 @@
 /**
  * AST visitor to qualify unqualified column references in JOIN ON clauses.
  *
+ * Stock Drizzle renders an aliased SQL field of a subquery or CTE by its bare
+ * alias, so `eq(table.col, sq.col)` becomes `"table"."col" = "col"`, which
+ * DuckDB rejects as ambiguous. Selects built by this driver already qualify
+ * those fields (see exposeSubqueryFields), so this mostly covers raw SQL. The unqualified side is given to the newly joined
+ * source unless the qualified side already is that source. When that cannot
+ * be decided, the reference is left as it is.
+ *
+ * Other unqualified references to the same name in SELECT, WHERE, GROUP BY,
+ * HAVING and ORDER BY get the qualifier chosen in the ON clause. Names that
+ * were given different qualifiers, and USING columns, are left unqualified.
+ *
  * Performance optimizations:
  * - Early exit when no unqualified columns found in ON clause
  * - Skip processing if all columns are already qualified
@@ -55,10 +66,14 @@ function getTableSource(from: From): TableSource | null {
 }
 
 function getQualifier(source: TableSource): Qualifier {
-  return {
-    table: source.alias ?? source.name,
-    schema: source.schema,
-  };
+  // An alias replaces the schema qualified name: "s"."t" "u" is only "u".
+  return source.alias
+    ? { table: source.alias, schema: null }
+    : { table: source.name, schema: source.schema };
+}
+
+function sameQualifier(left: Qualifier, right: Qualifier): boolean {
+  return left.table === right.table && left.schema === right.schema;
 }
 
 function applyQualifier(col: ColumnRefItem, qualifier: Qualifier): void {
@@ -98,23 +113,54 @@ function unwrapColumnRef(
 }
 
 /**
+ * Qualifier chosen for each unqualified name. `null` marks a name that was
+ * given different qualifiers, so its other references stay unqualified.
+ */
+type ChosenQualifiers = Map<string, Qualifier | null>;
+
+type JoinSides = {
+  /** The source this join adds. */
+  joined: Qualifier;
+  /** The source before it, when there is exactly one. */
+  earlier: Qualifier | null;
+};
+
+function recordChoice(
+  chosen: ChosenQualifiers,
+  name: string,
+  qualifier: Qualifier | null
+): void {
+  const previous = chosen.get(name);
+  if (previous === undefined) {
+    chosen.set(name, qualifier);
+  } else if (
+    previous === null ||
+    qualifier === null ||
+    !sameQualifier(previous, qualifier)
+  ) {
+    chosen.set(name, null);
+  }
+}
+
+/**
  * Pick the qualifier for the unqualified side of `qualified = unqualified`.
- * When the qualified column already belongs to the preferred table, the
- * other column must come from the other side of the join.
+ * It defaults to the newly joined source. When the qualified column already
+ * belongs to that source, the other column comes from an earlier source,
+ * which is only known when there is exactly one.
  */
 function qualifierForUnqualified(
   qualifiedCol: ColumnRefItem,
-  preferred: Qualifier,
-  other: Qualifier
-): Qualifier {
-  return qualifiedCol.table === preferred.table ? other : preferred;
+  sides: JoinSides
+): Qualifier | null {
+  return qualifiedCol.table === sides.joined.table
+    ? sides.earlier
+    : sides.joined;
 }
 
 function walkOnClause(
   expr: Binary | ExpressionValue | null | undefined,
-  leftQualifier: Qualifier,
-  rightQualifier: Qualifier,
-  ambiguousColumns: Set<string>
+  sides: JoinSides,
+  chosen: ChosenQualifiers
 ): boolean {
   if (!expr || typeof expr !== 'object') return false;
 
@@ -138,65 +184,43 @@ function walkOnClause(
 
     if (
       expr.operator === '=' &&
-      leftColName &&
-      rightColName &&
-      leftColName === rightColName
-    ) {
-      if (leftUnqualified && rightUnqualified) {
-        applyQualifier(leftCol!, leftQualifier);
-        applyQualifier(rightCol!, rightQualifier);
-        ambiguousColumns.add(leftColName);
-        transformed = true;
-      } else if (leftQualified && rightUnqualified) {
-        applyQualifier(
-          rightCol!,
-          qualifierForUnqualified(leftCol!, rightQualifier, leftQualifier)
-        );
-        ambiguousColumns.add(rightColName);
-        transformed = true;
-      } else if (leftUnqualified && rightQualified) {
-        applyQualifier(
-          leftCol!,
-          qualifierForUnqualified(rightCol!, leftQualifier, rightQualifier)
-        );
-        ambiguousColumns.add(leftColName);
-        transformed = true;
-      }
-    }
-
-    if (
-      expr.operator === '=' &&
       leftCol &&
       rightCol &&
       leftColName &&
-      rightColName &&
-      leftColName !== rightColName
+      rightColName
     ) {
-      if (leftQualified && rightUnqualified && !rightColName.includes('.')) {
-        applyQualifier(
-          rightCol,
-          qualifierForUnqualified(leftCol, rightQualifier, leftQualifier)
-        );
-        transformed = true;
+      const sameName = leftColName === rightColName;
+
+      if (sameName && leftUnqualified && rightUnqualified) {
+        // `"id" = "id"`: one side per source, which is only known for the
+        // first join. Other bare "id" references could mean either side.
+        if (sides.earlier) {
+          applyQualifier(leftCol, sides.earlier);
+          applyQualifier(rightCol, sides.joined);
+          recordChoice(chosen, leftColName, null);
+          transformed = true;
+        }
       } else if (
-        leftUnqualified &&
-        rightQualified &&
-        !leftColName.includes('.')
+        leftQualified !== rightQualified &&
+        (leftUnqualified || rightUnqualified)
       ) {
-        applyQualifier(
-          leftCol,
-          qualifierForUnqualified(rightCol, leftQualifier, rightQualifier)
-        );
-        transformed = true;
+        const [qualifiedCol, unqualifiedCol, unqualifiedName] = leftQualified
+          ? [leftCol, rightCol, rightColName]
+          : [rightCol, leftCol, leftColName];
+        const qualifier = qualifierForUnqualified(qualifiedCol, sides);
+
+        if (qualifier && (sameName || !unqualifiedName.includes('.'))) {
+          applyQualifier(unqualifiedCol, qualifier);
+          if (sameName) {
+            recordChoice(chosen, unqualifiedName, qualifier);
+          }
+          transformed = true;
+        }
       }
     }
 
-    transformed =
-      walkOnClause(left, leftQualifier, rightQualifier, ambiguousColumns) ||
-      transformed;
-    transformed =
-      walkOnClause(right, leftQualifier, rightQualifier, ambiguousColumns) ||
-      transformed;
+    transformed = walkOnClause(left, sides, chosen) || transformed;
+    transformed = walkOnClause(right, sides, chosen) || transformed;
   }
 
   return transformed;
@@ -204,8 +228,7 @@ function walkOnClause(
 
 function qualifyAmbiguousInExpression(
   expr: ExpressionValue | null | undefined,
-  defaultQualifier: Qualifier,
-  ambiguousColumns: Set<string>
+  chosen: ChosenQualifiers
 ): boolean {
   if (!expr || typeof expr !== 'object') return false;
 
@@ -213,8 +236,9 @@ function qualifyAmbiguousInExpression(
 
   if (isUnqualifiedColumnRef(expr)) {
     const colName = getColumnName(expr);
-    if (colName && ambiguousColumns.has(colName)) {
-      applyQualifier(expr, defaultQualifier);
+    const qualifier = colName ? chosen.get(colName) : undefined;
+    if (qualifier) {
+      applyQualifier(expr, qualifier);
       transformed = true;
     }
     return transformed;
@@ -223,17 +247,11 @@ function qualifyAmbiguousInExpression(
   if (isBinaryExpr(expr)) {
     const binary = expr as Binary;
     transformed =
-      qualifyAmbiguousInExpression(
-        binary.left as ExpressionValue,
-        defaultQualifier,
-        ambiguousColumns
-      ) || transformed;
+      qualifyAmbiguousInExpression(binary.left as ExpressionValue, chosen) ||
+      transformed;
     transformed =
-      qualifyAmbiguousInExpression(
-        binary.right as ExpressionValue,
-        defaultQualifier,
-        ambiguousColumns
-      ) || transformed;
+      qualifyAmbiguousInExpression(binary.right as ExpressionValue, chosen) ||
+      transformed;
     return transformed;
   }
 
@@ -244,21 +262,12 @@ function qualifyAmbiguousInExpression(
     };
     if (args.value && Array.isArray(args.value)) {
       for (const arg of args.value) {
-        transformed =
-          qualifyAmbiguousInExpression(
-            arg,
-            defaultQualifier,
-            ambiguousColumns
-          ) || transformed;
+        transformed = qualifyAmbiguousInExpression(arg, chosen) || transformed;
       }
     }
     if (args.expr) {
       transformed =
-        qualifyAmbiguousInExpression(
-          args.expr,
-          defaultQualifier,
-          ambiguousColumns
-        ) || transformed;
+        qualifyAmbiguousInExpression(args.expr, chosen) || transformed;
     }
   }
 
@@ -269,22 +278,13 @@ function qualifyAmbiguousInExpression(
     };
     if (Array.isArray(over.partition)) {
       for (const part of over.partition) {
-        transformed =
-          qualifyAmbiguousInExpression(
-            part,
-            defaultQualifier,
-            ambiguousColumns
-          ) || transformed;
+        transformed = qualifyAmbiguousInExpression(part, chosen) || transformed;
       }
     }
     if (Array.isArray(over.orderby)) {
       for (const order of over.orderby) {
         transformed =
-          qualifyAmbiguousInExpression(
-            order,
-            defaultQualifier,
-            ambiguousColumns
-          ) || transformed;
+          qualifyAmbiguousInExpression(order, chosen) || transformed;
       }
     }
   }
@@ -341,110 +341,117 @@ function hasUnqualifiedColumns(expr: Binary | null | undefined): boolean {
   return false;
 }
 
+function outputAliases(select: Select): Set<string> {
+  const aliases = new Set<string>();
+  if (Array.isArray(select.columns)) {
+    for (const col of select.columns as Column[]) {
+      if (typeof col.as === 'string') aliases.add(col.as);
+    }
+  }
+  return aliases;
+}
+
+function groupByExpressions(select: Select): ExpressionValue[] {
+  const groupby = select.groupby as
+    | { columns?: ExpressionValue[] | null }
+    | ExpressionValue[]
+    | null
+    | undefined;
+  if (Array.isArray(groupby)) return groupby;
+  return groupby?.columns ?? [];
+}
+
+/**
+ * Give unqualified references outside the ON clauses the qualifier their
+ * name got in an ON clause. GROUP BY and ORDER BY may name an output alias,
+ * so those names are skipped there.
+ */
+function qualifyChosenNames(select: Select, chosen: ChosenQualifiers): boolean {
+  let transformed = false;
+  const aliases = outputAliases(select);
+  const aliasSafe: ChosenQualifiers = new Map(
+    [...chosen].filter(([name]) => !aliases.has(name))
+  );
+
+  if (Array.isArray(select.columns)) {
+    for (const col of select.columns as Column[]) {
+      if ('expr' in col) {
+        transformed =
+          qualifyAmbiguousInExpression(col.expr, chosen) || transformed;
+      }
+    }
+  }
+
+  transformed =
+    qualifyAmbiguousInExpression(select.where, chosen) || transformed;
+
+  for (const expr of groupByExpressions(select)) {
+    transformed = qualifyAmbiguousInExpression(expr, aliasSafe) || transformed;
+  }
+
+  transformed =
+    qualifyAmbiguousInExpression(
+      select.having as ExpressionValue | null | undefined,
+      chosen
+    ) || transformed;
+
+  if (Array.isArray(select.orderby)) {
+    for (const order of select.orderby as OrderBy[]) {
+      if (order.expr) {
+        transformed =
+          qualifyAmbiguousInExpression(order.expr, aliasSafe) || transformed;
+      }
+    }
+  }
+
+  return transformed;
+}
+
 function walkSelect(select: Select): boolean {
   let transformed = false;
-  const ambiguousColumns = new Set<string>();
 
   if (Array.isArray(select.from) && select.from.length >= 2) {
-    const firstSource = getTableSource(select.from[0]);
-    const defaultQualifier = firstSource ? getQualifier(firstSource) : null;
-    let prevSource = firstSource;
+    const hasAnyUnqualified = select.from.some(
+      (from) =>
+        'join' in from && !!from.on && hasUnqualifiedColumns(from.on as Binary)
+    );
 
-    let hasAnyUnqualified = false;
+    const sources: Qualifier[] = [];
+    // A source that cannot be named (for example an unaliased table
+    // function) makes "the one earlier source" unknown.
+    let unnamedSource = false;
+    const chosen: ChosenQualifiers = new Map();
+
     for (const from of select.from) {
-      if ('join' in from) {
+      const source = getTableSource(from);
+
+      if (hasAnyUnqualified && 'join' in from) {
         const join = from as Join;
-        if (join.on && hasUnqualifiedColumns(join.on)) {
-          hasAnyUnqualified = true;
-          break;
+        if (join.on && source) {
+          const sides: JoinSides = {
+            joined: getQualifier(source),
+            earlier:
+              sources.length === 1 && !unnamedSource ? sources[0]! : null,
+          };
+          transformed = walkOnClause(join.on, sides, chosen) || transformed;
         }
+        // USING columns are resolved by DuckDB itself, so they are never
+        // qualified.
+      }
+
+      if (source) {
+        sources.push(getQualifier(source));
+      } else {
+        unnamedSource = true;
+      }
+
+      if ('expr' in from && from.expr && 'ast' in from.expr) {
+        transformed = walkSelect(from.expr.ast) || transformed;
       }
     }
 
-    if (!hasAnyUnqualified) {
-      for (const from of select.from) {
-        if ('expr' in from && from.expr && 'ast' in from.expr) {
-          transformed = walkSelect(from.expr.ast) || transformed;
-        }
-      }
-    } else {
-      for (const from of select.from) {
-        if ('join' in from) {
-          const join = from as Join;
-          const currentSource = getTableSource(join);
-
-          if (join.on && prevSource && currentSource) {
-            const leftQualifier = getQualifier(prevSource);
-            const rightQualifier = getQualifier(currentSource);
-
-            transformed =
-              walkOnClause(
-                join.on,
-                leftQualifier,
-                rightQualifier,
-                ambiguousColumns
-              ) || transformed;
-          }
-
-          if (join.using && prevSource && currentSource) {
-            for (const usingCol of join.using) {
-              if (typeof usingCol === 'string') {
-                ambiguousColumns.add(usingCol);
-              } else if ('value' in usingCol) {
-                ambiguousColumns.add(
-                  String((usingCol as { value: unknown }).value)
-                );
-              }
-            }
-          }
-
-          prevSource = currentSource;
-        } else {
-          const source = getTableSource(from);
-          if (source) {
-            prevSource = source;
-          }
-        }
-
-        if ('expr' in from && from.expr && 'ast' in from.expr) {
-          transformed = walkSelect(from.expr.ast) || transformed;
-        }
-      }
-
-      if (ambiguousColumns.size > 0 && defaultQualifier) {
-        if (Array.isArray(select.columns)) {
-          for (const col of select.columns as Column[]) {
-            if ('expr' in col) {
-              transformed =
-                qualifyAmbiguousInExpression(
-                  col.expr,
-                  defaultQualifier,
-                  ambiguousColumns
-                ) || transformed;
-            }
-          }
-        }
-
-        transformed =
-          qualifyAmbiguousInExpression(
-            select.where,
-            defaultQualifier,
-            ambiguousColumns
-          ) || transformed;
-
-        if (Array.isArray(select.orderby)) {
-          for (const order of select.orderby as OrderBy[]) {
-            if (order.expr) {
-              transformed =
-                qualifyAmbiguousInExpression(
-                  order.expr,
-                  defaultQualifier,
-                  ambiguousColumns
-                ) || transformed;
-            }
-          }
-        }
-      }
+    if (chosen.size > 0) {
+      transformed = qualifyChosenNames(select, chosen) || transformed;
     }
   }
 
@@ -462,6 +469,24 @@ function walkSelect(select: Select): boolean {
   }
 
   return transformed;
+}
+
+/**
+ * UPDATE ... FROM and DELETE ... USING compare the target table with the
+ * first FROM source in WHERE.
+ */
+function qualifyWhereAgainstFrom(
+  where: ExpressionValue,
+  target: TableSource,
+  firstFrom: TableSource
+): boolean {
+  const chosen: ChosenQualifiers = new Map();
+  const sides: JoinSides = {
+    joined: getQualifier(firstFrom),
+    earlier: getQualifier(target),
+  };
+  const transformed = walkOnClause(where as Binary, sides, chosen);
+  return qualifyAmbiguousInExpression(where, chosen) || transformed;
 }
 
 export function qualifyJoinColumns(ast: AST | AST[]): boolean {
@@ -492,34 +517,12 @@ export function qualifyJoinColumns(ast: AST | AST[]): boolean {
       const mainSource = update.table?.[0]
         ? getTableSource(update.table[0] as From)
         : null;
-      const defaultQualifier = mainSource ? getQualifier(mainSource) : null;
       const fromSources = update.from ?? [];
       const firstFrom = fromSources[0] ? getTableSource(fromSources[0]) : null;
-      if (update.where && defaultQualifier && firstFrom) {
-        const ambiguous = new Set<string>();
+      if (update.where && mainSource && firstFrom) {
         transformed =
-          walkOnClause(
-            update.where as Binary,
-            defaultQualifier,
-            getQualifier(firstFrom),
-            ambiguous
-          ) || transformed;
-        transformed =
-          qualifyAmbiguousInExpression(
-            update.where,
-            defaultQualifier,
-            ambiguous
-          ) || transformed;
-      }
-      if (Array.isArray(update.returning) && defaultQualifier) {
-        for (const ret of update.returning) {
-          transformed =
-            qualifyAmbiguousInExpression(
-              ret,
-              defaultQualifier,
-              new Set<string>()
-            ) || transformed;
-        }
+          qualifyWhereAgainstFrom(update.where, mainSource, firstFrom) ||
+          transformed;
       }
     } else if (stmt.type === 'delete') {
       const del = stmt as unknown as {
@@ -530,31 +533,12 @@ export function qualifyJoinColumns(ast: AST | AST[]): boolean {
       const mainSource = del.table?.[0]
         ? getTableSource(del.table[0] as From)
         : null;
-      const defaultQualifier = mainSource ? getQualifier(mainSource) : null;
       const fromSources = del.from ?? [];
       const firstFrom = fromSources[0] ? getTableSource(fromSources[0]) : null;
-      if (del.where && defaultQualifier && firstFrom) {
-        const ambiguous = new Set<string>();
+      if (del.where && mainSource && firstFrom) {
         transformed =
-          walkOnClause(
-            del.where as Binary,
-            defaultQualifier,
-            getQualifier(firstFrom),
-            ambiguous
-          ) || transformed;
-        transformed =
-          qualifyAmbiguousInExpression(
-            del.where,
-            defaultQualifier,
-            ambiguous
-          ) || transformed;
-      } else if (del.where && defaultQualifier) {
-        transformed =
-          qualifyAmbiguousInExpression(
-            del.where,
-            defaultQualifier,
-            new Set<string>()
-          ) || transformed;
+          qualifyWhereAgainstFrom(del.where, mainSource, firstFrom) ||
+          transformed;
       }
     }
   }

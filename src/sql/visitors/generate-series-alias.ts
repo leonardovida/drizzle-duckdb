@@ -7,7 +7,8 @@
  *
  * DuckDB treats gs as a table alias, and the column is generate_series.
  * This visitor rewrites unqualified column refs that match a
- * generate_series alias to gs.generate_series.
+ * generate_series alias to gs.generate_series. A bare `SELECT gs` becomes
+ * `SELECT gs.generate_series AS gs`, so the output column keeps its name.
  */
 
 import type {
@@ -128,6 +129,11 @@ function walkExpression(
     }
   }
 
+  const filter = exprObj.filter as { where?: ExpressionValue } | undefined;
+  if (filter?.where) {
+    transformed = walkExpression(filter.where, aliases) || transformed;
+  }
+
   if ('over' in exprObj && exprObj.over && typeof exprObj.over === 'object') {
     const over = exprObj.over as Record<string, unknown>;
     if (Array.isArray(over.partition)) {
@@ -228,16 +234,29 @@ function walkSelect(select: Select): boolean {
   if (Array.isArray(select.columns)) {
     for (const col of select.columns as Column[]) {
       if ('expr' in col) {
-        transformed =
-          walkExpression(col.expr as ExpressionValue, aliases) || transformed;
+        const bareName =
+          isColumnRef(col.expr) && !col.expr.table && !col.as
+            ? getColumnName(col.expr)
+            : null;
+        if (walkExpression(col.expr as ExpressionValue, aliases)) {
+          if (bareName) col.as = bareName;
+          transformed = true;
+        }
       }
     }
   }
 
-  if (Array.isArray(select.groupby)) {
-    for (const g of select.groupby as ExpressionValue[]) {
-      transformed = walkExpression(g, aliases) || transformed;
-    }
+  // The parser returns GROUP BY as { columns: [...] }.
+  const groupby = select.groupby as
+    | { columns?: ExpressionValue[] | null }
+    | ExpressionValue[]
+    | null
+    | undefined;
+  const groupByItems = Array.isArray(groupby)
+    ? groupby
+    : (groupby?.columns ?? []);
+  for (const g of groupByItems) {
+    transformed = walkExpression(g, aliases) || transformed;
   }
 
   transformed = walkOrderBy(select.orderby, aliases) || transformed;

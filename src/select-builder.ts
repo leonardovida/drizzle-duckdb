@@ -9,13 +9,18 @@ import {
 import { PgColumn, PgTable, type PgSession } from 'drizzle-orm/pg-core';
 import { Subquery, WithSubquery, type SQLWrapper } from 'drizzle-orm';
 import { entityKind } from 'drizzle-orm/entity';
+import { SelectionProxyHandler } from 'drizzle-orm/selection-proxy';
 import { PgViewBase } from 'drizzle-orm/pg-core/view-base';
 import type {
   GetSelectTableName,
   GetSelectTableSelection,
 } from 'drizzle-orm/query-builders/select.types';
 import { SQL } from 'drizzle-orm/sql/sql';
-import { aliasFields, getSelectSourceFields } from './sql/selection.ts';
+import {
+  aliasFields,
+  exposeSubqueryFields,
+  getSelectSourceFields,
+} from './sql/selection.ts';
 import type { DuckDBDialect } from './dialect.ts';
 import type { DrizzleTypeError } from 'drizzle-orm/utils';
 
@@ -24,6 +29,52 @@ type DistinctConfig =
   | {
       on: (PgColumn | SQLWrapper)[];
     };
+
+type SelectInternals = {
+  config: { fields: Record<string, unknown> };
+  tableName: string | undefined;
+  as(alias: string): Subquery;
+  getSelectedFields(): Record<string, unknown>;
+};
+
+/**
+ * Keep the fields of `select` qualified by the subquery alias when it becomes
+ * a subquery (`.as()`), a CTE (`$with`) or a view. See exposeSubqueryFields().
+ */
+function qualifySubqueryFields<T>(select: T): T {
+  const internals = select as unknown as SelectInternals;
+  const baseAs = internals.as.bind(internals);
+
+  internals.as = (alias) => {
+    const { sql, usedTables } = baseAs(alias)._;
+    return new Proxy(
+      new Subquery(
+        sql,
+        exposeSubqueryFields(internals.config.fields),
+        alias,
+        false,
+        usedTables
+      ),
+      new SelectionProxyHandler({
+        alias,
+        sqlAliasedBehavior: 'alias',
+        sqlBehavior: 'error',
+      })
+    );
+  };
+
+  internals.getSelectedFields = () =>
+    new Proxy(
+      exposeSubqueryFields(internals.config.fields),
+      new SelectionProxyHandler({
+        alias: internals.tableName,
+        sqlAliasedBehavior: 'alias',
+        sqlBehavior: 'error',
+      })
+    );
+
+  return select;
+}
 
 export class DuckDBSelectBuilder<
   TSelection extends SelectedFields | undefined,
@@ -72,15 +123,17 @@ export class DuckDBSelectBuilder<
       fields = getSelectSourceFields(src, isPartialSelect);
     }
 
-    return new PgSelectBase({
-      table: src,
-      fields,
-      isPartialSelect,
-      session: this._session,
-      dialect: this._dialect,
-      withList: this._withList,
-      distinct: this._distinct,
-    }) as unknown as CreatePgSelectFromBuilderMode<
+    return qualifySubqueryFields(
+      new PgSelectBase({
+        table: src,
+        fields,
+        isPartialSelect,
+        session: this._session,
+        dialect: this._dialect,
+        withList: this._withList,
+        distinct: this._distinct,
+      })
+    ) as unknown as CreatePgSelectFromBuilderMode<
       TBuilderMode,
       GetSelectTableName<TFrom>,
       TSelection extends undefined

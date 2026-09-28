@@ -12,6 +12,9 @@
  *   parentheses that scope those clauses to the arm
  * - a CTE name matches a table referenced by another arm, since the hoisted
  *   CTE would shadow that table
+ *
+ * When any arm uses WITH RECURSIVE, the merged WITH is RECURSIVE. That is
+ * skipped when a CTE from a plain WITH reads a table of its own name.
  */
 
 import type { AST, Select, From } from 'node-sql-parser';
@@ -22,6 +25,10 @@ function getCteName(cte: { name?: unknown }): string | null {
   const value = nameObj.value;
   if (typeof value === 'string') return value;
   return null;
+}
+
+function isRecursiveWith(ctes: NonNullable<Select['with']>): boolean {
+  return ctes.some((cte) => (cte as { recursive?: boolean }).recursive);
 }
 
 function hasArmModifiers(arm: Select): boolean {
@@ -67,14 +74,20 @@ function hoistWithInSelect(select: Select): boolean {
 
   const mergedWith: NonNullable<Select['with']> = [];
   const seen = new Set<string>();
+  const nonRecursiveCtes: NonNullable<Select['with']> = [];
   let hasWithBeyondFirst = false;
+  let recursive = false;
 
   for (const arm of arms) {
     if (arm.with && arm.with.length > 0) {
       if (arm !== arms[0]) {
         hasWithBeyondFirst = true;
       }
+      // The parser keeps RECURSIVE on the first CTE of each WITH.
+      const armRecursive = isRecursiveWith(arm.with);
+      recursive ||= armRecursive;
       for (const cte of arm.with) {
+        if (!armRecursive) nonRecursiveCtes.push(cte);
         const cteName = getCteName(cte);
         if (!cteName) return false;
         if (seen.has(cteName.toLowerCase())) {
@@ -99,6 +112,17 @@ function hoistWithInSelect(select: Select): boolean {
     for (const name of seen) {
       if (!ownCtes.has(name) && refs.has(name)) return false;
     }
+  }
+
+  if (recursive) {
+    // Under WITH RECURSIVE a CTE that reads a table of its own name would
+    // read itself instead.
+    for (const cte of nonRecursiveCtes) {
+      const refs = new Set<string>();
+      collectTableRefs(cte.stmt, refs, false);
+      if (refs.has(getCteName(cte)!.toLowerCase())) return false;
+    }
+    (mergedWith[0] as { recursive?: boolean }).recursive = true;
   }
 
   arms[0].with = mergedWith;
