@@ -43,7 +43,7 @@ Options:
   --ducklake-data-inlining-row-limit  Inline row limit for data storage
   --ducklake-encrypted         Enable encryption for the metadata catalog
   --ducklake-metadata-catalog  Override metadata catalog name
-  --ducklake-meta-parameter-name  Set meta parameter name for metadata storage
+  --ducklake-meta-parameter KEY=VALUE  Pass META_<KEY> to the metadata catalog (repeatable)
 
 Database Filtering:
   By default, only tables from the current database are introspected. This prevents

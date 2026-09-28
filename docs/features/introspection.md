@@ -17,33 +17,34 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 
 ### Options
 
-| Option                               | Description                                                                                           | Default                             |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `--url`                              | DuckDB database path (`:memory:`, `./file.duckdb`, `md:`)                                             | Required                            |
-| `--database`, `--db`                 | Database/catalog to introspect                                                                        | Current database                    |
-| `--all-databases`                    | Introspect all attached databases                                                                     | `false`                             |
-| `--schema`, `--schemas`              | Comma-separated schema names, such as `--schema main,analytics`. Not a repeatable flag                | All non-system schemas              |
-| `--out`, `--outFile`                 | Output file path                                                                                      | `./drizzle/schema.ts`               |
-| `--json`, `--out-json`, `--outJson`  | Also write table metadata as JSON to this path                                                        | Not written                         |
-| `--include-views`, `--includeViews`  | Include views in generated schema                                                                     | `false`                             |
-| `--use-pg-time`                      | Use pg-core `timestamp`/`date`/`time` instead of DuckDB helpers                                       | `false`                             |
-| `--import-base`                      | Custom import path for DuckDB column helpers                                                          | `@duckdbfan/drizzle-duckdb/helpers` |
-| `--ducklake-catalog`                 | DuckLake catalog value after the `ducklake:` prefix. Required when any `--ducklake-*` flag is used    | None                                |
-| `--ducklake-alias`                   | Alias for the attached DuckLake database                                                              | `ducklake`                          |
-| `--ducklake-no-use`                  | Do not run `USE` after attach                                                                         | Runs `USE`                          |
-| `--ducklake-install`                 | Run `INSTALL ducklake` before attach                                                                  | `false`                             |
-| `--ducklake-load`                    | Run `LOAD ducklake` before attach                                                                     | `false`                             |
-| `--ducklake-data-path`               | Data path for DuckLake table storage                                                                  | None                                |
-| `--ducklake-read-only`               | Attach DuckLake read-only                                                                             | `false`                             |
-| `--ducklake-create-if-not-exists`    | Create the catalog if it does not exist                                                               | `false`                             |
-| `--ducklake-override-data-path`      | Override the data path of an existing catalog                                                         | `false`                             |
-| `--ducklake-data-inlining-row-limit` | Inline row limit for data storage. Must be a non-negative integer                                     | None                                |
-| `--ducklake-encrypted`               | Enable encryption for the metadata catalog                                                            | `false`                             |
-| `--ducklake-metadata-catalog`        | Override the metadata catalog name                                                                    | None                                |
-| `--ducklake-meta-parameter-name`     | Deprecated. DuckLake has no `META_PARAMETER_NAME` option, so the CLI exits with code 1 when it is set | None                                |
-| `--help`, `-h`                       | Print help and exit                                                                                   |                                     |
+| Option                                | Description                                                                                                                        | Default                             |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `--url`                               | DuckDB database path (`:memory:`, `./file.duckdb`, `md:`)                                                                          | Required                            |
+| `--database`, `--db`                  | Database/catalog to introspect                                                                                                     | Current database                    |
+| `--all-databases`                     | Introspect all attached databases                                                                                                  | `false`                             |
+| `--schema`, `--schemas`               | Comma-separated schema names, such as `--schema main,analytics`. Not a repeatable flag                                             | All non-system schemas              |
+| `--out`, `--outFile`                  | Output file path                                                                                                                   | `./drizzle/schema.ts`               |
+| `--json`, `--out-json`, `--outJson`   | Also write table metadata as JSON to this path                                                                                     | Not written                         |
+| `--include-views`, `--includeViews`   | Include views in generated schema                                                                                                  | `false`                             |
+| `--use-pg-time`                       | Use pg-core `timestamp`/`date`/`time` instead of DuckDB helpers                                                                    | `false`                             |
+| `--import-base`                       | Custom import path for DuckDB column helpers                                                                                       | `@duckdbfan/drizzle-duckdb/helpers` |
+| `--ducklake-catalog`                  | DuckLake catalog value after the `ducklake:` prefix. Required when any `--ducklake-*` flag is used                                 | None                                |
+| `--ducklake-alias`                    | Alias for the attached DuckLake database                                                                                           | `ducklake`                          |
+| `--ducklake-no-use`                   | Do not run `USE` after attach                                                                                                      | Runs `USE`                          |
+| `--ducklake-install`                  | Run `INSTALL ducklake` before attach                                                                                               | `false`                             |
+| `--ducklake-load`                     | Run `LOAD ducklake` before attach                                                                                                  | `false`                             |
+| `--ducklake-data-path`                | Data path for DuckLake table storage                                                                                               | None                                |
+| `--ducklake-read-only`                | Attach DuckLake read-only                                                                                                          | `false`                             |
+| `--ducklake-create-if-not-exists`     | Create the catalog if it does not exist                                                                                            | `false`                             |
+| `--ducklake-override-data-path`       | Override the data path of an existing catalog                                                                                      | `false`                             |
+| `--ducklake-data-inlining-row-limit`  | Inline row limit for data storage. Must be a non-negative integer                                                                  | None                                |
+| `--ducklake-encrypted`                | Enable encryption for the metadata catalog                                                                                         | `false`                             |
+| `--ducklake-metadata-catalog`         | Override the metadata catalog name                                                                                                 | None                                |
+| `--ducklake-meta-parameter KEY=VALUE` | Pass `META_<KEY> 'VALUE'` to the metadata catalog, for example `type=duckdb`. Repeatable                                           | None                                |
+| `--ducklake-meta-parameter-name`      | Removed, because DuckLake has no `META_PARAMETER_NAME` option. The CLI exits with code 2 and points to `--ducklake-meta-parameter` | None                                |
+| `--help`, `-h`                        | Print help and exit                                                                                                                |                                     |
 
-To pass metadata catalog options such as `META_TYPE`, use the programmatic `introspect()` API on a connection set up with `ducklake.attachOptions.metaParameters`. The CLI has no flag for them.
+To pass metadata catalog options such as `META_TYPE`, use `--ducklake-meta-parameter type=duckdb`. It maps to `ducklake.attachOptions.metaParameters` in the programmatic API.
 
 The CLI exits with code 2 on invalid usage: a missing `--url` (which also prints the help text), a flag without its value, an unknown option, a stray positional argument, or an invalid `--ducklake-data-inlining-row-limit`. Other failures exit with code 1.
 

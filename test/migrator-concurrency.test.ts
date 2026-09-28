@@ -218,3 +218,68 @@ test('concurrent migrators apply each migration once', async () => {
     instance.closeSync?.();
   }
 });
+
+test('migrate() calls on two databases opened on one file run one after another', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'drizzle-duckdb-migrate-'));
+  const file = join(folder, 'app.duckdb');
+  const migrations = join(folder, 'migrations');
+  // Two spellings of one path share one database and one queue.
+  const first = await drizzle(file);
+  const second = await drizzle(join(folder, '.', 'app.duckdb'));
+  try {
+    await mkdir(join(migrations, 'meta'), { recursive: true });
+    await writeFile(
+      join(migrations, 'meta', '_journal.json'),
+      JSON.stringify({
+        version: '7',
+        dialect: 'postgresql',
+        entries: [
+          {
+            idx: 0,
+            version: '7',
+            when: 1000,
+            tag: '0000_a',
+            breakpoints: true,
+          },
+        ],
+      })
+    );
+    await writeFile(
+      join(migrations, '0000_a.sql'),
+      'create table shared_file_a (id integer);'
+    );
+
+    let active = 0;
+    let maxActive = 0;
+    for (const db of [first, second]) {
+      const originalMigrate = db.dialect.migrate.bind(db.dialect);
+      db.dialect.migrate = async (...args) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          return await originalMigrate(...args);
+        } finally {
+          active -= 1;
+        }
+      };
+    }
+
+    await Promise.all([
+      migrate(first, { migrationsFolder: migrations }),
+      migrate(second, { migrationsFolder: migrations }),
+      migrate(first, { migrationsFolder: migrations }),
+      migrate(second, { migrationsFolder: migrations }),
+    ]);
+
+    expect(maxActive).toBe(1);
+    expect(
+      await second.execute<{ count: number }>(
+        sql`select count(*)::int as count from drizzle.__drizzle_migrations`
+      )
+    ).toEqual([{ count: 1 }]);
+  } finally {
+    await first.close();
+    await second.close();
+    await rm(folder, { recursive: true, force: true });
+  }
+});

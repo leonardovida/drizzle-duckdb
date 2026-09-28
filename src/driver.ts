@@ -29,6 +29,7 @@ import type {
 } from './session.ts';
 import { DuckDBSession } from './session.ts';
 import { DuckDBDialect } from './dialect.ts';
+import { rememberDatabaseKey } from './instance-keys.ts';
 import { createPgDuckConnectionPool, type PgDuckPool } from './pgduck.ts';
 import {
   createDuckDBSelectMethods,
@@ -338,6 +339,7 @@ async function createFromConnectionString<
   // the same file do not see each other's writes and can lose committed data.
   // ':memory:' still gets a new database each time.
   const instance = await DuckDBInstance.fromCache(path, instanceOptions);
+  rememberDatabaseKey(instance, path);
   let createdClient: DuckDBClientLike | undefined;
 
   try {
