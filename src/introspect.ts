@@ -78,12 +78,14 @@ export interface IntrospectOptions {
 }
 
 interface DuckDbTableRow extends RowData {
+  database_name: string;
   schema_name: string;
   table_name: string;
   table_type: string;
 }
 
 interface DuckDbColumnRow extends RowData {
+  database_name: string;
   schema_name: string;
   table_name: string;
   column_name: string;
@@ -98,6 +100,7 @@ interface DuckDbColumnRow extends RowData {
 }
 
 interface DuckDbConstraintRow extends RowData {
+  database_name: string;
   schema_name: string;
   table_name: string;
   constraint_name: string;
@@ -109,6 +112,7 @@ interface DuckDbConstraintRow extends RowData {
 }
 
 interface DuckDbIndexRow extends RowData {
+  database_name: string;
   schema_name: string;
   table_name: string;
   index_name: string;
@@ -139,6 +143,8 @@ export interface IntrospectedConstraint {
 }
 
 export interface IntrospectedTable {
+  /** Database (catalog) that owns the table. */
+  database?: string;
   schema: string;
   name: string;
   kind: 'table' | 'view';
@@ -151,6 +157,7 @@ export interface IntrospectResult {
   files: {
     schemaTs: string;
     metaJson: IntrospectedTable[];
+    /** @deprecated Never populated. Will be removed in the next major version. */
     relationsTs?: string;
   };
 }
@@ -259,12 +266,16 @@ async function loadTables(
 ): Promise<DuckDbTableRow[]> {
   return await db.execute<DuckDbTableRow>(
     sql`
-      SELECT table_schema as schema_name, table_name, table_type
+      SELECT
+        table_catalog as database_name,
+        table_schema as schema_name,
+        table_name,
+        table_type
       FROM information_schema.tables
       WHERE ${buildOptionalEqualityFilter('table_catalog', database)}
       AND ${buildSchemaFilter('table_schema', schemas)}
       AND ${includeViews ? sql`1 = 1` : sql`table_type = 'BASE TABLE'`}
-      ORDER BY table_schema, table_name
+      ORDER BY table_catalog, table_schema, table_name
     `
   );
 }
@@ -277,6 +288,7 @@ async function loadColumns(
   return await db.execute<DuckDbColumnRow>(
     sql`
       SELECT
+        database_name,
         schema_name,
         table_name,
         column_name,
@@ -291,7 +303,7 @@ async function loadColumns(
       FROM duckdb_columns()
       WHERE ${buildOptionalEqualityFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
-      ORDER BY schema_name, table_name, column_index
+      ORDER BY database_name, schema_name, table_name, column_index
     `
   );
 }
@@ -304,6 +316,7 @@ async function loadConstraints(
   return await db.execute<DuckDbConstraintRow>(
     sql`
       SELECT
+        database_name,
         schema_name,
         table_name,
         constraint_name,
@@ -315,7 +328,7 @@ async function loadConstraints(
       FROM duckdb_constraints()
       WHERE ${buildOptionalEqualityFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
-      ORDER BY schema_name, table_name, constraint_index
+      ORDER BY database_name, schema_name, table_name, constraint_index
     `
   );
 }
@@ -328,6 +341,7 @@ async function loadIndexes(
   return await db.execute<DuckDbIndexRow>(
     sql`
       SELECT
+        database_name,
         schema_name,
         table_name,
         index_name,
@@ -336,7 +350,7 @@ async function loadIndexes(
       FROM duckdb_indexes()
       WHERE ${buildOptionalEqualityFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
-      ORDER BY schema_name, table_name, index_name
+      ORDER BY database_name, schema_name, table_name, index_name
     `
   );
 }
@@ -349,8 +363,13 @@ function buildTables(
 ): IntrospectedTable[] {
   const byTable: Record<string, IntrospectedTable> = {};
   for (const table of tables) {
-    const key = tableKey(table.schema_name, table.table_name);
+    const key = tableKey(
+      table.database_name,
+      table.schema_name,
+      table.table_name
+    );
     byTable[key] = {
+      database: table.database_name,
       schema: table.schema_name,
       name: table.table_name,
       kind: table.table_type === 'VIEW' ? 'view' : 'table',
@@ -364,7 +383,11 @@ function buildTables(
     if (column.internal) {
       continue;
     }
-    const key = tableKey(column.schema_name, column.table_name);
+    const key = tableKey(
+      column.database_name,
+      column.schema_name,
+      column.table_name
+    );
     const table = byTable[key];
     if (!table) {
       continue;
@@ -381,7 +404,11 @@ function buildTables(
   }
 
   for (const constraint of constraints) {
-    const key = tableKey(constraint.schema_name, constraint.table_name);
+    const key = tableKey(
+      constraint.database_name,
+      constraint.schema_name,
+      constraint.table_name
+    );
     const table = byTable[key];
     if (!table) {
       continue;
@@ -392,7 +419,7 @@ function buildTables(
     table.constraints.push({
       name: constraint.constraint_name,
       type: constraint.constraint_type,
-      columns: constraint.constraint_column_names ?? [],
+      columns: constraint.constraint_column_names,
       referencedTable:
         constraint.referenced_table && constraint.referenced_column_names
           ? {
@@ -406,7 +433,11 @@ function buildTables(
   }
 
   for (const index of indexes) {
-    const key = tableKey(index.schema_name, index.table_name);
+    const key = tableKey(
+      index.database_name,
+      index.schema_name,
+      index.table_name
+    );
     const table = byTable[key];
     if (!table) {
       continue;
@@ -435,21 +466,53 @@ function emitSchema(
 
   imports.pgCore.add('pgSchema');
 
-  const sorted = [...catalog].sort((a, b) =>
-    a.schema === b.schema
-      ? a.name.localeCompare(b.name)
-      : a.schema.localeCompare(b.schema)
+  const sorted = [...catalog].sort(
+    (a, b) =>
+      a.schema.localeCompare(b.schema) ||
+      a.name.localeCompare(b.name) ||
+      (a.database ?? '').localeCompare(b.database ?? '')
   );
-  const schemaIdentifiers = buildSchemaIdentifiers(sorted);
+
+  // Columns and constraints decide the imports, and imported names must be
+  // known before table and schema variables are allocated.
+  const plans = new Map<string, TablePlan>();
+  for (const table of sorted) {
+    const columnProperties = buildColumnProperties(table.columns);
+    const columnLines = table.columns.map(
+      (column) =>
+        `  ${columnProperties.get(column.name)!}: ${emitColumn(
+          column,
+          imports,
+          options
+        )},`
+    );
+    const constraints = selectConstraints(table);
+    for (const constraint of constraints) {
+      imports.pgCore.add(CONSTRAINT_HELPERS[constraint.type]!);
+    }
+    plans.set(tableKeyOf(table), {
+      table,
+      columnProperties,
+      columnLines,
+      constraints,
+    });
+  }
+
+  const importedNames = new Set([
+    ...imports.drizzle,
+    ...imports.pgCore,
+    ...imports.local,
+  ]);
+  const schemaIdentifiers = buildSchemaIdentifiers(sorted, importedNames);
   const tableIdentifiers = buildTableIdentifiers(
     sorted,
-    new Set(schemaIdentifiers.values())
+    importedNames,
+    new Set([...importedNames, ...schemaIdentifiers.values()])
   );
 
   const lines: string[] = [];
 
   for (const schema of uniqueSchemas(sorted)) {
-    imports.pgCore.add('pgSchema');
     const schemaVar = schemaIdentifiers.get(schema)!;
     lines.push(
       `export const ${schemaVar} = pgSchema(${JSON.stringify(schema)});`,
@@ -458,14 +521,14 @@ function emitSchema(
 
     const tables = sorted.filter((table) => table.schema === schema);
     for (const table of tables) {
+      const plan = plans.get(tableKeyOf(table))!;
       lines.push(
         ...emitTable(
           schemaVar,
-          tableIdentifiers.get(tableKey(table.schema, table.name))!,
-          table,
-          tableIdentifiers,
-          imports,
-          options
+          tableIdentifiers.get(tableKeyOf(table))!,
+          plan,
+          plans,
+          tableIdentifiers
         )
       );
       lines.push('');
@@ -476,34 +539,43 @@ function emitSchema(
   return [importsBlock, ...lines].join('\n').trim() + '\n';
 }
 
+interface TablePlan {
+  table: IntrospectedTable;
+  columnProperties: ReadonlyMap<string, string>;
+  columnLines: string[];
+  constraints: IntrospectedConstraint[];
+}
+
+const CONSTRAINT_HELPERS: Readonly<Record<string, string>> = {
+  'PRIMARY KEY': 'primaryKey',
+  UNIQUE: 'unique',
+  'FOREIGN KEY': 'foreignKey',
+};
+
+function selectConstraints(table: IntrospectedTable): IntrospectedConstraint[] {
+  return table.constraints.filter(
+    (constraint) =>
+      constraint.type in CONSTRAINT_HELPERS &&
+      (constraint.type !== 'FOREIGN KEY' || constraint.referencedTable)
+  );
+}
+
 function emitTable(
   schemaVar: string,
   tableVar: string,
-  table: IntrospectedTable,
-  tableIdentifiers: ReadonlyMap<string, string>,
-  imports: ImportBuckets,
-  options: EmitOptions
+  plan: TablePlan,
+  plans: ReadonlyMap<string, TablePlan>,
+  tableIdentifiers: ReadonlyMap<string, string>
 ): string[] {
-  const columnLines: string[] = [];
-  for (const column of table.columns) {
-    columnLines.push(
-      `  ${columnProperty(column.name)}: ${emitColumn(
-        column,
-        imports,
-        options
-      )},`
-    );
-  }
-
-  const constraintBlock = emitConstraints(table, tableIdentifiers, imports);
+  const constraintBlock = emitConstraints(plan, plans, tableIdentifiers);
 
   const tableLines: string[] = [];
   tableLines.push(
     `export const ${tableVar} = ${schemaVar}.table(${JSON.stringify(
-      table.name
+      plan.table.name
     )}, {`
   );
-  tableLines.push(...columnLines);
+  tableLines.push(...plan.columnLines);
   tableLines.push(
     `}${constraintBlock ? ',' : ''}${constraintBlock ? ` ${constraintBlock}` : ''});`
   );
@@ -512,72 +584,87 @@ function emitTable(
 }
 
 function emitConstraints(
-  table: IntrospectedTable,
-  tableIdentifiers: ReadonlyMap<string, string>,
-  imports: ImportBuckets
+  plan: TablePlan,
+  plans: ReadonlyMap<string, TablePlan>,
+  tableIdentifiers: ReadonlyMap<string, string>
 ): string {
-  const constraints = table.constraints.filter((constraint) =>
-    ['PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE'].includes(constraint.type)
-  );
+  const { table, constraints } = plan;
   if (!constraints.length) {
     return '';
   }
 
+  const selfKey = tableKeyOf(table);
+  const resolveTarget = (constraint: IntrospectedConstraint) => {
+    const ref = constraint.referencedTable!;
+    const key = tableKey(table.database, ref.schema, ref.name);
+    return {
+      key,
+      identifier: tableIdentifiers.get(key) ?? toIdentifier(ref.name),
+      columnProperties: plans.get(key)?.columnProperties,
+    };
+  };
+
+  // The callback parameter must not shadow a referenced table variable.
+  // Self references go through the parameter, which also avoids TS7022.
+  const referencedTables = new Set<string>();
+  for (const constraint of constraints) {
+    if (constraint.type === 'FOREIGN KEY') {
+      const target = resolveTarget(constraint);
+      if (target.key !== selfKey) {
+        referencedTables.add(target.identifier);
+      }
+    }
+  }
+  const param = allocateIdentifier('t', referencedTables);
+  const ownColumns = (columns: string[]) =>
+    columns
+      .map((col) =>
+        memberAccess(
+          param,
+          plan.columnProperties.get(col) ?? columnProperty(col)
+        )
+      )
+      .join(', ');
+
   const entries: string[] = [];
+  const usedKeys = new Set<string>();
 
   for (const constraint of constraints) {
-    const key = toIdentifier(constraint.name || `${table.name}_constraint`);
+    const key = allocateIdentifier(
+      toIdentifier(constraint.name || `${table.name}_constraint`),
+      usedKeys
+    );
+    const name = JSON.stringify(constraint.name);
     if (constraint.type === 'PRIMARY KEY') {
-      imports.pgCore.add('primaryKey');
       entries.push(
-        `${key}: primaryKey({ columns: [${constraint.columns
-          .map((col) => `t.${toIdentifier(col)}`)
-          .join(', ')}], name: ${JSON.stringify(constraint.name)} })`
+        `${key}: primaryKey({ columns: [${ownColumns(
+          constraint.columns
+        )}], name: ${name} })`
       );
-    } else if (constraint.type === 'UNIQUE' && constraint.columns.length > 1) {
-      imports.pgCore.add('unique');
+    } else if (constraint.type === 'UNIQUE') {
       entries.push(
-        `${key}: unique(${JSON.stringify(constraint.name)}).on(${constraint.columns
-          .map((col) => `t.${toIdentifier(col)}`)
-          .join(', ')})`
+        `${key}: unique(${name}).on(${ownColumns(constraint.columns)})`
       );
-    } else if (
-      constraint.type === 'FOREIGN KEY' &&
-      constraint.referencedTable
-    ) {
-      imports.pgCore.add('foreignKey');
-      const targetTable =
-        tableIdentifiers.get(
-          tableKey(
-            constraint.referencedTable.schema,
-            constraint.referencedTable.name
+    } else {
+      const target = resolveTarget(constraint);
+      const targetVar = target.key === selfKey ? param : target.identifier;
+      const foreignColumns = constraint
+        .referencedTable!.columns.map((col) =>
+          memberAccess(
+            targetVar,
+            target.columnProperties?.get(col) ?? columnProperty(col)
           )
-        ) ?? toIdentifier(constraint.referencedTable.name);
+        )
+        .join(', ');
       entries.push(
-        `${key}: foreignKey({ columns: [${constraint.columns
-          .map((col) => `t.${toIdentifier(col)}`)
-          .join(', ')}], foreignColumns: [${constraint.referencedTable.columns
-          .map((col) => `${targetTable}.${toIdentifier(col)}`)
-          .join(', ')}], name: ${JSON.stringify(constraint.name)} })`
-      );
-    } else if (
-      constraint.type === 'UNIQUE' &&
-      constraint.columns.length === 1
-    ) {
-      const columnName = constraint.columns[0];
-      entries.push(
-        `${key}: t.${toIdentifier(columnName)}.unique(${JSON.stringify(
-          constraint.name
-        )})`
+        `${key}: foreignKey({ columns: [${ownColumns(
+          constraint.columns
+        )}], foreignColumns: [${foreignColumns}], name: ${name} })`
       );
     }
   }
 
-  if (!entries.length) {
-    return '';
-  }
-
-  const lines: string[] = ['(t) => ({'];
+  const lines: string[] = [`(${param}) => ({`];
   for (const entry of entries) {
     lines.push(`  ${entry},`);
   }
@@ -585,11 +672,37 @@ function emitConstraints(
   return lines.join('\n');
 }
 
+function buildColumnProperties(
+  columns: IntrospectedColumn[]
+): Map<string, string> {
+  const properties = new Map<string, string>();
+  const used = new Set<string>();
+  for (const column of columns) {
+    const preferred = columnProperty(column.name);
+    // Quoted keys keep the exact column name, so only camelCased keys can
+    // collide (for example user_id and user__id).
+    properties.set(
+      column.name,
+      preferred.startsWith('"')
+        ? preferred
+        : allocateIdentifier(preferred, used)
+    );
+  }
+  return properties;
+}
+
+function memberAccess(object: string, property: string): string {
+  return property.startsWith('"')
+    ? `${object}[${property}]`
+    : `${object}.${property}`;
+}
+
 function buildSchemaIdentifiers(
-  tables: IntrospectedTable[]
+  tables: IntrospectedTable[],
+  reserved: ReadonlySet<string>
 ): Map<string, string> {
   const identifiers = new Map<string, string>();
-  const used = new Set<string>();
+  const used = new Set(reserved);
 
   for (const schema of uniqueSchemas(tables)) {
     identifiers.set(
@@ -601,28 +714,91 @@ function buildSchemaIdentifiers(
   return identifiers;
 }
 
+const RESERVED_WORDS = new Set([
+  'arguments',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'eval',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+]);
+
 function buildTableIdentifiers(
   tables: IntrospectedTable[],
-  reserved: Set<string>
+  importedNames: ReadonlySet<string>,
+  used: Set<string>
 ): Map<string, string> {
   const identifiers = new Map<string, string>();
   const baseCounts = new Map<string, number>();
+  const schemaTableCounts = new Map<string, number>();
+  const schemaTableKey = (table: IntrospectedTable) =>
+    JSON.stringify([table.schema, table.name]);
 
   for (const table of tables) {
     const base = toIdentifier(table.name);
     baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+    const key = schemaTableKey(table);
+    schemaTableCounts.set(key, (schemaTableCounts.get(key) ?? 0) + 1);
   }
 
   for (const table of tables) {
     const base = toIdentifier(table.name);
-    const preferred =
-      (baseCounts.get(base) ?? 0) > 1
-        ? `${toIdentifier(table.schema)}${capitalize(base)}`
-        : base;
-    identifiers.set(
-      tableKey(table.schema, table.name),
-      allocateIdentifier(preferred, reserved)
-    );
+    let preferred = base;
+    if ((baseCounts.get(base) ?? 0) > 1) {
+      const schemaPrefix = `${toIdentifier(table.schema)}${capitalize(base)}`;
+      // The same schema and table name in two databases (allDatabases mode)
+      // also needs the database name to stay distinct.
+      preferred =
+        (schemaTableCounts.get(schemaTableKey(table)) ?? 0) > 1
+          ? `${toIdentifier(table.database ?? '')}${capitalize(schemaPrefix)}`
+          : schemaPrefix;
+    }
+    if (RESERVED_WORDS.has(preferred) || importedNames.has(preferred)) {
+      preferred = `${preferred}Table`;
+    }
+    identifiers.set(tableKeyOf(table), allocateIdentifier(preferred, used));
   }
 
   return identifiers;
@@ -641,12 +817,10 @@ function allocateIdentifier(preferred: string, used: Set<string>): string {
   return candidate;
 }
 
-interface ColumnEmitOptions extends EmitOptions {}
-
 function emitColumn(
   column: IntrospectedColumn,
   imports: ImportBuckets,
-  options: ColumnEmitOptions
+  options: EmitOptions
 ): string {
   const mapping = mapDuckDbType(column, imports, options);
   let builder = mapping.builder;
@@ -655,16 +829,53 @@ function emitColumn(
     builder += '.notNull()';
   }
 
-  const defaultFragment = buildDefault(column.columnDefault);
-  if (defaultFragment) {
-    imports.drizzle.add('sql');
+  const defaultFragment = resolveDefault(column.columnDefault, mapping);
+  if (defaultFragment === null) {
+    // DuckDB reports generated column expressions as column_default, so
+    // unrecognized expressions stay informational instead of becoming defaults.
+    builder += ` /* default: ${escapeBlockComment(
+      column.columnDefault!.trim()
+    )} */`;
+  } else if (defaultFragment) {
+    if (defaultFragment.startsWith('.default(sql`')) {
+      imports.drizzle.add('sql');
+    }
     builder += defaultFragment;
   }
 
   return builder;
 }
 
+type DefaultLiteral = 'number' | 'string' | 'boolean';
+
+interface DefaultTarget {
+  /** JS literal types accepted by the builder's `.default()` besides SQL. */
+  defaultLiterals?: readonly DefaultLiteral[];
+  /** Whether the builder has `.defaultNow()` (pg-core timestamps). */
+  defaultNow?: boolean;
+}
+
+const LEGACY_DEFAULT_TARGET: DefaultTarget = {
+  defaultLiterals: ['number', 'string', 'boolean'],
+  defaultNow: true,
+};
+
+const NUMBER_LITERAL = /^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i;
+const STRING_LITERAL = /^'((?:[^']|'')*)'$/s;
+const BOOLEAN_CAST = /^CAST\('([tf])' AS BOOLEAN\)$/i;
+
 export function buildDefault(defaultValue: string | null): string {
+  return resolveDefault(defaultValue, LEGACY_DEFAULT_TARGET) ?? '';
+}
+
+/**
+ * Returns the default fragment for a column, an empty string when there is no
+ * default, or null when the expression is not recognized.
+ */
+function resolveDefault(
+  defaultValue: string | null,
+  target: DefaultTarget
+): string | null {
   if (!defaultValue) {
     return '';
   }
@@ -673,34 +884,73 @@ export function buildDefault(defaultValue: string | null): string {
     return '';
   }
 
+  const literals = target.defaultLiterals ?? [];
+  const sqlDefault = `.default(sql\`${escapeTemplateLiteral(trimmed)}\`)`;
+
   if (/^nextval\(/i.test(trimmed)) {
-    return `.default(sql\`${trimmed}\`)`;
+    return sqlDefault;
   }
   if (
     /^current_timestamp(?:\(\))?$/i.test(trimmed) ||
     /^now\(\)$/i.test(trimmed)
   ) {
-    return `.defaultNow()`;
-  }
-  if (trimmed === 'true' || trimmed === 'false') {
-    return `.default(${trimmed})`;
-  }
-  const numberValue = Number(trimmed);
-  if (!Number.isNaN(numberValue)) {
-    return `.default(${trimmed})`;
-  }
-  const stringLiteralMatch = /^'(.*)'$/.exec(trimmed);
-  if (stringLiteralMatch) {
-    const value = stringLiteralMatch[1]?.replace(/''/g, "'");
-    return `.default(${JSON.stringify(value)})`;
+    return target.defaultNow ? `.defaultNow()` : sqlDefault;
   }
 
-  return '';
+  // DuckDB reports DEFAULT true as CAST('t' AS BOOLEAN).
+  const booleanCast = BOOLEAN_CAST.exec(trimmed);
+  const booleanValue = booleanCast
+    ? String(booleanCast[1]!.toLowerCase() === 't')
+    : trimmed === 'true' || trimmed === 'false'
+      ? trimmed
+      : null;
+  if (booleanValue) {
+    return literals.includes('boolean')
+      ? `.default(${booleanValue})`
+      : sqlDefault;
+  }
+
+  if (NUMBER_LITERAL.test(trimmed)) {
+    const isUnsafeInteger =
+      /^-?\d+$/.test(trimmed) && !Number.isSafeInteger(Number(trimmed));
+    if (literals.includes('number') && !isUnsafeInteger) {
+      return `.default(${trimmed})`;
+    }
+    if (literals.includes('string')) {
+      return `.default(${JSON.stringify(trimmed)})`;
+    }
+    return sqlDefault;
+  }
+
+  const stringLiteralMatch = STRING_LITERAL.exec(trimmed);
+  if (stringLiteralMatch) {
+    if (literals.includes('string')) {
+      const value = stringLiteralMatch[1]!.replace(/''/g, "'");
+      return `.default(${JSON.stringify(value)})`;
+    }
+    return sqlDefault;
+  }
+
+  return null;
 }
 
-interface TypeMappingResult {
+function escapeTemplateLiteral(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$\{/g, '\\${');
+}
+
+function escapeBlockComment(value: string): string {
+  return value.replace(/\*\//g, '*\\/');
+}
+
+interface TypeMappingResult extends DefaultTarget {
   builder: string;
 }
+
+const NUMBER_DEFAULTS: readonly DefaultLiteral[] = ['number'];
+const STRING_DEFAULTS: readonly DefaultLiteral[] = ['string'];
 
 export function normalizeTypeLiteral(raw: string): string {
   const trimmed = raw.trim().replace(/\s+/g, ' ');
@@ -729,19 +979,25 @@ export function normalizeTypeLiteral(raw: string): string {
 function mapDuckDbType(
   column: IntrospectedColumn,
   imports: ImportBuckets,
-  options: ColumnEmitOptions
+  options: EmitOptions
 ): TypeMappingResult {
   const raw = column.dataType.trim();
   const upper = normalizeTypeLiteral(raw);
 
   if (upper === 'BOOLEAN' || upper === 'BOOL') {
     imports.pgCore.add('boolean');
-    return { builder: `boolean(${columnName(column.name)})` };
+    return {
+      builder: `boolean(${columnName(column.name)})`,
+      defaultLiterals: ['boolean'],
+    };
   }
 
   if (INTEGER_TYPE_ALIASES.has(upper)) {
     imports.pgCore.add('integer');
-    return { builder: `integer(${columnName(column.name)})` };
+    return {
+      builder: `integer(${columnName(column.name)})`,
+      defaultLiterals: NUMBER_DEFAULTS,
+    };
   }
 
   if (upper === 'BIGINT' || upper === 'INT8' || upper === 'UBIGINT') {
@@ -750,20 +1006,26 @@ function mapDuckDbType(
     // to mirror DuckDB's typical 64-bit integer behavior in JS.
     return {
       builder: `bigint(${columnName(column.name)}, { mode: 'number' })`,
+      defaultLiterals: NUMBER_DEFAULTS,
     };
   }
 
-  const decimalMatch = /^DECIMAL\((\d+),(\d+)\)/i.exec(upper);
-  const numericMatch = /^NUMERIC\((\d+),(\d+)\)/i.exec(upper);
+  // Anchored so DECIMAL(p,s)[] falls through to the list mapping below.
+  const decimalMatch = /^DECIMAL\((\d+),(\d+)\)$/i.exec(upper);
+  const numericMatch = /^NUMERIC\((\d+),(\d+)\)$/i.exec(upper);
   if (decimalMatch || numericMatch) {
     imports.pgCore.add('numeric');
     const [, precision, scale] = decimalMatch ?? numericMatch!;
     return {
       builder: `numeric(${columnName(column.name)}, { precision: ${precision}, scale: ${scale} })`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
-  if (upper.startsWith('DECIMAL') || upper.startsWith('NUMERIC')) {
+  if (
+    (upper.startsWith('DECIMAL') || upper.startsWith('NUMERIC')) &&
+    !upper.endsWith(']')
+  ) {
     imports.pgCore.add('numeric');
     const precision = column.numericPrecision;
     const scale = column.numericScale;
@@ -775,17 +1037,27 @@ function mapDuckDbType(
       options.push(`scale: ${scale}`);
     }
     const suffix = options.length ? `, { ${options.join(', ')} }` : '';
-    return { builder: `numeric(${columnName(column.name)}${suffix})` };
+    return {
+      builder: `numeric(${columnName(column.name)}${suffix})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
-  if (upper === 'REAL' || upper === 'FLOAT4') {
+  // DuckDB reports REAL and FLOAT4 columns as FLOAT, a 4-byte float.
+  if (upper === 'REAL' || upper === 'FLOAT4' || upper === 'FLOAT') {
     imports.pgCore.add('real');
-    return { builder: `real(${columnName(column.name)})` };
+    return {
+      builder: `real(${columnName(column.name)})`,
+      defaultLiterals: NUMBER_DEFAULTS,
+    };
   }
 
-  if (upper === 'DOUBLE' || upper === 'DOUBLE PRECISION' || upper === 'FLOAT') {
+  if (upper === 'DOUBLE' || upper === 'DOUBLE PRECISION') {
     imports.pgCore.add('doublePrecision');
-    return { builder: `doublePrecision(${columnName(column.name)})` };
+    return {
+      builder: `doublePrecision(${columnName(column.name)})`,
+      defaultLiterals: NUMBER_DEFAULTS,
+    };
   }
 
   const arrayMatch = /^(.*)\[(\d+)\]$/.exec(upper);
@@ -815,7 +1087,10 @@ function mapDuckDbType(
     const length = column.characterLength;
     const lengthPart =
       typeof length === 'number' ? `, { length: ${length} }` : '';
-    return { builder: `char(${columnName(column.name)}${lengthPart})` };
+    return {
+      builder: `char(${columnName(column.name)}${lengthPart})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper.startsWith('VARCHAR')) {
@@ -823,33 +1098,51 @@ function mapDuckDbType(
     const length = column.characterLength;
     const lengthPart =
       typeof length === 'number' ? `, { length: ${length} }` : '';
-    return { builder: `varchar(${columnName(column.name)}${lengthPart})` };
+    return {
+      builder: `varchar(${columnName(column.name)}${lengthPart})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'TEXT' || upper === 'STRING') {
     imports.pgCore.add('text');
-    return { builder: `text(${columnName(column.name)})` };
+    return {
+      builder: `text(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'UUID') {
     imports.pgCore.add('uuid');
-    return { builder: `uuid(${columnName(column.name)})` };
+    return {
+      builder: `uuid(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'JSON') {
     if (options.mapJsonAsDuckDbJson) {
       imports.local.add('duckDbJson');
-      return { builder: `duckDbJson(${columnName(column.name)})` };
+      return {
+        builder: `duckDbJson(${columnName(column.name)})`,
+        defaultLiterals: ['number', 'string', 'boolean'],
+      };
     }
     imports.pgCore.add('text');
-    return { builder: `text(${columnName(column.name)}) /* JSON */` };
+    return {
+      builder: `text(${columnName(column.name)}) /* JSON */`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper.startsWith('ENUM')) {
     imports.pgCore.add('text');
     const enumLiteral = raw.replace(/^ENUM\s*/i, '').trim();
     return {
-      builder: `text(${columnName(column.name)}) /* ENUM ${enumLiteral} */`,
+      builder: `text(${columnName(column.name)}) /* ENUM ${escapeBlockComment(
+        enumLiteral
+      )} */`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
@@ -857,18 +1150,27 @@ function mapDuckDbType(
     imports.pgCore.add('text');
     const unionLiteral = raw.replace(/^UNION\s*/i, '').trim();
     return {
-      builder: `text(${columnName(column.name)}) /* UNION ${unionLiteral} */`,
+      builder: `text(${columnName(column.name)}) /* UNION ${escapeBlockComment(
+        unionLiteral
+      )} */`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
   if (upper === 'INET') {
     imports.local.add('duckDbInet');
-    return { builder: `duckDbInet(${columnName(column.name)})` };
+    return {
+      builder: `duckDbInet(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'INTERVAL') {
     imports.local.add('duckDbInterval');
-    return { builder: `duckDbInterval(${columnName(column.name)})` };
+    return {
+      builder: `duckDbInterval(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'BLOB' || upper === 'BYTEA' || upper === 'VARBINARY') {
@@ -893,10 +1195,14 @@ function mapDuckDbType(
   if (upper.startsWith('MAP(')) {
     imports.local.add('duckDbMap');
     const valueType = parseMapValue(upper);
+    const keyType = parseMapKey(upper);
+    const mapOptions = keyType
+      ? `, { keyType: ${JSON.stringify(keyType)} }`
+      : '';
     return {
       builder: `duckDbMap(${columnName(
         column.name
-      )}, ${JSON.stringify(valueType)})`,
+      )}, ${JSON.stringify(valueType)}${mapOptions})`,
     };
   }
 
@@ -906,10 +1212,16 @@ function mapDuckDbType(
     } else {
       imports.pgCore.add('timestamp');
     }
-    const factory = options.useCustomTimeTypes
-      ? `duckDbTimestamp(${columnName(column.name)}, { withTimezone: true })`
-      : `timestamp(${columnName(column.name)}, { withTimezone: true })`;
-    return { builder: factory };
+    if (options.useCustomTimeTypes) {
+      return {
+        builder: `duckDbTimestamp(${columnName(column.name)}, { withTimezone: true })`,
+        defaultLiterals: STRING_DEFAULTS,
+      };
+    }
+    return {
+      builder: `timestamp(${columnName(column.name)}, { withTimezone: true })`,
+      defaultNow: true,
+    };
   }
 
   if (
@@ -922,6 +1234,7 @@ function mapDuckDbType(
       builder: `duckDbTimestamp(${columnName(
         column.name
       )}, { duckDbType: ${JSON.stringify(upper)} })`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
@@ -930,25 +1243,36 @@ function mapDuckDbType(
       imports.local.add('duckDbTimestamp');
       return {
         builder: `duckDbTimestamp(${columnName(column.name)})`,
+        defaultLiterals: STRING_DEFAULTS,
       };
     }
     imports.pgCore.add('timestamp');
-    return { builder: `timestamp(${columnName(column.name)})` };
+    return {
+      builder: `timestamp(${columnName(column.name)})`,
+      defaultNow: true,
+    };
   }
 
   if (upper === 'TIME') {
     if (options.useCustomTimeTypes) {
       imports.local.add('duckDbTime');
-      return { builder: `duckDbTime(${columnName(column.name)})` };
+      return {
+        builder: `duckDbTime(${columnName(column.name)})`,
+        defaultLiterals: STRING_DEFAULTS,
+      };
     }
     imports.pgCore.add('time');
-    return { builder: `time(${columnName(column.name)})` };
+    return {
+      builder: `time(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   if (upper === 'TIME WITH TIME ZONE' || upper === 'TIMETZ') {
     imports.local.add('duckDbTime');
     return {
       builder: `duckDbTime(${columnName(column.name)}, { withTimezone: true })`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
@@ -958,16 +1282,23 @@ function mapDuckDbType(
       builder: `duckDbTime(${columnName(
         column.name
       )}, { duckDbType: 'TIME_NS' })`,
+      defaultLiterals: STRING_DEFAULTS,
     };
   }
 
   if (upper === 'DATE') {
     if (options.useCustomTimeTypes) {
       imports.local.add('duckDbDate');
-      return { builder: `duckDbDate(${columnName(column.name)})` };
+      return {
+        builder: `duckDbDate(${columnName(column.name)})`,
+        defaultLiterals: STRING_DEFAULTS,
+      };
     }
     imports.pgCore.add('date');
-    return { builder: `date(${columnName(column.name)})` };
+    return {
+      builder: `date(${columnName(column.name)})`,
+      defaultLiterals: STRING_DEFAULTS,
+    };
   }
 
   // Fallback: keep as text to avoid runtime failures.
@@ -976,7 +1307,8 @@ function mapDuckDbType(
   return {
     builder: `text(${columnName(
       column.name
-    )}) /* unsupported DuckDB type: ${upper} */`,
+    )}) /* unsupported DuckDB type: ${escapeBlockComment(upper)} */`,
+    defaultLiterals: STRING_DEFAULTS,
   };
 }
 
@@ -1014,8 +1346,32 @@ export function parseMapValue(raw: string): string {
   return normalizeTypeLiteral(parts[1] ?? 'TEXT');
 }
 
-function tableKey(schema: string, table: string): string {
-  return `${schema}.${table}`;
+const STRING_MAP_KEY_TYPES = new Set(['VARCHAR', 'TEXT', 'STRING']);
+
+/** Returns the MAP key type, or undefined when it is a string type. */
+export function parseMapKey(raw: string): string | undefined {
+  const inner = raw
+    .trim()
+    .replace(/^MAP\(/i, '')
+    .replace(/\)$/, '');
+  const parts = splitTopLevel(inner, ',');
+  if (parts.length < 2) {
+    return undefined;
+  }
+  const keyType = normalizeTypeLiteral(parts[0] ?? '');
+  return STRING_MAP_KEY_TYPES.has(keyType.toUpperCase()) ? undefined : keyType;
+}
+
+function tableKey(
+  database: string | undefined,
+  schema: string,
+  table: string
+): string {
+  return JSON.stringify([database ?? '', schema, table]);
+}
+
+function tableKeyOf(table: IntrospectedTable): string {
+  return tableKey(table.database, table.schema, table.name);
 }
 
 export function toIdentifier(name: string): string {
