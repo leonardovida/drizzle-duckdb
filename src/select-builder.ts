@@ -30,6 +30,14 @@ type DistinctConfig =
       on: (PgColumn | SQLWrapper)[];
     };
 
+type SubqueryConstructor = new (
+  sql: SQL,
+  fields: Record<string, unknown>,
+  alias: string,
+  isWith: boolean,
+  usedTables?: string[]
+) => Subquery;
+
 type SelectInternals = {
   config: { fields: Record<string, unknown> };
   tableName: string | undefined;
@@ -46,9 +54,13 @@ function qualifySubqueryFields<T>(select: T): T {
   const baseAs = internals.as.bind(internals);
 
   internals.as = (alias) => {
-    const { sql, usedTables } = baseAs(alias)._;
+    // Older drizzle-orm versions, such as 0.40, have no usedTables.
+    const { sql, usedTables } = baseAs(alias)._ as {
+      sql: SQL;
+      usedTables?: string[];
+    };
     return new Proxy(
-      new Subquery(
+      new (Subquery as unknown as SubqueryConstructor)(
         sql,
         exposeSubqueryFields(internals.config.fields),
         alias,

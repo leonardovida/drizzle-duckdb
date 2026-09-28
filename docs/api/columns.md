@@ -329,7 +329,7 @@ Both paths read input strings the same way, whatever the session `TimeZone`:
 - `mode: 'date'` (default): returns JavaScript `Date` objects
 - `mode: 'string'`: returns strings in DuckDB's text format. Naive `TIMESTAMP` values have no offset, such as `'2024-01-15 10:30:00'`. `TIMESTAMPTZ` values are rendered in UTC with `+00`, such as `'2024-01-15 10:30:00+00'`. Trailing zeros in the fraction are dropped, so `'2024-01-15 10:30:00.5'` means half a second.
 
-DuckDB usually returns timestamps to JavaScript as `Date` values, which keep milliseconds only. So string mode returns `'2024-01-15 10:30:00.123'` for a stored `10:30:00.123456`. When the result also contains a column type that makes the driver read the whole result as text, such as `TIMETZ`, `TIMESTAMP_NS` or `TIME_NS`, all six digits come back. Cast to `VARCHAR` in SQL when you always need full precision.
+DuckDB usually returns timestamps to JavaScript as `Date` values, which keep milliseconds only. So string mode returns `'2024-01-15 10:30:00.123'` for a stored `10:30:00.123456`, whatever else the query selects. Cast to `VARCHAR` in SQL when you need full precision.
 
 **Usage:**
 

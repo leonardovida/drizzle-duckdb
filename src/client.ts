@@ -389,11 +389,13 @@ function toNodeApiParams(params: unknown[]): NodeApiParams {
     const value = toNodeApiValue(params[index]);
     values[index] = value;
 
-    // Primitives other than out-of-range integers bind correctly as they are.
+    // Primitives other than integers outside int32 bind correctly as they are.
     if (
       value !== null &&
       (typeof value === 'object' ||
-        (typeof value === 'number' && !Number.isSafeInteger(value)))
+        (typeof value === 'number' &&
+          Number.isInteger(value) &&
+          (value > 2_147_483_647 || value < -2_147_483_648)))
     ) {
       const typed = typedNodeApiParam(value);
       if (typed) {
