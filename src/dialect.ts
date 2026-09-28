@@ -1,6 +1,7 @@
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { MigrationConfig, MigrationMeta } from 'drizzle-orm/migrator';
 import {
+  PgArray,
   PgDate,
   PgDateString,
   PgDialect,
@@ -12,14 +13,23 @@ import {
   PgTimestamp,
   PgTimestampString,
   PgUUID,
+  type PgColumn,
+  type PgTable,
 } from 'drizzle-orm/pg-core';
 import {
+  Column,
   sql,
   SQL,
+  Subquery,
   type DriverValueEncoder,
   type QueryTypingsValue,
 } from 'drizzle-orm';
-import type { QueryWithTypings } from 'drizzle-orm/sql/sql';
+import type { BuildRelationalQueryResult } from 'drizzle-orm/relations';
+import {
+  StringChunk,
+  type QueryWithTypings,
+  type SQLChunk,
+} from 'drizzle-orm/sql/sql';
 
 import { normalizeMigrationConfig } from './migration-config.ts';
 import { transformSQL } from './sql/ast-transformer.ts';
@@ -30,35 +40,87 @@ const enum SavepointSupport {
   No = 2,
 }
 
+const PG_JSON_UNSUPPORTED_MESSAGE =
+  "Pg JSON/JSONB columns are not supported in DuckDB. Replace them with duckDbJson() to use DuckDB's native JSON type.";
+
+/**
+ * Query typing for params bound to a non-array column. DuckDB sessions never
+ * coerce these params from Postgres array literal strings.
+ * @internal
+ */
+export const DUCKDB_SCALAR_COLUMN_TYPING =
+  'duckdb:scalar' as unknown as QueryTypingsValue;
+
+// Drizzle's relational builder emits Postgres JSON functions. DuckDB names
+// them differently, so rewrite the exact template chunks it produces.
+// json_group_array is a macro and rejects ORDER BY, so aggregate with list().
+const RELATIONAL_JSON_CHUNKS = new Map([
+  ['json_build_array(', 'json_array('],
+  ['coalesce(json_agg(', 'coalesce(to_json(list('],
+  ["), '[]'::json)", ")), '[]'::json)"],
+]);
+
+// DuckDB rejects parameterized LIMIT/OFFSET in correlated subqueries, which
+// is how relational queries load nested relations.
+const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
+
+function rewriteRelationalJsonChunks(chunks: SQLChunk[]): void {
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (is(chunk, StringChunk)) {
+      const value = chunk.value.length === 1 ? chunk.value[0] : undefined;
+      const replacement =
+        value === undefined ? undefined : RELATIONAL_JSON_CHUNKS.get(value);
+      const next = chunks[index + 1] as unknown;
+      if (replacement) {
+        chunks[index] = new StringChunk(replacement);
+      } else if (
+        value !== undefined &&
+        RELATIONAL_LIMIT_CHUNKS.has(value) &&
+        Number.isSafeInteger(next)
+      ) {
+        chunks[index + 1] = new StringChunk(String(next));
+      }
+    } else if (Array.isArray(chunk)) {
+      rewriteRelationalJsonChunks(chunk);
+    } else if (is(chunk, SQL)) {
+      rewriteRelationalJsonChunks(chunk.queryChunks);
+    } else if (is(chunk, SQL.Aliased)) {
+      rewriteRelationalJsonChunks(chunk.sql.queryChunks);
+    } else if (is(chunk, Subquery)) {
+      rewriteRelationalJsonChunks((chunk._.sql as SQL).queryChunks);
+    }
+  }
+}
+
 export class DuckDBDialect extends PgDialect {
   static readonly [entityKind]: string = 'DuckDBPgDialect';
-  // Track if PG JSON columns were detected during the current query preparation.
-  // Reset before each query via DuckDBSession to keep detection per-query.
-  private hasPgJsonColumn = false;
   // Track savepoint support per-dialect instance to avoid cross-contamination
   // when multiple database connections with different capabilities exist.
   private savepointsSupported: SavepointSupport = SavepointSupport.Unknown;
 
   /**
-   * Reset the PG JSON detection flag. Should be called before preparing a new query.
+   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
+   * method is a no-op and will be removed in the next major version.
    */
-  resetPgJsonFlag(): void {
-    this.hasPgJsonColumn = false;
-  }
+  resetPgJsonFlag(): void {}
 
   /**
-   * Mark that a PG JSON/JSONB column was detected during query preparation.
+   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
+   * method is a no-op and will be removed in the next major version.
    */
-  markPgJsonDetected(): void {
-    this.hasPgJsonColumn = true;
-  }
+  markPgJsonDetected(): void {}
 
-  assertNoPgJsonColumns(): void {
-    if (this.hasPgJsonColumn) {
-      throw new Error(
-        "Pg JSON/JSONB columns are not supported in DuckDB. Replace them with duckDbJson() to use DuckDB's native JSON type."
-      );
-    }
+  /**
+   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
+   * method is a no-op and will be removed in the next major version.
+   */
+  assertNoPgJsonColumns(): void {}
+
+  // Drizzle passes escapeName unbound, so it must not use `this`. drizzle-orm
+  // before 0.45.2 did not escape embedded quotes (GHSA-gpj5-g38j-94v9).
+  override escapeName(name: string): string {
+    return `"${name.replace(/"/g, '""')}"`;
   }
 
   /**
@@ -95,9 +157,10 @@ export class DuckDBDialect extends PgDialect {
     const legacySequence = 'migrations_pk_seq';
 
     const escapeIdentifier = (value: string) => value.replace(/"/g, '""');
+    // nextval() takes the qualified name as a string literal.
     const sequenceLiteral = `"${escapeIdentifier(
       migrationsSchema
-    )}"."${escapeIdentifier(migrationsSequence)}"`;
+    )}"."${escapeIdentifier(migrationsSequence)}"`.replace(/'/g, "''");
     const migrationTable = sql`${sql.identifier(
       migrationsSchema
     )}.${sql.identifier(migrationsTableName)}`;
@@ -180,14 +243,14 @@ export class DuckDBDialect extends PgDialect {
     }
   }
 
+  // Drizzle passes prepareTyping unbound, so it must not use `this`.
   override prepareTyping(
     encoder: DriverValueEncoder<unknown, unknown>
   ): QueryTypingsValue {
     if (is(encoder, PgJsonb) || is(encoder, PgJson)) {
-      this.markPgJsonDetected();
-      throw new Error(
-        "Pg JSON/JSONB columns are not supported in DuckDB. Replace them with duckDbJson() to use DuckDB's native JSON type."
-      );
+      throw new Error(PG_JSON_UNSUPPORTED_MESSAGE);
+    } else if (is(encoder, PgArray)) {
+      return 'none';
     } else if (is(encoder, PgNumeric)) {
       return 'decimal';
     } else if (is(encoder, PgTime)) {
@@ -198,9 +261,22 @@ export class DuckDBDialect extends PgDialect {
       return 'date';
     } else if (is(encoder, PgUUID)) {
       return 'uuid';
+    } else if (is(encoder, Column)) {
+      return DUCKDB_SCALAR_COLUMN_TYPING;
     } else {
       return 'none';
     }
+  }
+
+  override buildRelationalQueryWithoutPK(
+    config: Parameters<PgDialect['buildRelationalQueryWithoutPK']>[0]
+  ): BuildRelationalQueryResult<PgTable, PgColumn> {
+    const result = super.buildRelationalQueryWithoutPK(config);
+    // Nested relations recurse through this method; rewrite once at the root.
+    if (!config.nestedQueryRelation && is(result.sql, SQL)) {
+      rewriteRelationalJsonChunks(result.sql.queryChunks);
+    }
+    return result;
   }
 
   override sqlToQuery(

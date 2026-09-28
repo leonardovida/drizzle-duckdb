@@ -1,9 +1,12 @@
 import {
+  JSDuckDBValueConverter,
+  JsonDuckDBValueConverter,
   listValue,
   timestampValue,
   type DuckDBConnection,
   type DuckDBInstance,
   type DuckDBValue,
+  type DuckDBValueConverter,
 } from '@duckdb/node-api';
 import {
   DUCKDB_VALUE_MARKER,
@@ -63,6 +66,16 @@ type ResultJsonRowsLike = {
   getColumnsObjectJson?: () => Promise<unknown>;
 };
 
+type DataChunkLike = {
+  rowCount: number;
+  convertRows: <T>(converter: DuckDBValueConverter<T>) => (T | null)[][];
+};
+
+type ResultChunksLike = {
+  fetchAllChunks?: () => Promise<DataChunkLike[]>;
+  fetchChunk?: () => Promise<DataChunkLike | null>;
+};
+
 type ClosableResource = {
   close?: () => Promise<void> | void;
   closeSync?: () => void;
@@ -82,6 +95,8 @@ interface PreferredResultReader<T> {
 export interface PrepareParamsOptions {
   rejectStringArrayLiterals?: boolean;
   warnOnStringArrayLiteral?: () => void;
+  /** Indexes of params bound to non-array columns. They are never coerced. */
+  scalarParamIndexes?: ReadonlySet<number>;
 }
 
 async function readPreferredResult<T>({
@@ -155,7 +170,11 @@ export function prepareParams(
 
   for (let index = 0; index < params.length; index += 1) {
     const param = params[index];
-    if (typeof param === 'string' && param.length > 0) {
+    if (
+      typeof param === 'string' &&
+      param.length > 0 &&
+      !options.scalarParamIndexes?.has(index)
+    ) {
       const trimmed = param.trim();
 
       if (trimmed && isPgArrayLiteral(trimmed)) {
@@ -433,12 +452,68 @@ function wrapUnsupportedNodeApiTypeError(
   return wrapped;
 }
 
+/**
+ * Reading chunks consumes a node-api result, so a reader that fails partway
+ * must not be retried on the same result: the retry sees no rows. Convert the
+ * fetched chunks instead, which can be retried with another converter.
+ */
+function convertChunkRows(
+  chunks: DataChunkLike[],
+  preferJson: boolean
+): unknown[][] {
+  const convert = <T>(converter: DuckDBValueConverter<T>) => {
+    const rows: unknown[][] = [];
+    for (const chunk of chunks) {
+      for (const row of chunk.convertRows(converter)) {
+        rows.push(row);
+      }
+    }
+    return rows;
+  };
+
+  if (preferJson) {
+    try {
+      return convert(JsonDuckDBValueConverter);
+    } catch {
+      // Fall back when precision-preserving materialization is unavailable.
+    }
+  }
+
+  return convert(JSDuckDBValueConverter);
+}
+
+async function readResultChunkRows(
+  result: ResultTypeMetadataLike &
+    Required<Pick<ResultChunksLike, 'fetchAllChunks'>>
+): Promise<unknown[][]> {
+  try {
+    return convertChunkRows(
+      await result.fetchAllChunks(),
+      prefersJsonMaterialization(result)
+    );
+  } catch (error) {
+    throw wrapUnsupportedNodeApiTypeError(result, error);
+  }
+}
+
+function hasFetchAllChunks<T extends ResultChunksLike>(
+  result: T
+): result is T & Required<Pick<ResultChunksLike, 'fetchAllChunks'>> {
+  return typeof result.fetchAllChunks === 'function';
+}
+
 async function materializeResultRows(
   result: {
     getRowsJS: () => Promise<unknown[][] | undefined>;
   } & ResultTypeMetadataLike &
-    ResultJsonRowsLike
+    ResultJsonRowsLike &
+    ResultChunksLike
 ): Promise<MaterializedRows> {
+  if (hasFetchAllChunks(result)) {
+    const rows = await readResultChunkRows(result);
+    return { columns: resolveResultColumns(result), rows };
+  }
+
   const getRowsJson =
     typeof result.getRowsJson === 'function'
       ? result.getRowsJson.bind(result)
@@ -478,12 +553,45 @@ async function executePreparedQuery(
   });
 }
 
-type StreamResultLike = ResultTypeMetadataLike & {
-  yieldRowsJs: () => AsyncIterable<unknown[][]>;
-  yieldRowsJson?: () => AsyncIterable<unknown[][]>;
-  close?: () => Promise<void> | void;
-  cancel?: () => Promise<void> | void;
-};
+type StreamResultLike = ResultTypeMetadataLike &
+  ResultChunksLike & {
+    yieldRowsJs: () => AsyncIterable<unknown[][]>;
+    yieldRowsJson?: () => AsyncIterable<unknown[][]>;
+    close?: () => Promise<void> | void;
+    cancel?: () => Promise<void> | void;
+  };
+
+async function* yieldChunkRows(
+  fetchChunk: () => Promise<DataChunkLike | null>,
+  preferJson: boolean
+): AsyncGenerator<unknown[][], void, void> {
+  let useJson = preferJson;
+  let yieldedRows = false;
+
+  while (true) {
+    const chunk = await fetchChunk();
+    if (!chunk || chunk.rowCount === 0) {
+      return;
+    }
+
+    let rows: unknown[][] | undefined;
+    if (useJson) {
+      try {
+        rows = chunk.convertRows(JsonDuckDBValueConverter);
+      } catch (error) {
+        // Earlier chunks used JSON values; switching now would mix formats.
+        if (yieldedRows) {
+          throw error;
+        }
+        useJson = false;
+      }
+    }
+
+    rows ??= chunk.convertRows(JSDuckDBValueConverter);
+    yieldedRows = true;
+    yield rows;
+  }
+}
 
 async function closeStreamResult(result: StreamResultLike): Promise<void> {
   try {
@@ -790,12 +898,25 @@ async function* streamRawBatches(
         values
       )) as StreamResultLike;
       const columns = resolveResultColumns(result);
+      const fetchChunk =
+        typeof result.fetchChunk === 'function'
+          ? result.fetchChunk.bind(result)
+          : undefined;
       const preferJson =
         prefersJsonMaterialization(result) &&
         typeof result.yieldRowsJson === 'function';
 
       try {
         try {
+          if (fetchChunk) {
+            yield* chunkRowStream(
+              yieldChunkRows(fetchChunk, prefersJsonMaterialization(result)),
+              columns,
+              rowsPerChunk
+            );
+            return;
+          }
+
           if (preferJson) {
             let yieldedJsonRows = false;
             try {
@@ -882,7 +1003,17 @@ export async function executeArrowOnClient(
     }
 
     // Fallback: return column-major JS arrays to avoid per-row object creation.
-    const resultMetadata = result as unknown as ResultTypeMetadataLike;
+    const resultMetadata = result as unknown as ResultTypeMetadataLike &
+      ResultChunksLike;
+    if (hasFetchAllChunks(resultMetadata)) {
+      const rows = await readResultChunkRows(resultMetadata);
+      return mapRowsToColumnData(
+        resultMetadata.deduplicatedColumnNames?.() ??
+          resultMetadata.columnNames(),
+        rows
+      );
+    }
+
     const resultJsonRows = result as ResultJsonRowsLike;
     const getColumnsObjectJson =
       typeof resultJsonRows.getColumnsObjectJson === 'function'

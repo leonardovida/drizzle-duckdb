@@ -270,7 +270,10 @@ export class OlapBuilder {
     return this;
   }
 
-  build() {
+  // The result type stays `any` for compatibility: the selection is built at
+  // runtime, so the builder cannot infer measure and dimension keys.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build(): any {
     if (!this.source) {
       throw new Error('olap: .from() is required');
     }
@@ -294,20 +297,21 @@ export class OlapBuilder {
 
     Object.assign(selection, this.measureMap);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle's query builder types don't allow reassignment after groupBy
-    let query: any = this.db
+    // $dynamic() only widens the builder type so orderBy can be applied
+    // conditionally. It returns the same builder at runtime.
+    const query = this.db
       .select(selection as SelectedFields)
-      .from(this.source!)
-      .groupBy(...this.keys);
+      .from(this.source)
+      .groupBy(...this.keys)
+      .$dynamic();
 
-    if (this.orderByClauses.length > 0) {
-      query = query.orderBy(...this.orderByClauses);
-    }
-
-    return query;
+    return this.orderByClauses.length > 0
+      ? query.orderBy(...this.orderByClauses)
+      : query;
   }
 
-  run() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  run(): any {
     return this.build();
   }
 }
