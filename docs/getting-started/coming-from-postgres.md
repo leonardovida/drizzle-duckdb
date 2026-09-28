@@ -7,19 +7,19 @@ nav_order: 3
 
 # Coming from Postgres
 
-If you're already using Drizzle with Postgres, here's what you need to know to switch to DuckDB.
+If you already use Drizzle with Postgres, this page covers what changes when you switch to DuckDB.
 
 ## Key Differences
 
-| Feature                  | Drizzle Postgres      | Drizzle DuckDB                                                                  |
-| ------------------------ | --------------------- | ------------------------------------------------------------------------------- |
-| JSON columns             | `json()`, `jsonb()`   | `duckDbJson()` only                                                             |
-| Nested transactions      | `SAVEPOINT` supported | DuckDB 1.4.x and 1.5.x have no savepoints; driver probes once then reuses outer |
-| Array operators          | `@>`, `<@`, `&&`      | Auto-rewritten or use helpers                                                   |
-| Default schema           | `public`              | `main`                                                                          |
-| Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                          |
-| Result streaming         | Supported             | Chunked via `executeBatches()` / `executeArrow()`; no cursor streaming          |
-| Prepared statement cache | Yes                   | No                                                                              |
+| Feature                  | Drizzle Postgres      | Drizzle DuckDB                                                                                       |
+| ------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------- |
+| JSON columns             | `json()`, `jsonb()`   | `duckDbJson()` only                                                                                  |
+| Nested transactions      | `SAVEPOINT` supported | DuckDB 1.4.x and 1.5.x have no savepoints. The driver probes once, then reuses the outer transaction |
+| Array operators          | `@>`, `<@`, `&&`      | Supported natively, or use helpers                                                                   |
+| Default schema           | `public`              | `main`                                                                                               |
+| Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                                               |
+| Result streaming         | Supported             | Chunked reads via `executeBatches()`, no cursor API                                                  |
+| Prepared statement cache | Yes                   | Opt-in per-connection cache via `prepareCache`                                                       |
 
 ## Required Changes
 
@@ -86,7 +86,7 @@ Option A: Use explicit DuckDB helpers:
 
 ```typescript
 // Before (Postgres)
-import { arrayContains } from 'drizzle-orm/pg-core';
+import { arrayContains } from 'drizzle-orm';
 
 .where(arrayContains(products.tags, ['sale']))
 
@@ -96,14 +96,13 @@ import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 .where(duckDbArrayContains(products.tags, ['sale']))
 ```
 
-Option B: Let automatic rewriting handle it (default behavior):
+Option B: Keep the Postgres operators. DuckDB supports `@>`, `<@` and `&&` on lists, so the SQL runs unchanged:
 
 ```typescript
-// This still works - operators are auto-rewritten
-import { arrayContains } from 'drizzle-orm/pg-core';
+import { arrayContains } from 'drizzle-orm';
 
 .where(arrayContains(products.tags, ['sale']))
-// Becomes: WHERE array_has_all(tags, ['sale'])
+// Runs as: WHERE "products"."tags" @> $1
 ```
 
 ## Schema Migration
@@ -155,20 +154,28 @@ await db.transaction(async (tx) => {
 // Neither Alice nor Bob are inserted
 ```
 
-**Solution**: Avoid nested transactions or handle rollback logic manually:
+**Solution**: Avoid nested transactions. DuckDB aborts the whole transaction when any statement fails. Catching the error does not keep earlier writes. Validate before writing, or run the risky write in its own `db.transaction()`:
 
 ```typescript
 await db.transaction(async (tx) => {
   await tx.insert(users).values({ name: 'Alice' });
-
-  try {
-    await tx.insert(users).values({ name: 'Bob' });
-  } catch (e) {
-    // Handle error without rolling back Alice
-    console.error('Failed to insert Bob:', e);
-  }
 });
+
+try {
+  await db.transaction(async (tx) => {
+    await tx.insert(users).values({ name: 'Bob' });
+  });
+} catch (e) {
+  // Alice is already committed
+  console.error('Failed to insert Bob:', e);
+}
 ```
+
+If you catch a failed statement inside the callback, `db.transaction()` still rolls back and rejects with `DuckDB aborted the transaction because a statement inside it failed. ...`.
+
+### Transaction Config Is Ignored
+
+`db.transaction(fn, { isolationLevel: 'serializable' })` and the other config options are deprecated. DuckDB has no `SET TRANSACTION`, so the driver ignores the config and prints a one-time warning. The next major version will throw.
 
 ## Connection Setup
 
@@ -225,7 +232,7 @@ These features work the same in both:
 - Joins (all types)
 - Subqueries
 - CTEs (`$with()`, `.with()`)
-- Transactions (single-level)
+- Transactions (single-level, without `isolationLevel` or other transaction config, which DuckDB ignores)
 - Schema definitions (with noted exceptions)
 
 ## Performance Considerations
@@ -258,12 +265,14 @@ for (const user of manyUsers) {
 - [ ] Consider `duckDbTimestamp()` for timestamp columns
 - [ ] Update DDL: Replace `SERIAL` with sequences
 - [ ] Review nested transaction usage
+- [ ] Remove `db.transaction()` config such as `isolationLevel` (deprecated and ignored)
+- [ ] Stop catching statement errors inside a transaction to continue it
 - [ ] Test array operations
 - [ ] Update connection code
 - [ ] Review Drizzle Kit generated SQL
 
 ## See Also
 
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Full compatibility matrix
-- [Troubleshooting]({{ '/reference/troubleshooting' | relative_url }}) - Common issues
-- [FAQ]({{ '/reference/faq' | relative_url }}) - Frequently asked questions
+- [Limitations]({{ '/reference/limitations' | relative_url }}): compatibility matrix
+- [Troubleshooting]({{ '/reference/troubleshooting' | relative_url }}): common issues
+- [FAQ]({{ '/reference/faq' | relative_url }}): frequently asked questions

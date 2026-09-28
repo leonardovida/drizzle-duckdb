@@ -19,6 +19,7 @@ This example demonstrates Drizzle DuckDB with MotherDuck cloud database, queryin
 - Common Table Expressions (CTEs)
 - DuckDB date/time functions
 - Percentile calculations
+- Parallel queries on a connection pool
 
 ## Prerequisites
 
@@ -31,7 +32,7 @@ This example demonstrates Drizzle DuckDB with MotherDuck cloud database, queryin
 
 ## Connecting to MotherDuck
 
-Use the async `drizzle()` entrypoint for automatic pooling (default pool size: 4). This avoids serializing concurrent requests when hitting MotherDuck from an API or script.
+Use the async `drizzle()` entrypoint for automatic pooling (default pool size: 4). This avoids serializing concurrent requests when hitting MotherDuck from an API or script. The example uses the `standard` preset (6 connections).
 
 ```typescript
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
@@ -41,7 +42,7 @@ if (!motherDuckToken) {
   throw new Error('MOTHERDUCK_TOKEN is required');
 }
 
-// Auto-pooling connection (size 4 by default)
+// Auto-pooling connection
 const db = await drizzle({
   connection: {
     path: 'md:',
@@ -51,7 +52,7 @@ const db = await drizzle({
 });
 ```
 
-Want fine-grained pool control (timeouts, queue limits, recycling)? Build the pool manually:
+The `pool` option also accepts `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`. Build the pool manually when you need a `setup` hook or want to share the pool:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
@@ -94,7 +95,7 @@ const taxiSample = pgTable('taxi_sample', {
 
 ## Creating a View from Sample Data
 
-MotherDuck provides sample datasets. Create a view for efficient querying:
+MotherDuck provides sample datasets. Create a view that limits the rows the later queries read:
 
 ```typescript
 // Create temp view from MotherDuck's sample_data.nyc.taxi
@@ -111,6 +112,10 @@ await db.execute(sql`
   LIMIT 100000
 `);
 ```
+
+{: .warning }
+
+> Temp views exist only on the connection that created them. On a pool, a later query can run on a different connection that has no `taxi_sample` view. The example runs these steps one at a time, so the pool reuses its single idle connection. For parallel queries, read the shared table directly, as shown in [Parallel Queries](#parallel-queries).
 
 ## Type-Safe Queries
 
@@ -230,9 +235,34 @@ const stats = summary[0];
 console.log(`Median fare: $${stats.median_fare.toFixed(2)}`);
 ```
 
+## Parallel Queries
+
+`Promise.all` spreads queries across pooled connections. Each query reads the shared `sample_data.nyc.taxi` table through a `LIMIT` subquery instead of the temp view:
+
+```typescript
+const sharedSample = sql`(
+  SELECT * FROM sample_data.nyc.taxi LIMIT 100000
+) AS taxi_sample`;
+
+const [hourly, distance, passengers] = await Promise.all([
+  db.execute(sql`
+    SELECT date_part('hour', tpep_pickup_datetime) as hour, COUNT(*) as trips
+    FROM ${sharedSample} GROUP BY 1 ORDER BY 1 LIMIT 5
+  `),
+  db.execute(sql`
+    SELECT CASE WHEN trip_distance < 5 THEN 'short' ELSE 'long' END as type, COUNT(*) as trips
+    FROM ${sharedSample} GROUP BY 1
+  `),
+  db.execute(sql`
+    SELECT passenger_count, AVG(total_amount) as avg_fare
+    FROM ${sharedSample} GROUP BY 1 ORDER BY 1 LIMIT 5
+  `),
+]);
+```
+
 ## Cleanup
 
-If you used the async `drizzle()` connection-string form, call `db.close()` to clean up the pool and instance. For manual pools/connections, close them directly.
+If you used the async `drizzle()` connection-string form, call `db.close()` to clean up the pool and instance. For manual pools and connections, close them directly.
 
 ```typescript
 await db.close();
@@ -251,8 +281,10 @@ bun run example/motherduck-nyc-taxi.ts
 ## Expected Output
 
 ```
-Connecting to MotherDuck...
-Connected to MotherDuck!
+Connecting to MotherDuck with connection pooling...
+
+Connected to MotherDuck with connection pool!
+
 ============================================================
 NYC TAXI DATA ANALYSIS
 ============================================================
@@ -281,12 +313,12 @@ NYC TAXI DATA ANALYSIS
 
 1. **MotherDuck Connection**: Use `md:` prefix with authentication token
 2. **Sample Data**: MotherDuck provides `sample_data.nyc.taxi` for testing
-3. **Temp Views**: Create views to limit data and optimize queries
+3. **Temp Views**: Create views to limit data, and remember they are per connection
 4. **Type Safety**: Schema definitions provide TypeScript inference
-5. **DuckDB Functions**: Full access to DuckDB's analytical functions
+5. **DuckDB Functions**: Raw SQL gives access to DuckDB's analytical functions
 
 ## See Also
 
-- [MotherDuck Integration]({{ '/integrations/motherduck' | relative_url }}) - Full MotherDuck guide
-- [Queries]({{ '/core/queries' | relative_url }}) - Query patterns
-- [Configuration]({{ '/reference/configuration' | relative_url }}) - Connection options
+- [MotherDuck Integration]({{ '/integrations/motherduck' | relative_url }}): full MotherDuck guide
+- [Queries]({{ '/core/queries' | relative_url }}): query patterns
+- [Configuration]({{ '/reference/configuration' | relative_url }}): connection options

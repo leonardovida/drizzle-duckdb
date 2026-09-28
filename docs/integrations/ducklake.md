@@ -52,7 +52,18 @@ const db = await drizzle({
 
 ## Pooling Guidance
 
-DuckLake catalogs stored in a DuckDB file are single client only. When a local catalog is detected, `drizzle()` defaults to a single connection pool size of 1. You can override this with `pool`, but it can cause write conflicts.
+A DuckLake catalog stored in a local DuckDB file supports one DuckDB process at a time. When the catalog is local and you do not set `pool`, `drizzle()` uses a pool of size 1.
+
+A catalog counts as local when it is `:memory:`, ends in `.duckdb`, `.ddb` or `.ducklake`, or looks like a file path. `md:` catalogs, URLs and Postgres, MySQL or SQLite connection strings do not.
+
+You can set a larger `pool`. All pooled connections share one DuckDB instance and one attached catalog. The driver runs the attach with `ATTACH IF NOT EXISTS` and sets up one connection at a time, so extra connections reuse the catalog. With a local catalog and a pool size above 1, `drizzle()` logs a `[ducklake]` warning about write conflicts.
+
+The driver generates SQL of this form, with each attach option written as `NAME value`:
+
+```sql
+ATTACH IF NOT EXISTS 'ducklake:./ducklake.duckdb' AS "ducklake" (CREATE_IF_NOT_EXISTS true, DATA_PATH './ducklake-data');
+USE "ducklake";
+```
 
 ## Manual Setup
 

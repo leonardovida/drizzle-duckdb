@@ -1,7 +1,7 @@
 ---
 layout: default
 title: OLAP Helpers
-parent: API
+parent: API Reference
 nav_order: 7
 ---
 
@@ -292,7 +292,7 @@ in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
 config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and
 cannot use reserved runtime names such as `MOTHERDUCK_TOKEN` or
 `MOTHERDUCK_FLIGHTS_RUN`. Config values cannot contain NULL bytes.
-`flightSecretNames` references MotherDuck `TYPE flights` secrets; each secret
+`flightSecretNames` references MotherDuck `TYPE flights` secrets. Each secret
 param is exposed as `<SECRET_NAME>_<KEY>`, so a secret named `api_secret` with
 param `API_KEY` becomes `API_SECRET_API_KEY`.
 

@@ -11,7 +11,7 @@ Drizzle DuckDB supports all standard Postgres column types from `drizzle-orm/pg-
 
 ## Standard Column Types
 
-Use these from `drizzle-orm/pg-core` - they work with DuckDB:
+Use these from `drizzle-orm/pg-core`. They work with DuckDB:
 
 ```typescript
 import {
@@ -115,7 +115,9 @@ const table = pgTable('example', {
 });
 ```
 
-**Supported element types:**
+**Element types:**
+
+The element type is a DuckDB type string. These names autocomplete in your editor:
 
 - Integers: `'SMALLINT'`, `'INTEGER'`, `'BIGINT'`, `'HUGEINT'`
 - Unsigned: `'USMALLINT'`, `'UINTEGER'`, `'UBIGINT'`
@@ -124,6 +126,8 @@ const table = pgTable('example', {
 - Boolean: `'BOOLEAN'`, `'BOOL'`
 - Binary: `'BLOB'`, `'BYTEA'`
 - Date/time: `'DATE'`, `'TIME'`, `'TIMESTAMP'`, `'TIMESTAMPTZ'`
+
+Any other DuckDB type string is accepted too, for example `'UUID'` or `'DECIMAL(10, 2)'`. Empty lists and arrays can be inserted.
 
 **Usage:**
 
@@ -168,6 +172,8 @@ const users = pgTable('users', {
 });
 ```
 
+Field types in the schema object accept any DuckDB type string.
+
 **Usage:**
 
 ```typescript
@@ -186,7 +192,11 @@ console.log(user[0].address.city); // 'Portland'
 
 ### Map
 
-For key-value pairs with string keys:
+For key-value pairs. Keys are `STRING` unless you pass `keyType`:
+
+```typescript
+duckDbMap<TData>(name, valueType, options?: { keyType?: string })
+```
 
 ```typescript
 const config = pgTable('config', {
@@ -200,8 +210,15 @@ const config = pgTable('config', {
 
   // Map with list values
   tags: duckDbMap<Record<string, string[]>>('tags', 'TEXT[]'),
+
+  // Map with VARCHAR keys: MAP (VARCHAR, INTEGER)
+  totals: duckDbMap<Record<string, number>>('totals', 'INTEGER', {
+    keyType: 'VARCHAR',
+  }),
 });
 ```
+
+`valueType` and `keyType` accept any DuckDB type string. Common names autocomplete.
 
 **Usage:**
 
@@ -214,6 +231,8 @@ await db.insert(config).values({
   },
 });
 ```
+
+Reads return an array of `{ key, value }` entries at runtime, not the `Record` shown in the TypeScript type. See [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}#map-key-value-pairs) for a conversion example.
 
 ### JSON
 
@@ -270,10 +289,30 @@ const events = pgTable('events', {
 });
 ```
 
+**Options for `duckDbTimestamp`:**
+
+| Option         | Values                                                                              | Default             | Description                      |
+| -------------- | ----------------------------------------------------------------------------------- | ------------------- | -------------------------------- |
+| `withTimezone` | `boolean`                                                                           | `false`             | Use `TIMESTAMPTZ`                |
+| `mode`         | `'date'`, `'string'`                                                                | `'date'`            | Return `Date` objects or strings |
+| `precision`    | `number`                                                                            | none                | Emit `TIMESTAMP(p)`              |
+| `duckDbType`   | `'TIMESTAMP'`, `'TIMESTAMPTZ'`, `'TIMESTAMP_S'`, `'TIMESTAMP_MS'`, `'TIMESTAMP_NS'` | from `withTimezone` | Pick a DuckDB storage variant    |
+| `bindMode`     | `'auto'`, `'bind'`, `'literal'`                                                     | `'auto'`            | How values are sent. See below   |
+
+`bindMode` controls how inserted values reach DuckDB:
+
+- `'auto'`: bind a native timestamp parameter on Node.js. Use a SQL literal on Bun or when `DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS` is set to a value other than `0`.
+- `'bind'`: always bind a native timestamp parameter.
+- `'literal'`: always inline a SQL literal such as `TIMESTAMP '2024-01-15 10:30:00.000+00'`.
+
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `TIMESTAMP_NS` columns always use literals.
+
+`duckDbTime` accepts `withTimezone` and `duckDbType` (`'TIME'`, `'TIMETZ'`, `'TIME_NS'`). TIME values read back as strings and keep microseconds: `'10:30:00.123456'` when sub-millisecond digits are present, otherwise three fractional digits such as `'10:30:00.000'`.
+
 **Modes:**
 
-- `mode: 'date'` (default) - Returns JavaScript `Date` objects
-- `mode: 'string'` - Returns ISO-formatted strings like `'2024-01-15 10:30:00+00'`
+- `mode: 'date'` (default): returns JavaScript `Date` objects
+- `mode: 'string'`: returns ISO-formatted strings like `'2024-01-15 10:30:00+00'`
 
 **Usage:**
 
@@ -348,7 +387,7 @@ await db.insert(tasks).values({
 
 ## Array Query Helpers
 
-For querying array columns, use these helpers instead of Postgres operators:
+For querying array columns, use these helpers. Drizzle's Postgres operators (`arrayContains` and the others from `drizzle-orm`) also work, because DuckDB supports `@>`, `<@` and `&&` natively:
 
 ```typescript
 import {
@@ -412,14 +451,14 @@ const results = await db
 
 Maps to DuckDB's `array_has_any(column, values)`.
 
-## Automatic Array Operator Rewriting
+## Postgres Array Operators
 
-The driver automatically rewrites Postgres array operators to DuckDB equivalents via AST transformation:
+DuckDB supports the Postgres array operators on `LIST` and fixed-size `ARRAY` columns, so the driver sends them unchanged:
 
-| Postgres | DuckDB                       |
+| Postgres | Same result as               |
 | -------- | ---------------------------- |
 | `@>`     | `array_has_all(left, right)` |
 | `<@`     | `array_has_all(right, left)` |
 | `&&`     | `array_has_any(left, right)` |
 
-Postgres array operators are automatically converted when using `ARRAY[...]` syntax. Using the explicit helpers (`duckDbArrayContains`, etc.) is recommended for clarity and to avoid parser limitations with DuckDB-native `[...]` syntax.
+The explicit helpers (`duckDbArrayContains`, etc.) produce the `array_has_*` calls directly.

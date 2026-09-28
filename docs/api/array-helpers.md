@@ -7,7 +7,7 @@ nav_order: 4
 
 # Array Helpers
 
-DuckDB uses different functions than Postgres for array operations. These helpers provide a clean API for common array queries.
+DuckDB uses different functions than Postgres for array operations. These helpers cover common array queries.
 
 ## Overview
 
@@ -17,6 +17,16 @@ DuckDB uses different functions than Postgres for array operations. These helper
 | `duckDbArrayContained` | `<@`                | `array_has_all(values, column)` |
 | `duckDbArrayOverlaps`  | `&&`                | `array_has_any(column, values)` |
 
+JavaScript arrays passed as `values` are inlined as a `list_value(...)` literal. Pass a `SQLWrapper` to use a column, subquery or bound parameter instead.
+
+The same helpers are also exported under DuckDB function names:
+
+| Alias              | Same as                |
+| ------------------ | ---------------------- |
+| `arrayHasAll`      | `duckDbArrayContains`  |
+| `arrayHasAny`      | `duckDbArrayOverlaps`  |
+| `arrayContainedBy` | `duckDbArrayContained` |
+
 ## duckDbArrayContains
 
 Check if an array contains **all** specified values.
@@ -24,9 +34,9 @@ Check if an array contains **all** specified values.
 ### Signature
 
 ```typescript
-function duckDbArrayContains(
+function duckDbArrayContains<T>(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: T[] | SQLWrapper
 ): SQL;
 ```
 
@@ -50,8 +60,8 @@ const results = await db
 ### Generated SQL
 
 ```sql
-SELECT * FROM products
-WHERE array_has_all(tags, ['electronics', 'sale'])
+select ... from "products"
+where array_has_all("products"."tags", list_value('electronics', 'sale'))
 ```
 
 ## duckDbArrayContained
@@ -61,9 +71,9 @@ Check if an array is **contained by** the specified values (all elements of the 
 ### Signature
 
 ```typescript
-function duckDbArrayContained(
+function duckDbArrayContained<T>(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: T[] | SQLWrapper
 ): SQL;
 ```
 
@@ -84,8 +94,8 @@ const results = await db
 ### Generated SQL
 
 ```sql
-SELECT * FROM products
-WHERE array_has_all(['electronics', 'sale', 'featured', 'new'], tags)
+select ... from "products"
+where array_has_all(list_value('electronics', 'sale', 'featured', 'new'), "products"."tags")
 ```
 
 ## duckDbArrayOverlaps
@@ -95,9 +105,9 @@ Check if arrays have **any** common elements.
 ### Signature
 
 ```typescript
-function duckDbArrayOverlaps(
+function duckDbArrayOverlaps<T>(
   column: SQLWrapper,
-  values: unknown[] | SQLWrapper
+  values: T[] | SQLWrapper
 ): SQL;
 ```
 
@@ -116,8 +126,8 @@ const results = await db
 ### Generated SQL
 
 ```sql
-SELECT * FROM products
-WHERE array_has_any(tags, ['electronics', 'books'])
+select ... from "products"
+where array_has_any("products"."tags", list_value('electronics', 'books'))
 ```
 
 ## Using with SQLWrapper
@@ -141,28 +151,25 @@ const results = await db
   .where(duckDbArrayOverlaps(products.tags, popularTags));
 ```
 
-## Automatic Operator Rewriting
+## Postgres Array Operators
 
-By default, Drizzle DuckDB rewrites Postgres array operators to DuckDB functions:
+DuckDB supports `@>`, `<@` and `&&` on `LIST` and fixed-size `ARRAY` values with the same results as `array_has_all` and `array_has_any`, so Drizzle's Postgres helpers work without any rewrite:
 
 ```typescript
-import { arrayContains, arrayOverlaps } from 'drizzle-orm/pg-core';
+import { arrayContains, arrayOverlaps } from 'drizzle-orm';
 
-// This Postgres-style code...
+// Runs as: WHERE "products"."tags" @> $1
 const results = await db
   .select()
   .from(products)
   .where(arrayContains(products.tags, ['sale']));
-
-// ...is automatically rewritten to:
-// WHERE array_has_all(tags, ARRAY['sale'])
 ```
 
 {: .highlight }
 
 > **Recommendation**
 >
-> Use the explicit `duckDbArray*` helpers for clarity. They make it obvious that you're using DuckDB-specific functions and avoid AST parser limitations with DuckDB-native `[...]` array syntax.
+> Use the explicit `duckDbArray*` helpers when you want the generated SQL to show the DuckDB function names. They inline JavaScript arrays as `list_value(...)` literals, while Drizzle's helpers bind the array as a parameter.
 
 ## Complete Example
 
@@ -222,6 +229,6 @@ async function main() {
 
 ## See Also
 
-- [Array Operations]({{ '/core/arrays' | relative_url }}) - Detailed guide on array handling
-- [Column Types]({{ '/api/columns' | relative_url }}) - `duckDbList` and `duckDbArray` types
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Array operator differences
+- [Array Operations]({{ '/core/arrays' | relative_url }}): guide to array handling
+- [Column Types]({{ '/api/columns' | relative_url }}): `duckDbList` and `duckDbArray` types
+- [Limitations]({{ '/reference/limitations' | relative_url }}): array operator differences

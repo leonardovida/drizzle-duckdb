@@ -7,11 +7,11 @@ nav_order: 5
 
 # Performance Tuning
 
-Optimize your DuckDB application for maximum throughput and minimum latency.
+Settings and query patterns that affect DuckDB throughput and latency.
 
 ## Quick Wins
 
-These settings provide immediate performance improvements for most workloads:
+These settings help most workloads:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
@@ -33,7 +33,7 @@ const dbPooled = drizzle({ client: pool, prepareCache: { size: 64 } });
 
 ## Prepared Statement Caching
 
-Prepared statements are **5-10x faster** than ad-hoc queries. Enable caching to reuse prepared statements across identical queries.
+Reusing a prepared statement skips parsing and planning for repeated SQL. In the benchmark below, reuse ran about 20% faster than a fresh query. Enable caching to reuse prepared statements across identical queries.
 
 ### Configuration
 
@@ -170,14 +170,16 @@ for await (const chunk of db.executeBatchesRaw(
 }
 ```
 
-### Arrow Format
+### Columnar Results
 
-For interop with analytical tools:
+`executeArrow()` returns column-major data:
 
 ```typescript
-const arrow = await db.executeArrow(sql`SELECT * FROM large_table`);
-// Returns Arrow table for zero-copy analytics
+const columns = await db.executeArrow(sql`SELECT id, name FROM users`);
+// { id: [1, 2, ...], name: ['Alice', 'Bob', ...] }
 ```
+
+It returns an Arrow table only when the client result exposes an Arrow API. `@duckdb/node-api` does not, so with it you get plain JavaScript arrays keyed by column name. The whole result is materialized.
 
 ### Benchmark: Materialized vs Streaming
 
@@ -210,25 +212,18 @@ Narrow (2 columns):  4,707 ops/sec
 
 ### Prefer Native DuckDB Types
 
-Use DuckDB-native type helpers instead of Postgres equivalents:
+Use DuckDB-native column helpers instead of Postgres equivalents. `duckDbList`, `duckDbJson` and the other helpers are column builders. They wrap values at bind time, so pass plain arrays and objects:
 
 ```typescript
-import {
-  duckDbList,
-  duckDbArray,
-  duckDbJson,
-  duckDbStruct,
-} from '@duckdbfan/drizzle-duckdb';
+import { duckDbList, duckDbJson } from '@duckdbfan/drizzle-duckdb';
 
-// Faster: pre-wrapped DuckDB value
-await db.insert(table).values({
-  tags: duckDbList(['a', 'b', 'c']),
-  metadata: duckDbJson({ key: 'value' }),
+const table = pgTable('items', {
+  tags: duckDbList<string>('tags', 'VARCHAR'),
+  metadata: duckDbJson<{ key: string }>('metadata'),
 });
 
-// Slower: requires runtime conversion
 await db.insert(table).values({
-  tags: ['a', 'b', 'c'], // Converted at runtime
+  tags: ['a', 'b', 'c'],
   metadata: { key: 'value' },
 });
 ```
@@ -245,7 +240,7 @@ await db.execute(sql`
 
 ### Leverage DuckDB's Columnar Engine
 
-DuckDB excels at analytical queries. Structure queries to benefit from columnar processing:
+DuckDB is built for analytical queries. Structure queries to benefit from columnar processing:
 
 ```typescript
 // Good: Aggregation on large dataset (DuckDB strength)
@@ -271,18 +266,18 @@ When migrating from PostgreSQL, consider these performance differences:
 
 ### Array Operators
 
-PostgreSQL array operators (`@>`, `<@`, `&&`) are automatically rewritten to DuckDB functions. For best performance, use DuckDB-native array functions directly:
+PostgreSQL array operators (`@>`, `<@`, `&&`) run natively in DuckDB and are not rewritten, so they add no parsing overhead. The DuckDB-named helpers produce the equivalent `array_has_*` calls:
 
 ```typescript
 import { arrayHasAll, arrayHasAny } from '@duckdbfan/drizzle-duckdb';
 
-// Automatic rewrite (works but has parsing overhead on first execution)
+// Postgres operator, sent as written
 const result = await db
   .select()
   .from(posts)
-  .where(sql`${posts.tags} @> ARRAY['featured']`);
+  .where(sql`${posts.tags} @> ['featured']`);
 
-// Native DuckDB (no rewrite overhead)
+// DuckDB function names
 const result = await db
   .select()
   .from(posts)
@@ -313,7 +308,7 @@ const table = pgTable('events', {
 
 ### CTEs and JOINs
 
-CTEs work seamlessly. Column references in JOIN conditions are automatically qualified to prevent ambiguity errors:
+CTEs work as in Postgres. Column references in JOIN conditions are automatically qualified to prevent ambiguity errors:
 
 ```typescript
 const cte = db.$with('stats').as(
@@ -367,7 +362,7 @@ await warmUp(db);
 
 - [ ] Enable prepared statement caching (`prepareCache: { size: 64 }`)
 - [ ] Use connection pooling for concurrent access
-- [ ] Stream large result sets with `executeInBatches()`
+- [ ] Stream large result sets with `db.executeBatches()`
 - [ ] Select only needed columns
 - [ ] Use native DuckDB type helpers (`duckDbList`, `duckDbJson`, etc.)
 - [ ] Create indexes for frequently-queried columns
@@ -408,6 +403,6 @@ const db = drizzle(connection, {
 
 ## Next Steps
 
-- [Configuration]({{ '/reference/configuration' | relative_url }}) - All configuration options
-- [MotherDuck Integration]({{ '/integrations/motherduck' | relative_url }}) - Cloud database setup
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Known differences from Postgres
+- [Configuration]({{ '/reference/configuration' | relative_url }}): configuration options
+- [MotherDuck Integration]({{ '/integrations/motherduck' | relative_url }}): cloud database setup
+- [Limitations]({{ '/reference/limitations' | relative_url }}): known differences from Postgres

@@ -88,7 +88,7 @@ export async function getDb() {
 }
 ```
 
-This automatically creates a connection pool, which is critical for MotherDuck to handle concurrent API requests without serialization.
+This creates a connection pool, so concurrent API requests to MotherDuck run in parallel instead of one at a time.
 
 ### Custom Pool Size
 
@@ -107,7 +107,7 @@ db = await drizzle({
 
 Available presets: `'pulse'` (4), `'standard'` (6), `'jumbo'` (8), `'mega'` (12), `'giga'` (16).
 
-The `pool` option on `drizzle()` controls size/presets. Use manual pools for timeouts, queue limits, or connection recycling.
+The `pool` option on `drizzle()` accepts a preset or an object with `size`, `acquireTimeout`, `maxWaitingRequests`, `maxLifetimeMs` and `idleTimeoutMs`.
 
 ### Manual Pool Creation (Advanced)
 
@@ -139,7 +139,7 @@ export async function getDb() {
 }
 ```
 
-This form lets you set acquire timeouts, queue limits, and connection recycling policies in addition to pool size.
+Use this form when you need the `setup` hook or want to reuse the same pool across several `drizzle()` instances.
 
 ## Usage Examples
 

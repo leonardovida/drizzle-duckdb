@@ -31,13 +31,13 @@ const table = pgTable('t', { data: duckDbJson('data') });
 
 ## Array Operator Issues
 
-### Array operators fail with syntax error
+### Array operators fail with a conversion or binder error
 
 **Symptom**: Queries using `@>`, `<@`, or `&&` operators fail.
 
-**Cause**: DuckDB uses different functions for array operations.
+**Cause**: DuckDB supports these operators on `LIST` and fixed-size `ARRAY` values, and the driver sends them unchanged. They fail when one side is not a list, for example a string such as `'{a,b}'` or a column that is not a list type.
 
-**Solution**: Array operators are automatically rewritten via AST transformation. For clarity, you can also use explicit helpers:
+**Solution**: Make both sides lists, for example with `duckDbList()` columns and JavaScript arrays. You can also use the explicit helpers, which emit `array_has_all` and `array_has_any`:
 
 ```typescript
 import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
@@ -48,18 +48,23 @@ import { duckDbArrayContains } from '@duckdbfan/drizzle-duckdb';
 
 ### Warning about Postgres-style array literals
 
-**Symptom**: Console warnings about `'{1,2,3}'` style array literals.
+**Symptom**: The logger prints `[duckdb] Received a stringified Postgres-style array literal. Use duckDbList()/duckDbArray() or pass native arrays instead. You can also set rejectStringArrayLiterals=true to throw.`
 
-**Cause**: Postgres array literal syntax isn't supported in DuckDB.
+**Cause**: A parameter without column information, such as a plain `sql` template value, an `sql.param(...)` value or a bare `sql.placeholder(...)`, looks like a Postgres array literal such as `'{1,2,3}'`. DuckDB lists use `[...]` syntax. The driver converts it to a list when its contents parse as a JSON array. Values bound to a column, such as inserts into a `text` column, are stored as written and do not trigger this warning. Text written directly into the SQL string is not checked either.
 
 **Solution**: Use native JavaScript arrays or DuckDB list syntax:
 
 ```typescript
-// Wrong
-await db.execute(sql`SELECT * FROM t WHERE tags = '{a,b,c}'`);
+// Triggers the warning
+await db.execute(sql`SELECT * FROM t WHERE tags = ${'{a,b,c}'}`);
 
-// Correct
+// DuckDB list literal
 await db.execute(sql`SELECT * FROM t WHERE tags = ['a', 'b', 'c']`);
+
+// Bound JavaScript array
+await db.execute(
+  sql`SELECT * FROM t WHERE tags = ${sql.param(['a', 'b', 'c'])}`
+);
 ```
 
 To make this a hard error instead of a warning:
@@ -68,6 +73,7 @@ To make this a hard error instead of a warning:
 const db = drizzle(connection, {
   rejectStringArrayLiterals: true,
 });
+// Error: Stringified array literals are not supported. Use duckDbList()/duckDbArray() or pass native arrays.
 ```
 
 ## Transaction Issues
@@ -78,7 +84,7 @@ const db = drizzle(connection, {
 
 **Cause**: DuckDB doesn't support `SAVEPOINT`, so nested transactions reuse the outer transaction.
 
-**Solution**: Structure code to avoid nested transactions:
+**Solution**: Structure code to avoid nested transactions. DuckDB aborts the whole transaction when any statement fails. Catching the error does not keep earlier writes. Validate before writing, or run the risky write in its own `db.transaction()`:
 
 ```typescript
 // Problematic pattern
@@ -90,16 +96,52 @@ await db.transaction(async (tx) => {
   });
 });
 
-// Better: handle rollback logic at outer level
+// Better: commit Alice first, then run the risky write on its own
 await db.transaction(async (tx) => {
   await tx.insert(users).values({ name: 'Alice' });
-  try {
-    await tx.insert(users).values({ name: 'Bob' });
-  } catch (e) {
-    // Handle error without rolling back Alice
-  }
 });
+try {
+  await db.transaction(async (tx) => {
+    await tx.insert(users).values({ name: 'Bob' });
+  });
+} catch (e) {
+  // Alice is already committed
+}
 ```
+
+### "DuckDB aborted the transaction because a statement inside it failed"
+
+**Symptom**: `db.transaction()` rejects with `DuckDB aborted the transaction because a statement inside it failed. No changes were committed. ...` even though your callback finished.
+
+**Cause**: A statement inside the transaction failed and the callback caught the error. DuckDB aborts the whole transaction on a failed statement, so nothing can be committed. The original statement error is on `error.cause`.
+
+**Solution**: Rethrow the statement error, or catch it outside `db.transaction()`. Validate data before writing, or move the risky write into its own `db.transaction()`. Parser and catalog errors, such as a SQL typo or a missing table, do not abort the transaction.
+
+### "Transaction config is not supported by DuckDB and is ignored"
+
+**Symptom**: A one-time console warning when calling `db.transaction(fn, config)`.
+
+**Cause**: DuckDB has no `SET TRANSACTION`. Options such as `isolationLevel`, `accessMode` and `deferrable` are deprecated and ignored.
+
+**Solution**: Remove the config argument. The next major version will throw when it is passed.
+
+## Query Result Issues
+
+### "DuckDB returned a column type that @duckdb/node-api cannot materialize to JavaScript"
+
+**Symptom**: A query throws `DuckDB returned a column type that @duckdb/node-api cannot materialize to JavaScript for column "...". Cast those columns to a supported representation before selecting them, ...`.
+
+**Cause**: The result has a column type the installed `@duckdb/node-api` cannot convert to a JavaScript value, such as some `VARIANT` or `GEOMETRY` values on older clients.
+
+**Solution**: Cast or project the column in SQL, for example `CAST(col AS VARCHAR)`, `variant_extract(...)`, `ST_AsText(...)` or `ST_AsWKB(...)`.
+
+### DECIMAL values lose precision
+
+**Symptom**: Large `DECIMAL` values come back rounded.
+
+**Cause**: `DECIMAL` results are returned as JavaScript numbers, which keep about 15 significant digits.
+
+**Solution**: Cast to `VARCHAR` in SQL when you need the exact value, for example ``sql`CAST(${orders.total} AS VARCHAR)` ``, and parse it with a decimal library.
 
 ## Next.js Issues
 
@@ -346,7 +388,7 @@ console.log(explain);
 
 **Cause**: Results are fully materialized in memory.
 
-**Solution**: Use pagination:
+**Solution**: Stream the result with `db.executeBatches()` (see [DuckDBDatabase]({{ '/api/database' | relative_url }}#executebatches)), or use pagination:
 
 ```typescript
 const pageSize = 1000;
@@ -370,6 +412,6 @@ while (hasMore) {
 
 ## See Also
 
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Known limitations
-- [FAQ]({{ '/reference/faq' | relative_url }}) - Frequently asked questions
-- [Configuration]({{ '/reference/configuration' | relative_url }}) - All configuration options
+- [Limitations]({{ '/reference/limitations' | relative_url }}): known limitations
+- [FAQ]({{ '/reference/faq' | relative_url }}): frequently asked questions
+- [Configuration]({{ '/reference/configuration' | relative_url }}): configuration options

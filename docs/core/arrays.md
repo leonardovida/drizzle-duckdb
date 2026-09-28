@@ -78,7 +78,7 @@ const admins = await db
 Generated SQL:
 
 ```sql
-SELECT * FROM users WHERE array_has_all(tags, ['admin', 'verified'])
+select ... from "users" where array_has_all("users"."tags", list_value('admin', 'verified'))
 ```
 
 #### duckDbArrayContained
@@ -96,7 +96,7 @@ const regularUsers = await db
 Generated SQL:
 
 ```sql
-SELECT * FROM users WHERE array_has_all(['basic', 'standard', 'premium'], tags)
+select ... from "users" where array_has_all(list_value('basic', 'standard', 'premium'), "users"."tags")
 ```
 
 #### duckDbArrayOverlaps
@@ -116,37 +116,37 @@ const specialUsers = await db
 Generated SQL:
 
 ```sql
-SELECT * FROM users WHERE array_has_any(tags, ['vip', 'beta-tester', 'early-adopter'])
+select ... from "users" where array_has_any("users"."tags", list_value('vip', 'beta-tester', 'early-adopter'))
 ```
 
-## Automatic Operator Rewriting
+## Postgres Array Operators
 
-Drizzle DuckDB automatically rewrites Postgres array operators using AST transformation:
+DuckDB supports the Postgres array operators on `LIST` and fixed-size `ARRAY` columns, so the driver sends them unchanged:
 
-| Postgres | DuckDB Equivalent               |
+| Postgres | Same result as                  |
 | -------- | ------------------------------- |
 | `@>`     | `array_has_all(column, values)` |
 | `<@`     | `array_has_all(values, column)` |
 | `&&`     | `array_has_any(column, values)` |
 
-Postgres first-dimension bounds helpers are also rewritten for DuckDB lists:
-
-| Postgres Function   | DuckDB Equivalent                                                  |
-| ------------------- | ------------------------------------------------------------------ |
-| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
-| `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
-
-This means Postgres-style code works seamlessly:
+Postgres-style code keeps working:
 
 ```typescript
-import { arrayContains } from 'drizzle-orm/pg-core';
+import { arrayContains } from 'drizzle-orm';
 
-// This is automatically rewritten to DuckDB syntax
+// Runs as: where "users"."tags" @> $1
 const results = await db
   .select()
   .from(users)
   .where(arrayContains(users.tags, ['admin']));
 ```
+
+Postgres first-dimension bounds helpers are rewritten for DuckDB lists:
+
+| Postgres Function   | DuckDB Equivalent                                                  |
+| ------------------- | ------------------------------------------------------------------ |
+| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
+| `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
 
 ## Combining Array Conditions
 
@@ -256,12 +256,21 @@ const admins = await db.execute(sql`
 
 ## Postgres Array Literal Warning
 
-If you use Postgres-style array literals (`'{a,b,c}'`), you'll see a warning:
+Strings bound to a column are never changed. Inserting `'{1,2}'` into a `text` column, or comparing a `text` column with `eq(t.note, '{1,2}')`, stores and compares the string as written.
+
+Parameters without column information are checked for Postgres-style array literals. That covers values in plain `sql` templates, `sql.param(...)` values and bare `sql.placeholder(...)` values. Text written directly into the SQL string is not checked:
 
 ```typescript
-// This triggers a warning
-await db.execute(sql`SELECT * FROM users WHERE tags = '{a,b,c}'`);
-// Warning: Postgres-style array literals are not supported
+// Checked: a plain sql template parameter
+await db.execute(sql`SELECT * FROM users WHERE scores = ${'{1,2}'}`);
+```
+
+When such a parameter starts with `{` and ends with `}`, the driver converts it to a list if its contents parse as a JSON array after the braces become brackets. `'{1,2}'` becomes `[1, 2]` and `'{"a","b"}'` becomes `['a', 'b']`. A string such as `'{a,b,c}'` does not parse and stays a string.
+
+In both cases the driver sends a warning through the configured logger, once per session. Pass `arrayLiteralWarning` to receive it in your own callback instead. The logged message is:
+
+```
+[duckdb] Received a stringified Postgres-style array literal. Use duckDbList()/duckDbArray() or pass native arrays instead. You can also set rejectStringArrayLiterals=true to throw.
 ```
 
 To make this a hard error:
@@ -272,15 +281,22 @@ const db = drizzle(connection, {
 });
 ```
 
+With `rejectStringArrayLiterals: true` the query throws `Stringified array literals are not supported. Use duckDbList()/duckDbArray() or pass native arrays.`
+
 Use native JavaScript arrays instead:
 
 ```typescript
-// Correct
+// DuckDB list literal in SQL
 await db.execute(sql`SELECT * FROM users WHERE tags = ['a', 'b', 'c']`);
+
+// Or bind a JavaScript array as one parameter
+await db.execute(
+  sql`SELECT * FROM users WHERE tags = ${sql.param(['a', 'b', 'c'])}`
+);
 ```
 
 ## See Also
 
-- [Array Helpers]({{ '/api/array-helpers' | relative_url }}) - API reference
-- [Column Types]({{ '/api/columns' | relative_url }}) - LIST and ARRAY types
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Array operator differences
+- [Array Helpers]({{ '/api/array-helpers' | relative_url }}): API reference
+- [Column Types]({{ '/api/columns' | relative_url }}): LIST and ARRAY types
+- [Limitations]({{ '/reference/limitations' | relative_url }}): array operator differences
