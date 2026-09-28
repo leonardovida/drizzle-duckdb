@@ -129,6 +129,8 @@ The element type is a DuckDB type string. These names autocomplete in your edito
 
 Any other DuckDB type string is accepted too, for example `'UUID'` or `'DECIMAL(10, 2)'`. Empty lists and arrays can be inserted.
 
+Values that DuckDB cannot infer an element type for are sent as SQL literals typed from the element type. This covers empty lists, lists of structs such as `duckDbList('items', 'STRUCT (a INTEGER)')`, lists of `Buffer` values and lists whose inner lists are all empty such as `[[]]`. Other lists bind as native parameters.
+
 **Usage:**
 
 ```typescript
@@ -173,6 +175,8 @@ const users = pgTable('users', {
 ```
 
 Field types in the schema object accept any DuckDB type string.
+
+Struct values are sent as `struct_pack(...)` SQL literals. Only plain objects become nested structs. A `Date` field becomes a timestamp literal: `TIMESTAMP` fields get its UTC wall time, `DATE` fields its UTC date, and other fields a `TIMESTAMPTZ` literal. A `Buffer` or `Uint8Array` field becomes a `from_hex('...')` BLOB literal. The same rules apply inside list and map literals and to the array query helpers below.
 
 **Usage:**
 
@@ -220,6 +224,8 @@ const config = pgTable('config', {
 
 `valueType` and `keyType` accept any DuckDB type string. Common names autocomplete.
 
+Empty maps, and maps whose values include structs, `Buffer` values or empty lists, are sent as `map(...)` SQL literals typed from `valueType`. Other maps bind as native parameters.
+
 **Usage:**
 
 ```typescript
@@ -262,6 +268,8 @@ await db.insert(events).values({
 const event = await db.select().from(events).where(eq(events.id, 1));
 console.log(event[0].payload.type); // 'click'
 ```
+
+A JavaScript string is sent as raw JSON text, not encoded as a JSON string. `'{"a": 1}'` stores an object, `'123'` stores the number `123`, and `'hello'` fails because it is not valid JSON. To store a JSON string value, pass it already encoded, for example `JSON.stringify('hello')`.
 
 ### Timestamps, Dates, and Times
 
@@ -307,12 +315,21 @@ const events = pgTable('events', {
 
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `TIMESTAMP_NS` columns always use literals.
 
+Both paths read input strings the same way, whatever the session `TimeZone`:
+
+- A string without an offset is UTC. `'2024-01-15 10:30:00'` in a `TIMESTAMPTZ` column is `2024-01-15T10:30:00Z`.
+- A `TIMESTAMPTZ` string with an offset keeps it.
+- A naive `TIMESTAMP` string with an offset is converted to UTC. `'2024-01-15 10:30:00+05:00'` stores `2024-01-15 05:30:00`.
+- A `Date` is stored as its UTC instant. Naive columns store its UTC wall time.
+
 `duckDbTime` accepts `withTimezone` and `duckDbType` (`'TIME'`, `'TIMETZ'`, `'TIME_NS'`). TIME values read back as strings and keep microseconds: `'10:30:00.123456'` when sub-millisecond digits are present, otherwise three fractional digits such as `'10:30:00.000'`.
 
 **Modes:**
 
 - `mode: 'date'` (default): returns JavaScript `Date` objects
-- `mode: 'string'`: returns ISO-formatted strings like `'2024-01-15 10:30:00+00'`
+- `mode: 'string'`: returns strings in DuckDB's text format. Naive `TIMESTAMP` values have no offset, such as `'2024-01-15 10:30:00'`. `TIMESTAMPTZ` values are rendered in UTC with `+00`, such as `'2024-01-15 10:30:00+00'`. Trailing zeros in the fraction are dropped, so `'2024-01-15 10:30:00.5'` means half a second.
+
+DuckDB usually returns timestamps to JavaScript as `Date` values, which keep milliseconds only. So string mode returns `'2024-01-15 10:30:00.123'` for a stored `10:30:00.123456`. When the result also contains a column type that makes the driver read the whole result as text, such as `TIMETZ`, `TIMESTAMP_NS` or `TIME_NS`, all six digits come back. Cast to `VARCHAR` in SQL when you always need full precision.
 
 **Usage:**
 
@@ -344,6 +361,8 @@ await db.insert(files).values({
   content: Buffer.from('hello world'),
 });
 ```
+
+Reads return a `Buffer`. When the driver reads a result as text, DuckDB renders BLOB values as strings such as `'\x01\x02'`, and the column decodes those back into a `Buffer`.
 
 ### Inet
 
@@ -383,7 +402,12 @@ await db.insert(tasks).values({
   id: 1,
   duration: '2 hours 30 minutes',
 });
+
+const [task] = await db.select().from(tasks);
+console.log(task.duration); // '02:30:00'
 ```
+
+Reads return the string DuckDB prints for `interval::VARCHAR`, such as `'1 year 2 months 3 days 04:05:06.5'`. You can insert that string back unchanged. Earlier versions returned a `{ months, days, micros }` object at runtime even though the TypeScript type was `string`.
 
 ## Array Query Helpers
 

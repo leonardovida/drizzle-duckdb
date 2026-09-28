@@ -62,6 +62,8 @@ await db
   .orderBy(orders.createdAt);
 ```
 
+The options take `partitionBy` and `orderBy`, each a column or SQL expression or an array of them. Without options the helpers emit an empty window, for example `row_number() over ()`.
+
 ## any_value for non-aggregated selections
 
 ```typescript

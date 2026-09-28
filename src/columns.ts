@@ -1,4 +1,4 @@
-import { sql, type SQL } from 'drizzle-orm';
+import { Column, is, sql, type SQL } from 'drizzle-orm';
 import { isSQLWrapper, type SQLWrapper } from 'drizzle-orm/sql/sql';
 import { customType } from 'drizzle-orm/pg-core';
 import {
@@ -18,9 +18,12 @@ import {
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
 import {
+  intervalToString,
   parseTimestampString,
   timeFromMicros,
+  timestampStringFromMicros,
   timestampStringToDateInput,
+  utcTimestampString,
 } from './time.ts';
 
 export { coerceArrayString } from './array-literals.ts';
@@ -95,8 +98,46 @@ type ArrayDriverValue =
 
 export type ArrayPredicateValue<T> = T[] | SQLWrapper;
 
+/**
+ * Plain objects only. Dates, Buffers and other class instances are values,
+ * not structs or maps.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  // A root prototype also matches plain objects from another realm.
+  return proto === null || Object.getPrototypeOf(proto) === null;
+}
+
+function isNaiveTimestampType(typeHint: string | undefined): boolean {
+  return /^(TIMESTAMP(_S|_MS|_NS)?|DATETIME)(\s*\(\s*\d+\s*\))?$/i.test(
+    typeHint?.trim() ?? ''
+  );
+}
+
+/**
+ * A Date is an instant. Naive TIMESTAMP targets get its UTC wall time, DATE
+ * targets its UTC date, and anything else a TIMESTAMPTZ literal.
+ */
+function dateLiteral(value: Date, typeHint: string | undefined): string {
+  const utc = value.toISOString().replace('T', ' ').replace('Z', '');
+  if (/^DATE$/i.test(typeHint?.trim() ?? '')) {
+    return `DATE '${utc.slice(0, 10)}'`;
+  }
+  if (isNaiveTimestampType(typeHint)) {
+    return `TIMESTAMP '${utc}'`;
+  }
+  return `TIMESTAMPTZ '${utc}+00'`;
+}
+
+function blobLiteral(value: Uint8Array): string {
+  let hex = '';
+  for (const byte of value) {
+    hex += byte.toString(16).padStart(2, '0');
+  }
+  return `from_hex('${hex}')`;
 }
 
 function isStructType(typeHint: string | undefined): typeHint is StructColType {
@@ -163,7 +204,11 @@ export function formatLiteral(value: unknown, typeHint?: string): string {
   }
 
   if (value instanceof Date) {
-    return `'${value.toISOString()}'`;
+    return dateLiteral(value, typeHint);
+  }
+
+  if (value instanceof Uint8Array) {
+    return blobLiteral(value);
   }
 
   if (typeof value === 'number') {
@@ -202,9 +247,15 @@ export function buildListLiteral(values: unknown[], elementType?: string): SQL {
 }
 
 export function normalizeArrayPredicateValue<T>(
-  values: ArrayPredicateValue<T>
+  values: ArrayPredicateValue<T>,
+  elementType?: string
 ): SQL | SQLWrapper {
-  return Array.isArray(values) ? buildListLiteral(values) : values;
+  return Array.isArray(values) ? buildListLiteral(values, elementType) : values;
+}
+
+/** The element type of a list or array column, used to type literal values. */
+function columnElementType(column: SQLWrapper): string | undefined {
+  return is(column, Column) ? arrayElementType(column.getSQLType()) : undefined;
 }
 
 function valueToSqlLiteral(value: unknown, typeHint?: string): SQL {
@@ -247,11 +298,16 @@ export function buildMapLiteral(
   return sql`map(${keyList}, ${valList})`;
 }
 
-function containsEmptyList(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    (value.length === 0 || value.some(containsEmptyList))
-  );
+/**
+ * Node API list and map parameters infer their element type from the items,
+ * so empty lists, structs and blobs cannot be bound. Those values are sent as
+ * SQL literals typed from the declared column type instead.
+ */
+function needsLiteral(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length === 0 || value.some(needsLiteral);
+  }
+  return isRecord(value) || value instanceof Uint8Array;
 }
 
 export const duckDbList = <TData = unknown>(
@@ -266,8 +322,7 @@ export const duckDbList = <TData = unknown>(
       return `${elementType}[]`;
     },
     toDriver(value: TData[]): ListValueWrapper | SQL {
-      // An empty list value cannot carry its element type as a parameter.
-      if (value.length === 0) {
+      if (needsLiteral(value)) {
         return buildListLiteral(value, elementType);
       }
       return wrapList(value, elementType);
@@ -292,7 +347,7 @@ export const duckDbArray = <TData = unknown>(
         : `${elementType}[]`;
     },
     toDriver(value: TData[]): ArrayValueWrapper | SQL {
-      if (value.length === 0) {
+      if (needsLiteral(value)) {
         return buildListLiteral(value, elementType);
       }
       return wrapArray(value, elementType, fixedLength);
@@ -312,11 +367,10 @@ export const duckDbMap = <TData extends Record<string, any>>(
       return `MAP (${options.keyType ?? 'STRING'}, ${valueType})`;
     },
     toDriver(value: TData) {
-      // Use SQL literals for empty maps and empty list values due to DuckDB
-      // type inference issues with mapValue() and listValue() without items
+      // An empty map has no items to infer its key and value types from.
       if (
         Object.keys(value).length === 0 ||
-        Object.values(value).some(containsEmptyList)
+        Object.values(value).some(needsLiteral)
       ) {
         return buildMapLiteral(value, valueType);
       }
@@ -402,7 +456,7 @@ export const duckDbJson = <TData = unknown>(name: string) =>
 
 export const duckDbBlob = customType<{
   data: Buffer;
-  driverData: BlobValueWrapper;
+  driverData: BlobValueWrapper | Uint8Array | string;
   default: false;
 }>({
   dataType() {
@@ -411,7 +465,45 @@ export const duckDbBlob = customType<{
   toDriver(value: Buffer): BlobValueWrapper {
     return wrapBlob(value);
   },
+  fromDriver(value: BlobValueWrapper | Uint8Array | string): Buffer {
+    // Some result paths render BLOB as DuckDB text such as '\x01\x02'.
+    if (typeof value === 'string') {
+      return toBuffer(bytesFromBlobString(value));
+    }
+    return toBuffer(value instanceof Uint8Array ? value : value.data);
+  },
 });
+
+/**
+ * Decode DuckDB's BLOB text form. Printable ASCII bytes appear as themselves
+ * and every other byte, including the backslash, as `\xNN`.
+ */
+function bytesFromBlobString(value: string): Uint8Array {
+  const bytes: number[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const hex = value.slice(i + 2, i + 4);
+    if (
+      value[i] === '\\' &&
+      (value[i + 1] === 'x' || value[i + 1] === 'X') &&
+      /^[0-9a-f]{2}$/i.test(hex)
+    ) {
+      bytes.push(parseInt(hex, 16));
+      i += 3;
+    } else {
+      bytes.push(value.charCodeAt(i) & 0xff);
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+function toBuffer(bytes: Uint8Array): Buffer {
+  // Buffer is missing in browsers, where this module may be loaded.
+  const NodeBuffer = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+  if (!NodeBuffer || NodeBuffer.isBuffer(bytes)) {
+    return bytes as Buffer;
+  }
+  return NodeBuffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
 
 export const duckDbInet = (name: string) =>
   customType<{ data: string; driverData: string }>({
@@ -423,13 +515,41 @@ export const duckDbInet = (name: string) =>
     },
   })(name);
 
+interface IntervalParts {
+  months: number | string;
+  days: number | string;
+  micros: bigint | number | string;
+}
+
+function isIntervalParts(value: unknown): value is IntervalParts {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'months' in value &&
+    'days' in value &&
+    'micros' in value
+  );
+}
+
 export const duckDbInterval = (name: string) =>
-  customType<{ data: string; driverData: string }>({
+  customType<{ data: string; driverData: string | IntervalParts }>({
     dataType() {
       return 'INTERVAL';
     },
     toDriver(value: string) {
       return value;
+    },
+    fromDriver(value: string | IntervalParts): string {
+      // DuckDB returns { months, days, micros }. Format it as DuckDB text,
+      // which matches the string type and can be written back.
+      if (isIntervalParts(value)) {
+        return intervalToString(
+          Number(value.months),
+          Number(value.days),
+          BigInt(value.micros)
+        );
+      }
+      return String(value);
     },
   })(name);
 
@@ -483,8 +603,12 @@ function resolveTimeType(options: TimeOptions): DuckDbTimeType {
 /**
  * Render a timestamp for inline SQL. ISO-like strings are rebuilt from their
  * parsed parts, anything else is passed to DuckDB as an escaped string.
+ *
+ * Strings are read the same way bind mode reads them: a missing offset means
+ * UTC. DuckDB would otherwise read a TIMESTAMPTZ literal without an offset in
+ * the session TimeZone, and drop the offset from a naive TIMESTAMP literal.
  */
-function timestampLiteral(value: Date | string): string {
+function timestampLiteral(value: Date | string, withTimezone: boolean): string {
   if (value instanceof Date) {
     return value.toISOString().replace('T', ' ').replace('Z', '+00');
   }
@@ -494,10 +618,54 @@ function timestampLiteral(value: Date | string): string {
     return value.replace(/'/g, "''");
   }
 
-  const time = parts.time ? ` ${parts.time}` : '';
   const fraction = parts.fraction ? `.${parts.fraction}` : '';
-  const offset = parts.offset === 'Z' ? '+00' : (parts.offset ?? '');
-  return `${parts.date}${time}${fraction}${offset}`;
+  const offset = parts.offset === 'Z' ? '+00' : parts.offset;
+
+  if (withTimezone) {
+    const time = ` ${parts.time ?? '00:00:00'}`;
+    return `${parts.date}${time}${fraction}${offset ?? '+00'}`;
+  }
+
+  if (offset && !/^[+-]00(:00)?$/.test(offset)) {
+    const utc = utcTimestampString(parts);
+    if (utc) {
+      return `${utc}+00`;
+    }
+  }
+
+  const time = parts.time ? ` ${parts.time}` : '';
+  return `${parts.date}${time}${fraction}${offset ?? ''}`;
+}
+
+/**
+ * Format a TIMESTAMP read for string mode. Naive values keep their wall time
+ * without an offset. TIMESTAMPTZ values are rendered in UTC with `+00`.
+ * Fractional digits are kept as far as the driver value carries them.
+ */
+function timestampModeString(value: unknown, withTimezone: boolean): string {
+  if (value instanceof Date) {
+    return timestampStringFromMicros(
+      BigInt(value.getTime()) * 1000n,
+      withTimezone
+    );
+  }
+
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    'micros' in value &&
+    typeof value.micros === 'bigint'
+  ) {
+    return timestampStringFromMicros(value.micros, withTimezone);
+  }
+
+  const text = typeof value === 'string' ? value : String(value);
+  const parts = withTimezone ? parseTimestampString(text) : undefined;
+  if (!parts) {
+    return text;
+  }
+  const utc = utcTimestampString(parts);
+  return utc ? `${utc}+00` : text;
 }
 
 function shouldBindTimestamp(options: TimestampOptions): boolean {
@@ -553,7 +721,9 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
         return wrapTimestamp(value, withTimezone, options.precision);
       }
 
-      return sql.raw(`${duckDbType} '${timestampLiteral(value)}'`);
+      return sql.raw(
+        `${duckDbType} '${timestampLiteral(value, withTimezone)}'`
+      );
     },
     fromDriver(value: Date | string | SQL | TimestampValueWrapper) {
       if (
@@ -570,10 +740,10 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
             : wrapped.data;
       }
       if (options.mode === 'string') {
-        if (value instanceof Date) {
-          return value.toISOString().replace('T', ' ').replace('Z', '+00');
-        }
-        return typeof value === 'string' ? value : value.toString();
+        return timestampModeString(
+          value,
+          isTimestampWithTimezone(resolveTimestampType(options), options)
+        );
       }
       if (value instanceof Date) {
         return value;
@@ -618,7 +788,7 @@ export function duckDbArrayContains<T>(
   column: SQLWrapper,
   values: ArrayPredicateValue<T>
 ): SQL {
-  const rhs = normalizeArrayPredicateValue(values);
+  const rhs = normalizeArrayPredicateValue(values, columnElementType(column));
   return sql`array_has_all(${column}, ${rhs})`;
 }
 
@@ -626,7 +796,7 @@ export function duckDbArrayContained<T>(
   column: SQLWrapper,
   values: ArrayPredicateValue<T>
 ): SQL {
-  const rhs = normalizeArrayPredicateValue(values);
+  const rhs = normalizeArrayPredicateValue(values, columnElementType(column));
   return sql`array_has_all(${rhs}, ${column})`;
 }
 
@@ -634,6 +804,6 @@ export function duckDbArrayOverlaps<T>(
   column: SQLWrapper,
   values: ArrayPredicateValue<T>
 ): SQL {
-  const rhs = normalizeArrayPredicateValue(values);
+  const rhs = normalizeArrayPredicateValue(values, columnElementType(column));
   return sql`array_has_any(${column}, ${rhs})`;
 }

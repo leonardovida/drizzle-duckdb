@@ -242,6 +242,30 @@ test('lead with default value for last row', async () => {
   expect(rows[1]?.nextAmount).toBe(999);
 });
 
+test('window helpers without options emit an empty OVER clause', async () => {
+  await db.insert(windowed).values([
+    { id: 1, amount: 10 },
+    { id: 2, amount: 20 },
+  ]);
+
+  const query = db
+    .select({
+      rn: rowNumber(),
+      r: rank(),
+      dr: denseRank(),
+      prev: lag<number>(windowed.amount),
+      next: lead<number>(windowed.amount),
+    })
+    .from(windowed);
+
+  expect(query.toSQL().sql).toContain('row_number() over ()');
+  const rows = await query;
+  expect(rows).toHaveLength(2);
+  expect(rows.map((r) => r.rn).sort()).toEqual([1, 2]);
+  expect(rows.map((r) => r.r)).toEqual([1, 1]);
+  expect(rows.map((r) => r.dr)).toEqual([1, 1]);
+});
+
 test('MotherDuck Lance helpers emit table functions with named parameters', () => {
   const dialect = new DuckDBDialect();
 

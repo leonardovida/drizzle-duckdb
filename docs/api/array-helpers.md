@@ -19,6 +19,8 @@ DuckDB uses different functions than Postgres for array operations. These helper
 
 JavaScript arrays passed as `values` are inlined as a `list_value(...)` literal. Pass a `SQLWrapper` to use a column, subquery or bound parameter instead.
 
+When the first argument is a list or array column, the literal is typed from its element type. A `Date` compared with a `TIMESTAMP[]` column becomes a `TIMESTAMP` literal of its UTC wall time, and with a `TIMESTAMPTZ[]` column a `TIMESTAMPTZ` literal. A `Buffer` becomes a `from_hex('...')` BLOB literal. Without a column type, a `Date` becomes a `TIMESTAMPTZ` literal.
+
 The same helpers are also exported under DuckDB function names:
 
 | Alias              | Same as                |

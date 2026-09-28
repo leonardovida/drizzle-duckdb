@@ -76,8 +76,9 @@ describe('duckDbTimestamp literal mode', () => {
     expect(toSql('2020-01-01T00:00:00Z')).toContain(
       "TIMESTAMP '2020-01-01 00:00:00+00'"
     );
+    // A naive TIMESTAMP literal drops the offset, so it is applied first.
     expect(toSql('2020-01-01 10:00:00.123456+05')).toContain(
-      "TIMESTAMP '2020-01-01 10:00:00.123456+05:00'"
+      "TIMESTAMP '2020-01-01 05:00:00.123456+00'"
     );
     expect(toSql(new Date('2020-01-01T00:00:00.000Z'))).toContain(
       "TIMESTAMP '2020-01-01 00:00:00.000+00'"
@@ -163,5 +164,96 @@ describe('timestamp binding precision', () => {
       sql`select ${bindTable.ts.mapToDriverValue('2024-01-01 10:00:00.123456')}::varchar as v`
     );
     expect(rows[0]!.v).toBe('2024-01-01 10:00:00.123456');
+  });
+});
+
+describe('literal and bind modes agree outside UTC', () => {
+  const zoneTable = (bindMode: 'bind' | 'literal') =>
+    pgTable('ts_zone_modes', {
+      id: integer('id'),
+      tz: duckDbTimestamp('tz', { withTimezone: true, bindMode }),
+      ntz: duckDbTimestamp('ntz', { bindMode }),
+    });
+  const tables = { bind: zoneTable('bind'), literal: zoneTable('literal') };
+
+  let zoneConnection: Awaited<ReturnType<DuckDBInstance['connect']>>;
+  let zoneDb: DuckDBDatabase;
+
+  beforeAll(async () => {
+    const zoneInstance = await DuckDBInstance.create(':memory:');
+    zoneConnection = await zoneInstance.connect();
+    zoneDb = drizzle(zoneConnection);
+    await zoneDb.execute(sql`SET TimeZone = 'America/New_York'`);
+    await zoneDb.execute(
+      sql`create table ts_zone_modes (id integer, tz timestamptz, ntz timestamp)`
+    );
+  });
+
+  afterAll(() => {
+    zoneConnection.closeSync();
+  });
+
+  const cases: {
+    name: string;
+    values: { tz?: Date | string; ntz?: Date | string };
+    // `tz` is the stored instant as UTC wall time.
+    expected: { tz: string | null; ntz: string | null };
+  }[] = [
+    {
+      name: 'TIMESTAMPTZ string without an offset is UTC',
+      values: { tz: '2024-01-01 00:00:00.123456' },
+      expected: { tz: '2024-01-01 00:00:00.123456', ntz: null },
+    },
+    {
+      name: 'TIMESTAMPTZ date-only string is UTC midnight',
+      values: { tz: '2024-01-01' },
+      expected: { tz: '2024-01-01 00:00:00', ntz: null },
+    },
+    {
+      name: 'TIMESTAMPTZ string keeps its offset',
+      values: { tz: '2024-01-01 00:00:00-08:00' },
+      expected: { tz: '2024-01-01 08:00:00', ntz: null },
+    },
+    {
+      name: 'TIMESTAMP string with an offset is converted to UTC',
+      values: { ntz: '2024-01-01 00:00:00.123456+05:00' },
+      expected: { tz: null, ntz: '2023-12-31 19:00:00.123456' },
+    },
+    {
+      name: 'TIMESTAMP string without an offset keeps its wall time',
+      values: { ntz: '2024-01-01 00:00:00' },
+      expected: { tz: null, ntz: '2024-01-01 00:00:00' },
+    },
+    {
+      name: 'Date values store the same instant',
+      values: {
+        tz: new Date('2024-01-01T00:00:00.123Z'),
+        ntz: new Date('2024-01-01T00:00:00.123Z'),
+      },
+      expected: {
+        tz: '2024-01-01 00:00:00.123',
+        ntz: '2024-01-01 00:00:00.123',
+      },
+    },
+  ];
+
+  test.each(cases)('$name', async ({ values, expected }) => {
+    for (const [id, mode] of (['bind', 'literal'] as const).entries()) {
+      await zoneDb.insert(tables[mode]).values({ id, ...values });
+    }
+    const rows = await zoneDb.execute<{
+      id: number;
+      tz: string | null;
+      ntz: string | null;
+    }>(
+      sql`select id, (tz at time zone 'UTC')::varchar as tz, ntz::varchar as ntz
+        from ts_zone_modes order by id`
+    );
+    await zoneDb.execute(sql`delete from ts_zone_modes`);
+
+    expect(rows).toEqual([
+      { id: 0, ...expected },
+      { id: 1, ...expected },
+    ]);
   });
 });
