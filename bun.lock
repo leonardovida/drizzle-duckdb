@@ -14,7 +14,6 @@
         "@vitest/ui": "4.1.11",
         "drizzle-orm": "0.45.2",
         "prettier": "3.8.4",
-        "tinybench": "6.1.4",
         "typescript": "6.0.3",
         "uuid": "14.0.2",
         "vitest": "4.1.11",
@@ -23,13 +22,9 @@
         "@duckdb/node-api": ">=1.4.4 <1.6.0 || >=1.4.4-r.1 <1.4.5 || >=1.4.5-r.1 <1.4.6 || >=1.5.0-r.1 <1.5.1 || >=1.5.1-r.1 <1.5.2 || >=1.5.2-r.1 <1.5.3 || >=1.5.3-r.1 <1.5.4 || >=1.5.4-r.1 <1.5.5 || >=1.5.5-r.1 <1.5.6",
         "drizzle-orm": ">=0.40.1 <0.46.0",
       },
-      "optionalPeers": [
-        "@duckdb/node-api",
-      ],
     },
   },
   "overrides": {
-    "esbuild": "0.28.0",
     "nanoid": "3.3.18",
     "postcss": "8.5.25",
     "vite": "8.1.4",
@@ -217,7 +212,7 @@
 
     "std-env": ["std-env@4.1.0", "", {}, "sha512-Rq7ybcX2RuC55r9oaPVEW7/xu3tj8u4GeBYHBWCychFtzMIr86A7e3PPEBPT37sHStKX3+TiX/Fr/ACmJLVlLQ=="],
 
-    "tinybench": ["tinybench@6.1.4", "", {}, "sha512-9APumHG7r4yOk4X4WlkmE71aZcv1gvin1czO3OQ1U9iJcFA5Ja/ygyb0vPOVHTthFozUYs8CLoLUlM8grb2lTQ=="],
+    "tinybench": ["tinybench@2.9.0", "", {}, "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="],
 
     "tinyexec": ["tinyexec@1.1.2", "", {}, "sha512-dAqSqE/RabpBKI8+h26GfLq6Vb3JVXs30XYQjdMjaj/c2tS8IYYMbIzP599KtRj7c57/wYApb3QjgRgXmrCukA=="],
 
@@ -242,7 +237,5 @@
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
     "bun-types/@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
-
-    "vitest/tinybench": ["tinybench@2.9.0", "", {}, "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="],
   }
 }

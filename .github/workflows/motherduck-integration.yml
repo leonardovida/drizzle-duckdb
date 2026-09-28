@@ -7,11 +7,15 @@ on:
 permissions:
   contents: read
 
+# Every run reseeds the shared ci_extension schema in the same MotherDuck
+# account, so runs are serialized instead of cancelled.
+concurrency:
+  group: motherduck-integration
+  cancel-in-progress: false
+
 jobs:
   integration:
     runs-on: ubuntu-latest
-    env:
-      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -28,8 +32,10 @@ jobs:
 
       - name: Check MotherDuck token
         id: motherduck-token
+        env:
+          HAS_MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN != '' }}
         run: |
-          if [ -n "${MOTHERDUCK_TOKEN:-}" ]; then
+          if [ "${HAS_MOTHERDUCK_TOKEN}" = "true" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -38,10 +44,14 @@ jobs:
 
       - name: Run nyc taxi example
         if: steps.motherduck-token.outputs.available == 'true'
-        run: bun example/motherduck-nyc.ts
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+        run: bun example/motherduck-nyc-taxi.ts
 
       - name: Seed MotherDuck CI schema
         if: steps.motherduck-token.outputs.available == 'true'
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
           bun - <<'EOF'
           import { DuckDBInstance } from '@duckdb/node-api';
@@ -70,6 +80,8 @@ jobs:
 
       - name: Introspect seeded schema
         if: steps.motherduck-token.outputs.available == 'true'
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
           mkdir -p /tmp/motherduck
           bun ./dist/duckdb-introspect.mjs --url md: --schemas ci_extension --out /tmp/motherduck/schema.ts
@@ -79,10 +91,14 @@ jobs:
 
       - name: MotherDuck integration tests
         if: steps.motherduck-token.outputs.available == 'true'
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: bun test test/motherduck.integration.test.ts
 
       - name: Complex join & aggregation smoke test
         if: steps.motherduck-token.outputs.available == 'true'
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
           bun - <<'EOF'
           import { DuckDBInstance } from '@duckdb/node-api';

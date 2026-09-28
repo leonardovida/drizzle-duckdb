@@ -1,6 +1,5 @@
 {
   "name": "@duckdbfan/drizzle-duckdb",
-  "module": "./dist/index.mjs",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "version": "1.5.4-15",
@@ -22,11 +21,6 @@
     "@duckdb/node-api": ">=1.4.4 <1.6.0 || >=1.4.4-r.1 <1.4.5 || >=1.4.5-r.1 <1.4.6 || >=1.5.0-r.1 <1.5.1 || >=1.5.1-r.1 <1.5.2 || >=1.5.2-r.1 <1.5.3 || >=1.5.3-r.1 <1.5.4 || >=1.5.4-r.1 <1.5.5 || >=1.5.5-r.1 <1.5.6",
     "drizzle-orm": ">=0.40.1 <0.46.0"
   },
-  "peerDependenciesMeta": {
-    "@duckdb/node-api": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@duckdb/node-api": "1.5.5-r.5",
     "@types/bun": "1.4.0",
@@ -34,7 +28,6 @@
     "@vitest/ui": "4.1.11",
     "drizzle-orm": "0.45.2",
     "prettier": "3.8.4",
-    "tinybench": "6.1.4",
     "typescript": "6.0.3",
     "uuid": "14.0.2",
     "vitest": "4.1.11"
@@ -76,12 +69,10 @@
   },
   "homepage": "https://github.com/leonardovida/drizzle-duckdb#readme",
   "files": [
-    "src/**/*.ts",
     "dist/*.mjs",
     "dist/**/*.d.ts"
   ],
   "overrides": {
-    "esbuild": "0.28.0",
     "nanoid": "3.3.18",
     "postcss": "8.5.25",
     "vite": "8.1.4"

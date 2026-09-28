@@ -1,4 +1,4 @@
-import { DuckDBInstance } from '@duckdb/node-api';
+import { DuckDBInstance, version as duckDbVersion } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import {
   duckDbDate,
@@ -12,6 +12,18 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
 const ENABLE_LOGGING = false;
+
+// DuckDB 1.4.x does not expose TIME_NS through the C API, so node-api reports
+// the column as type id 0 and cannot read it. Tests that select time_ns only
+// run on DuckDB 1.5 and later. On 1.4.x these selects throw a "cannot
+// materialize" error, covered in test/client-execute.test.ts.
+const [duckDbMajor = 0, duckDbMinor = 0] = duckDbVersion()
+  .replace(/^v/, '')
+  .split('.')
+  .map(Number);
+const testTimeNs = test.skipIf(
+  duckDbMajor < 1 || (duckDbMajor === 1 && duckDbMinor < 5)
+);
 
 const timestampsTable = pgTable('duckdb_timestamp_cases', {
   id: integer('id').primaryKey(),
@@ -72,7 +84,7 @@ afterAll(() => {
   ctx.connection?.closeSync();
 });
 
-test('timestamp with timezone maps to Date when mode=date', async () => {
+testTimeNs('timestamp with timezone maps to Date when mode=date', async () => {
   const value = new Date('2024-03-01T10:20:30.123Z');
 
   await ctx.db.insert(timestampsTable).values({
@@ -130,7 +142,7 @@ test('timestamp without timezone maps to string when mode=string', async () => {
   expect(rows[0]!.tsNoTzString).toContain('2024-03-01 12:34:56.789');
 });
 
-test('date and time columns round-trip', async () => {
+testTimeNs('date and time columns round-trip', async () => {
   await ctx.db.insert(timestampsTable).values({
     id: 3,
     label: 'date-time',

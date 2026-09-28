@@ -33,3 +33,8 @@ coverage
 test/.tmp
 .cursor
 .codex/rules/
+
+# DuckDB database files and OS metadata
+*.duckdb
+*.duckdb.wal
+.DS_Store

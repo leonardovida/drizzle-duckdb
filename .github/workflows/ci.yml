@@ -9,13 +9,31 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
+    name: Build and test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -37,3 +55,42 @@ jobs:
 
       - name: Validate npm pack
         run: npm pack --dry-run
+
+  duckdb-floor:
+    name: Test (@duckdb/node-api ${{ matrix.node-api }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lowest release of each DuckDB minor line in the peer range.
+        node-api: ['1.4.4-r.1', '1.5.0-r.1']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install floor @duckdb/node-api
+        env:
+          NODE_API_VERSION: ${{ matrix.node-api }}
+        run: |
+          bun add --dev --no-save "@duckdb/node-api@${NODE_API_VERSION}"
+          installed=$(node -p "require('@duckdb/node-api/package.json').version")
+          if [ "$installed" != "$NODE_API_VERSION" ]; then
+            echo "::error::Expected @duckdb/node-api ${NODE_API_VERSION}, found ${installed}"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: CI=1 bun run test
