@@ -128,6 +128,21 @@ describe.each([
     expect(raw).toEqual({ v: 1e20, t: 'DOUBLE' });
   });
 
+  // node-api 1.4 infers INTEGER for every integral number and wraps it.
+  test('integral numbers outside int32 bind as BIGINT', async () => {
+    const [raw] = await db.execute<{ v: string; t: string; n: string }>(
+      sql`select ${3_000_000_000}::varchar as v, typeof(${4_294_967_295}) as t, ${-3_000_000_000}::varchar as n`
+    );
+    expect(raw).toEqual({ v: '3000000000', t: 'BIGINT', n: '-3000000000' });
+
+    await db.insert(lists).values({ id: 4, bigs: [1, 3e9] });
+    const [row] = await db
+      .select({ bigs: lists.bigs })
+      .from(lists)
+      .where(sql`${lists.id} = 4`);
+    expect(row?.bigs).toEqual([1, 3e9]);
+  });
+
   test('explicit types reach streams and executeArrow', async () => {
     // sql.param keeps the array one parameter instead of a tuple.
     const batches: unknown[] = [];

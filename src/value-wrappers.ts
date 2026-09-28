@@ -642,9 +642,12 @@ export function typedNodeApiParam(
   value: DuckDBValue
 ): { value: DuckDBValue; type: DuckDBType } | undefined {
   if (typeof value === 'number') {
-    return Number.isInteger(value) && !Number.isSafeInteger(value)
-      ? { value, type: DOUBLE }
-      : undefined;
+    // node-api 1.4 binds every integral number as INTEGER and wraps values
+    // outside int32, so 3e9 would be stored as -1294967296.
+    const type = numberType(value);
+    if (type === BIGINT) return { value: BigInt(value), type };
+    if (type === DOUBLE && Number.isInteger(value)) return { value, type };
+    return undefined;
   }
   if (
     value instanceof DuckDBListValue ||

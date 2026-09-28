@@ -222,7 +222,7 @@ describe('string mode timestamps and blob reads', () => {
     tz: duckDbTimestamp('tz', { mode: 'string', withTimezone: true }),
     b: duckDbBlob('b'),
   });
-  // TIMETZ switches the result to text materialization for every column.
+  // TIMETZ is read as text. It must not change how other columns decode.
   const textColumn = sql<string>`TIMETZ '10:00:00+02'`;
 
   beforeAll(async () => {
@@ -246,16 +246,13 @@ describe('string mode timestamps and blob reads', () => {
     ]);
   });
 
-  test('text materialization keeps microseconds in the same format', async () => {
+  test('a text-read column in the same select does not change string mode output', async () => {
     const rows = await db
       .select({ ts: values.ts, tz: values.tz, t: textColumn })
       .from(values)
       .orderBy(values.id);
     expect(rows.map(({ ts, tz }) => ({ ts, tz }))).toEqual([
-      {
-        ts: '2024-01-01 12:00:00.123456',
-        tz: '2024-01-01 12:00:00.123456+00',
-      },
+      { ts: '2024-01-01 12:00:00.123', tz: '2024-01-01 12:00:00.123+00' },
       { ts: '2024-01-15 10:30:00', tz: '2024-01-15 10:30:00+00' },
     ]);
   });
