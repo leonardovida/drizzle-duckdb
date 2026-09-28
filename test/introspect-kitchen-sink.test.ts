@@ -170,7 +170,7 @@ describe('introspection kitchen sink', () => {
       's2: integer("s2").default(sql`nextval(\'ks."tick\\`seq"\')`)'
     );
     expect(customSchemaTs).toContain(
-      `cc: varchar("cc") /* default: ('a *\\/ b' || 'c') */`
+      "cc: varchar(\"cc\").default(sql`('a */ b' || 'c')`)"
     );
     expect(customSchemaTs).toContain(
       `vs: varchar("vs").default("it's */ done")`
@@ -223,8 +223,8 @@ describe('introspection kitchen sink', () => {
     const expected = [
       `b: boolean("b").default(true)`,
       `b2: boolean("b2").default(false)`,
-      `u: uuid("u") /* default: uuid() */`,
-      `x: integer("x") /* default: (1 + 2) */`,
+      'u: uuid("u").default(sql`uuid()`)',
+      'x: integer("x").default(sql`(1 + 2)`)',
       `v: varchar("v").default("5")`,
       `n: integer("n").default(-1)`,
       `d: doublePrecision("d").default(1000.0)`,
@@ -233,12 +233,12 @@ describe('introspection kitchen sink', () => {
       'tstz: duckDbTimestamp("tstz", { withTimezone: true }).default(sql`now()`)',
       'ts: duckDbTimestamp("ts").default(sql`current_timestamp`)',
       `tsl: duckDbTimestamp("tsl").default("2024-01-01 00:00:00")`,
-      `dt: duckDbDate("dt") /* default: current_date */`,
+      'dt: duckDbDate("dt").default(sql`current_date`)',
       `dd: duckDbDate("dd").default("2024-01-01")`,
       `j: duckDbJson("j").default("{}")`,
       `r: real("r").default(1.5)`,
       `f: real("f")`,
-      `g: integer("g") /* default: CAST((n + 1) AS INTEGER) */`,
+      'g: integer("g").generatedAlwaysAs(sql`(n + 1)`)',
       `st: duckDbStruct("st", { "Nice Name": "INTEGER", "tags": "VARCHAR[]" })`,
       `mp: duckDbMap("mp", "INTEGER[]")`,
     ];

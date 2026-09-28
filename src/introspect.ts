@@ -16,6 +16,8 @@ const CANONICAL_TYPE_PREFIXES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^CHARACTER\b/i, 'CHAR'],
 ];
 
+// UINTEGER reaches 4294967295, which is outside Postgres int4, but DuckDB
+// returns every type here as a JS number, so integer() types reads correctly.
 const INTEGER_TYPE_ALIASES = new Set([
   'SMALLINT',
   'INT2',
@@ -25,7 +27,13 @@ const INTEGER_TYPE_ALIASES = new Set([
   'INT',
   'INT4',
   'SIGNED',
+  'UTINYINT',
+  'USMALLINT',
+  'UINTEGER',
 ]);
+
+// DuckDB returns these as JS bigint values, which a number mode would round.
+const BIGINT_MODE_TYPES = new Set(['UBIGINT', 'HUGEINT', 'UHUGEINT']);
 
 const SIMPLE_TYPE_NAMES = new Set([
   'BOOLEAN',
@@ -33,7 +41,7 @@ const SIMPLE_TYPE_NAMES = new Set([
   ...INTEGER_TYPE_ALIASES,
   'BIGINT',
   'INT8',
-  'UBIGINT',
+  ...BIGINT_MODE_TYPES,
   'DECIMAL',
   'NUMERIC',
   'REAL',
@@ -111,6 +119,13 @@ interface DuckDbConstraintRow extends RowData {
   referenced_column_names: string[] | null;
 }
 
+interface DuckDbTableSqlRow extends RowData {
+  database_name: string;
+  schema_name: string;
+  table_name: string;
+  sql: string | null;
+}
+
 interface DuckDbIndexRow extends RowData {
   database_name: string;
   schema_name: string;
@@ -118,6 +133,7 @@ interface DuckDbIndexRow extends RowData {
   index_name: string;
   is_unique: boolean | null;
   expressions: string | null;
+  sql: string | null;
 }
 
 export interface IntrospectedColumn {
@@ -128,6 +144,11 @@ export interface IntrospectedColumn {
   characterLength: number | null;
   numericPrecision: number | null;
   numericScale: number | null;
+  /**
+   * Generation expression of a generated column, or null for an ordinary
+   * column. Undefined when the table definition could not be read.
+   */
+  generatedExpression?: string | null;
 }
 
 export interface IntrospectedConstraint {
@@ -174,7 +195,8 @@ export async function introspect(
   db: DuckDBDatabase,
   opts: IntrospectOptions = {}
 ): Promise<IntrospectResult> {
-  const database = await resolveDatabase(db, opts.database, opts.allDatabases);
+  const currentDatabase = await loadCurrentDatabase(db);
+  const database = opts.allDatabases ? null : opts.database || currentDatabase;
   const schemas = await resolveSchemas(db, database, opts.schemas);
   const includeViews = opts.includeViews ?? false;
 
@@ -182,13 +204,15 @@ export async function introspect(
   const columns = await loadColumns(db, database, schemas);
   const constraints = await loadConstraints(db, database, schemas);
   const indexes = await loadIndexes(db, database, schemas);
+  const tableSql = await loadTableSql(db, database, schemas);
 
-  const grouped = buildTables(tables, columns, constraints, indexes);
+  const grouped = buildTables(tables, columns, constraints, indexes, tableSql);
 
   const schemaTs = emitSchema(grouped, {
     useCustomTimeTypes: opts.useCustomTimeTypes ?? true,
     mapJsonAsDuckDbJson: opts.mapJsonAsDuckDbJson ?? true,
     importBasePath: opts.importBasePath ?? DEFAULT_IMPORT_BASE,
+    currentDatabase,
   });
 
   return {
@@ -199,18 +223,7 @@ export async function introspect(
   };
 }
 
-async function resolveDatabase(
-  db: DuckDBDatabase,
-  targetDatabase?: string,
-  allDatabases?: boolean
-): Promise<string | null> {
-  if (allDatabases) {
-    return null;
-  }
-  if (targetDatabase) {
-    return targetDatabase;
-  }
-
+async function loadCurrentDatabase(db: DuckDBDatabase): Promise<string | null> {
   const rows = await db.execute<{ current_database: string }>(
     sql`SELECT current_database() as current_database`
   );
@@ -226,12 +239,11 @@ async function resolveSchemas(
     return targetSchemas;
   }
 
-  const databaseFilter = database
-    ? sql`catalog_name = ${database}`
-    : sql`1 = 1`;
-
   const rows = await db.execute<{ schema_name: string }>(
-    sql`SELECT schema_name FROM information_schema.schemata WHERE ${databaseFilter}`
+    sql`SELECT schema_name FROM information_schema.schemata WHERE ${buildDatabaseFilter(
+      'catalog_name',
+      database
+    )}`
   );
 
   return rows
@@ -239,11 +251,18 @@ async function resolveSchemas(
     .filter((name) => !SYSTEM_SCHEMAS.has(name));
 }
 
-function buildOptionalEqualityFilter(
-  columnName: string,
-  value: string | null
-): SQL {
-  return value ? sql`${sql.raw(columnName)} = ${value}` : sql`1 = 1`;
+// Catalogs skipped when introspecting all databases. `temp` holds
+// connection-local tables and `system` holds DuckDB's own catalog.
+const SKIPPED_CATALOGS = ['system', 'temp'];
+
+function buildDatabaseFilter(columnName: string, database: string | null): SQL {
+  if (database) {
+    return sql`${sql.raw(columnName)} = ${database}`;
+  }
+  return sql`${sql.raw(columnName)} NOT IN (${sql.join(
+    SKIPPED_CATALOGS.map((name) => sql`${name}`),
+    sql.raw(', ')
+  )})`;
 }
 
 function buildSchemaFilter(columnName: string, schemas: string[]): SQL {
@@ -272,7 +291,7 @@ async function loadTables(
         table_name,
         table_type
       FROM information_schema.tables
-      WHERE ${buildOptionalEqualityFilter('table_catalog', database)}
+      WHERE ${buildDatabaseFilter('table_catalog', database)}
       AND ${buildSchemaFilter('table_schema', schemas)}
       AND ${includeViews ? sql`1 = 1` : sql`table_type = 'BASE TABLE'`}
       ORDER BY table_catalog, table_schema, table_name
@@ -301,7 +320,7 @@ async function loadColumns(
         numeric_scale,
         internal
       FROM duckdb_columns()
-      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, column_index
     `
@@ -326,7 +345,7 @@ async function loadConstraints(
         referenced_table,
         referenced_column_names
       FROM duckdb_constraints()
-      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, constraint_index
     `
@@ -346,11 +365,31 @@ async function loadIndexes(
         table_name,
         index_name,
         is_unique,
-        expressions
+        expressions,
+        sql
       FROM duckdb_indexes()
-      WHERE ${buildOptionalEqualityFilter('database_name', database)}
+      WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, index_name
+    `
+  );
+}
+
+async function loadTableSql(
+  db: DuckDBDatabase,
+  database: string | null,
+  schemas: string[]
+): Promise<DuckDbTableSqlRow[]> {
+  return await db.execute<DuckDbTableSqlRow>(
+    sql`
+      SELECT
+        database_name,
+        schema_name,
+        table_name,
+        sql
+      FROM duckdb_tables()
+      WHERE ${buildDatabaseFilter('database_name', database)}
+      AND ${buildSchemaFilter('schema_name', schemas)}
     `
   );
 }
@@ -359,7 +398,8 @@ function buildTables(
   tables: DuckDbTableRow[],
   columns: DuckDbColumnRow[],
   constraints: DuckDbConstraintRow[],
-  indexes: DuckDbIndexRow[]
+  indexes: DuckDbIndexRow[],
+  tableSql: DuckDbTableSqlRow[]
 ): IntrospectedTable[] {
   const byTable: Record<string, IntrospectedTable> = {};
   for (const table of tables) {
@@ -413,13 +453,17 @@ function buildTables(
     if (!table) {
       continue;
     }
-    if (!constraint.constraint_column_names?.length) {
+    // A table-level CHECK such as CHECK (1 = 1) references no column.
+    if (
+      !constraint.constraint_column_names?.length &&
+      constraint.constraint_type !== 'CHECK'
+    ) {
       continue;
     }
     table.constraints.push({
       name: constraint.constraint_name,
       type: constraint.constraint_type,
-      columns: constraint.constraint_column_names,
+      columns: constraint.constraint_column_names ?? [],
       referencedTable:
         constraint.referenced_table && constraint.referenced_column_names
           ? {
@@ -445,13 +489,142 @@ function buildTables(
     table.indexes.push(index);
   }
 
+  for (const row of tableSql) {
+    const key = tableKey(row.database_name, row.schema_name, row.table_name);
+    const table = byTable[key];
+    if (!table || !row.sql) {
+      continue;
+    }
+    const generated = parseGeneratedColumns(
+      row.sql,
+      table.columns.map((column) => column.name)
+    );
+    if (!generated) {
+      continue;
+    }
+    for (const column of table.columns) {
+      column.generatedExpression = generated.get(column.name) ?? null;
+    }
+  }
+
   return Object.values(byTable);
+}
+
+/**
+ * Reads generated columns from a `duckdb_tables().sql` statement. DuckDB
+ * reports a generated column's expression as its `column_default` and leaves
+ * `information_schema.columns.is_generated` empty, so the CREATE TABLE text is
+ * the only place that tells the two apart. Returns undefined when the
+ * statement does not list the expected columns in order.
+ */
+function parseGeneratedColumns(
+  createSql: string,
+  columnNames: readonly string[]
+): Map<string, string | null> | undefined {
+  const open = scanTopLevel(createSql, 0, (_, char) => char === '(');
+  const close = open < 0 ? -1 : matchingParen(createSql, open);
+  if (close < 0) {
+    return undefined;
+  }
+
+  // Column definitions come first, then table constraints.
+  const segments = splitTopLevel(createSql.slice(open + 1, close), ',');
+  if (segments.length < columnNames.length) {
+    return undefined;
+  }
+
+  const generated = new Map<string, string | null>();
+  for (const [index, name] of columnNames.entries()) {
+    const segment = segments[index]!.trim();
+    const identifier = readLeadingIdentifier(segment);
+    if (identifier?.name !== name) {
+      return undefined;
+    }
+    const keyword = scanTopLevel(segment, identifier.end, (offset) =>
+      GENERATED_KEYWORD.test(segment.slice(offset))
+    );
+    if (keyword < 0) {
+      generated.set(name, null);
+      continue;
+    }
+    const exprOpen = segment.indexOf('(', keyword);
+    const exprClose = matchingParen(segment, exprOpen);
+    if (exprClose < 0) {
+      return undefined;
+    }
+    generated.set(name, segment.slice(exprOpen + 1, exprClose).trim());
+  }
+  return generated;
+}
+
+const GENERATED_KEYWORD = /^\sGENERATED\s+ALWAYS\s+AS\s*\(/i;
+
+/**
+ * Returns the first offset at or after `from` that is outside quotes and
+ * parentheses and satisfies `match`, or -1.
+ */
+function scanTopLevel(
+  text: string,
+  from: number,
+  match: (offset: number, char: string) => boolean
+): number {
+  let depth = 0;
+  for (let offset = from; offset < text.length; offset += 1) {
+    const char = text[offset]!;
+    if (char === '"' || char === "'") {
+      offset = skipQuoted(text, offset);
+      continue;
+    }
+    if (depth === 0 && match(offset, char)) {
+      return offset;
+    }
+    if (char === '(') depth += 1;
+    if (char === ')') depth = Math.max(0, depth - 1);
+  }
+  return -1;
+}
+
+/** Returns the offset of the parenthesis closing the one at `open`, or -1. */
+function matchingParen(text: string, open: number): number {
+  if (text[open] !== '(') {
+    return -1;
+  }
+  return scanTopLevel(text, open + 1, (_, char) => char === ')');
+}
+
+/** Returns the offset of the quote closing the one at `open`. */
+function skipQuoted(text: string, open: number): number {
+  const quote = text[open]!;
+  for (let offset = open + 1; offset < text.length; offset += 1) {
+    if (text[offset] === quote) {
+      if (text[offset + 1] !== quote) {
+        return offset;
+      }
+      offset += 1;
+    }
+  }
+  return text.length;
+}
+
+function readLeadingIdentifier(
+  text: string
+): { name: string; end: number } | undefined {
+  if (text.startsWith('"')) {
+    const end = skipQuoted(text, 0);
+    if (end >= text.length) {
+      return undefined;
+    }
+    return { name: text.slice(1, end).replace(/""/g, '"'), end: end + 1 };
+  }
+  const match = /^[^\s"(]+/.exec(text);
+  return match ? { name: match[0], end: match[0].length } : undefined;
 }
 
 interface EmitOptions {
   useCustomTimeTypes: boolean;
   mapJsonAsDuckDbJson: boolean;
   importBasePath: string;
+  currentDatabase: string | null;
 }
 
 function emitSchema(
@@ -464,6 +637,9 @@ function emitSchema(
     local: new Set(),
   };
 
+  if (!catalog.length) {
+    return '/* No tables matched the introspection filters. */\nexport {};\n';
+  }
   imports.pgCore.add('pgSchema');
 
   const sorted = [...catalog].sort(
@@ -512,6 +688,18 @@ function emitSchema(
 
   const lines: string[] = [];
 
+  const isOtherDatabase = (table: IntrospectedTable) =>
+    table.database !== undefined && table.database !== options.currentDatabase;
+  const otherDatabases = [
+    ...new Set(sorted.filter(isOtherDatabase).map((table) => table.database!)),
+  ];
+  if (otherDatabases.length) {
+    lines.push(
+      ...emitOtherDatabaseHeader(otherDatabases, options.currentDatabase),
+      ''
+    );
+  }
+
   for (const schema of uniqueSchemas(sorted)) {
     const schemaVar = schemaIdentifiers.get(schema)!;
     lines.push(
@@ -522,6 +710,12 @@ function emitSchema(
     const tables = sorted.filter((table) => table.schema === schema);
     for (const table of tables) {
       const plan = plans.get(tableKeyOf(table))!;
+      if (isOtherDatabase(table)) {
+        lines.push(
+          `/* database: ${commentText(JSON.stringify(table.database))} */`
+        );
+      }
+      lines.push(...emitSkippedDefinitions(table));
       lines.push(
         ...emitTable(
           schemaVar,
@@ -539,6 +733,62 @@ function emitSchema(
   return [importsBlock, ...lines].join('\n').trim() + '\n';
 }
 
+function emitOtherDatabaseHeader(
+  databases: string[],
+  currentDatabase: string | null
+): string[] {
+  const names = commentText(
+    databases.map((name) => JSON.stringify(name)).join(', ')
+  );
+  const current = currentDatabase
+    ? ` (${commentText(JSON.stringify(currentDatabase))})`
+    : '';
+  return [
+    '/*',
+    ` * Some tables come from databases other than the current one${current}:`,
+    ` * ${names}.`,
+    ' * The generated schema does not encode the database (catalog), so queries',
+    " * resolve against the connection's current database. Run USE <database> on",
+    ' * the connection before querying these tables. Tables from different',
+    ' * databases that share a schema name also share one pgSchema() object.',
+    ' */',
+  ];
+}
+
+/** CHECK constraints and indexes are listed as comments, not Drizzle config. */
+function emitSkippedDefinitions(table: IntrospectedTable): string[] {
+  const lines: string[] = [];
+  for (const constraint of table.constraints) {
+    if (constraint.type === 'CHECK') {
+      lines.push(
+        `/* check ${commentText(
+          `${JSON.stringify(constraint.name)} (not emitted): ${
+            constraint.rawExpression ?? ''
+          }`
+        )} */`
+      );
+    }
+  }
+  for (const index of table.indexes) {
+    lines.push(
+      `/* index ${commentText(
+        `${JSON.stringify(index.index_name)} (not emitted): ${
+          index.sql ?? index.expressions ?? ''
+        }`
+      )} */`
+    );
+  }
+  return lines;
+}
+
+/**
+ * Keeps catalog text inside a block comment on one line: `*\/` cannot end
+ * the comment and line breaks collapse to spaces.
+ */
+function commentText(value: string): string {
+  return value.replace(/\s+/g, ' ').replace(/\*\//g, '*\\/');
+}
+
 interface TablePlan {
   table: IntrospectedTable;
   columnProperties: ReadonlyMap<string, string>;
@@ -553,6 +803,9 @@ const CONSTRAINT_HELPERS: Readonly<Record<string, string>> = {
 };
 
 function selectConstraints(table: IntrospectedTable): IntrospectedConstraint[] {
+  if (table.kind === 'view') {
+    return [];
+  }
   return table.constraints.filter(
     (constraint) =>
       constraint.type in CONSTRAINT_HELPERS &&
@@ -567,6 +820,18 @@ function emitTable(
   plans: ReadonlyMap<string, TablePlan>,
   tableIdentifiers: ReadonlyMap<string, string>
 ): string[] {
+  if (plan.table.kind === 'view') {
+    // .existing() marks the view as defined outside Drizzle, so drizzle-kit
+    // does not try to create it and the view cannot be used for inserts.
+    return [
+      `export const ${tableVar} = ${schemaVar}.view(${JSON.stringify(
+        plan.table.name
+      )}, {`,
+      ...plan.columnLines,
+      '}).existing();',
+    ];
+  }
+
   const constraintBlock = emitConstraints(plan, plans, tableIdentifiers);
 
   const tableLines: string[] = [];
@@ -829,13 +1094,27 @@ function emitColumn(
     builder += '.notNull()';
   }
 
+  if (column.generatedExpression) {
+    // DuckDB reports the generation expression as column_default too, so it
+    // must not become a default. Drizzle leaves generated columns out of
+    // inserts and updates.
+    imports.drizzle.add('sql');
+    return `${builder}.generatedAlwaysAs(${sqlTemplate(
+      column.generatedExpression
+    )})`;
+  }
+
   const defaultFragment = resolveDefault(column.columnDefault, mapping);
   if (defaultFragment === null) {
-    // DuckDB reports generated column expressions as column_default, so
-    // unrecognized expressions stay informational instead of becoming defaults.
-    builder += ` /* default: ${escapeBlockComment(
-      column.columnDefault!.trim()
-    )} */`;
+    const expression = column.columnDefault!.trim();
+    if (column.generatedExpression === null) {
+      imports.drizzle.add('sql');
+      builder += `.default(${sqlTemplate(expression)})`;
+    } else {
+      // Without the table definition a generated column cannot be told apart
+      // from a default, so the expression stays informational.
+      builder += ` /* default: ${escapeBlockComment(expression)} */`;
+    }
   } else if (defaultFragment) {
     if (defaultFragment.startsWith('.default(sql`')) {
       imports.drizzle.add('sql');
@@ -844,6 +1123,10 @@ function emitColumn(
   }
 
   return builder;
+}
+
+function sqlTemplate(expression: string): string {
+  return `sql\`${escapeTemplateLiteral(expression)}\``;
 }
 
 type DefaultLiteral = 'number' | 'string' | 'boolean';
@@ -885,7 +1168,7 @@ function resolveDefault(
   }
 
   const literals = target.defaultLiterals ?? [];
-  const sqlDefault = `.default(sql\`${escapeTemplateLiteral(trimmed)}\`)`;
+  const sqlDefault = `.default(${sqlTemplate(trimmed)})`;
 
   if (/^nextval\(/i.test(trimmed)) {
     return sqlDefault;
@@ -1000,7 +1283,14 @@ function mapDuckDbType(
     };
   }
 
-  if (upper === 'BIGINT' || upper === 'INT8' || upper === 'UBIGINT') {
+  if (BIGINT_MODE_TYPES.has(upper)) {
+    imports.pgCore.add('bigint');
+    return {
+      builder: `bigint(${columnName(column.name)}, { mode: 'bigint' })`,
+    };
+  }
+
+  if (upper === 'BIGINT' || upper === 'INT8') {
     imports.pgCore.add('bigint');
     // Drizzle's bigint helper requires an explicit mode. Default to 'number'
     // to mirror DuckDB's typical 64-bit integer behavior in JS.

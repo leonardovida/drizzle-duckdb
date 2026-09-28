@@ -53,7 +53,7 @@ test('introspection snapshot covers DuckDB-specific types', async () => {
 
   const fragments = [
     `bigint("visits", { mode: 'number' }).notNull()`,
-    `bigint("hits", { mode: 'number' })`,
+    `bigint("hits", { mode: 'bigint' })`,
     `numeric("price", { precision: 12, scale: 2 })`,
     `duckDbTime("precise_time", { duckDbType: 'TIME_NS' })`,
     `duckDbTime("wake_at", { withTimezone: true })`,

@@ -24,9 +24,14 @@ beforeAll(async () => {
       id integer primary key,
       visits bigint not null,
       tags integer[],
-      created_at timestamp with time zone
+      created_at timestamp with time zone,
+      ref uuid not null default gen_random_uuid(),
+      visits_plus bigint generated always as (visits + 1)
     )
   `);
+  await db.execute(
+    sql`create view tc.metric_refs as select id, ref from tc.metrics`
+  );
   await db.execute(
     sql`create table tc_sales.customers (id integer primary key)`
   );
@@ -55,6 +60,7 @@ test('generated schema type-checks with tsc', async () => {
 
   const result = await introspect(db, {
     schemas: ['tc', 'tc_sales', 'tc_support'],
+    includeViews: true,
     importBasePath,
   });
 
@@ -70,6 +76,15 @@ test('generated schema type-checks with tsc', async () => {
   );
   expect(result.files.schemaTs).toContain(
     'foreignColumns: [tcSalesCustomers.id]'
+  );
+  expect(result.files.schemaTs).toContain(
+    'ref: uuid("ref").notNull().default(sql`gen_random_uuid()`)'
+  );
+  expect(result.files.schemaTs).toContain(
+    `visitsPlus: bigint("visits_plus", { mode: 'number' }).generatedAlwaysAs(sql\`(visits + 1)\`)`
+  );
+  expect(result.files.schemaTs).toContain(
+    'export const metricRefs = tcSchema.view("metric_refs", {'
   );
 
   const tsconfigPath = path.join(tmpDir, 'tsconfig.generated.json');
