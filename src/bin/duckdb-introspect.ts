@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 import { DuckDBInstance } from '@duckdb/node-api';
+import { sql } from 'drizzle-orm';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { closeClientConnection, closeDuckDbInstance } from '../client.ts';
+import type { DuckDBDatabase } from '../driver.ts';
 import { drizzle } from '../index.ts';
 import { configureDuckLake } from '../ducklake.ts';
 import { introspect } from '../introspect.ts';
-import { CliUsageError, parseArgs } from './duckdb-introspect-args.ts';
+import {
+  CliUsageError,
+  parseArgs,
+  type CliOptions,
+} from './duckdb-introspect-args.ts';
 
 function printHelp(): void {
   console.log(`duckdb-introspect
@@ -63,6 +69,68 @@ Examples:
 `);
 }
 
+/**
+ * Fails before anything is written when --database or --schema names a
+ * database or schema that does not exist, so a typo cannot replace an
+ * existing schema file with an empty one.
+ */
+async function checkTargetsExist(
+  db: DuckDBDatabase,
+  options: CliOptions
+): Promise<void> {
+  const rows = await db.execute<{ catalog_name: string; schema_name: string }>(
+    sql`SELECT catalog_name, schema_name FROM information_schema.schemata`
+  );
+  const databases = [...new Set(rows.map((row) => row.catalog_name))];
+
+  let database: string | undefined;
+  if (!options.allDatabases) {
+    if (options.database) {
+      database = options.database;
+    } else {
+      const current = await db.execute<{ name: string }>(
+        sql`SELECT current_database() AS name`
+      );
+      database = current[0]?.name;
+    }
+    if (database !== undefined && !databases.includes(database)) {
+      throw new Error(
+        `Database ${JSON.stringify(database)} not found. Attached databases: ${formatNames(databases)}`
+      );
+    }
+  }
+
+  if (options.schemas?.length) {
+    const available = [
+      ...new Set(
+        rows
+          .filter(
+            (row) => database === undefined || row.catalog_name === database
+          )
+          .map((row) => row.schema_name)
+      ),
+    ];
+    const missing = options.schemas.filter(
+      (schema) => !available.includes(schema)
+    );
+    if (missing.length) {
+      const where =
+        database === undefined
+          ? 'any attached database'
+          : `database ${JSON.stringify(database)}`;
+      throw new Error(
+        `Schema ${formatNames(missing)} not found in ${where}. Available schemas: ${formatNames(available)}`
+      );
+    }
+  }
+}
+
+function formatNames(names: string[]): string {
+  return names.length
+    ? names.map((name) => JSON.stringify(name)).join(', ')
+    : '(none)';
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -88,6 +156,8 @@ async function main() {
       await configureDuckLake(connection, options.ducklake);
     }
 
+    await checkTargetsExist(db, options);
+
     const result = await introspect(db, {
       database: options.database,
       allDatabases: options.allDatabases,
@@ -108,6 +178,9 @@ async function main() {
       );
     }
 
+    if (!result.files.metaJson.length) {
+      console.warn('Warning: no tables matched, so the schema is empty.');
+    }
     console.log(`Wrote schema to ${options.outFile}`);
     if (options.outMeta) {
       console.log(`Wrote metadata to ${options.outMeta}`);

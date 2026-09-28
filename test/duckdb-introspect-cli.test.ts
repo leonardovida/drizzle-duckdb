@@ -1,9 +1,11 @@
-import { describe, expect, test } from 'vitest';
+import { DuckDBInstance } from '@duckdb/node-api';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { CliUsageError, parseArgs } from '../src/bin/duckdb-introspect-args.ts';
+import { closeDuckDbInstance } from '../src/client.ts';
 
 const binPath = path.join(process.cwd(), 'src/bin/duckdb-introspect.ts');
 
@@ -120,6 +122,67 @@ describe('duckdb-introspect parseArgs', () => {
       'DuckLake requires --ducklake-catalog'
     );
   });
+});
+
+describe('duckdb-introspect binary targets', () => {
+  let cwd: string;
+  const handWritten = '// hand-written schema\n';
+
+  beforeAll(async () => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'duckdb-introspect-'));
+    const instance = await DuckDBInstance.create(path.join(cwd, 'app.duckdb'));
+    const connection = await instance.connect();
+    await connection.run(`create table users (id integer primary key)`);
+    await connection.run(`create schema empty_schema`);
+    connection.closeSync();
+    await closeDuckDbInstance(instance);
+  });
+
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  function run(...args: string[]) {
+    fs.writeFileSync(path.join(cwd, 'schema.ts'), handWritten);
+    const result = spawnSync(
+      'bun',
+      [binPath, '--url', 'app.duckdb', '--out', 'schema.ts', ...args],
+      { cwd, encoding: 'utf8' }
+    );
+    return {
+      ...result,
+      schemaTs: fs.readFileSync(path.join(cwd, 'schema.ts'), 'utf8'),
+    };
+  }
+
+  test('fails without writing when the database does not exist', () => {
+    const result = run('--database', 'app_typo');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Database "app_typo" not found');
+    expect(result.schemaTs).toBe(handWritten);
+  }, 30_000);
+
+  test('fails without writing when a schema does not exist', () => {
+    const result = run('--schema', 'main,mian');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'Schema "mian" not found in database "app"'
+    );
+    expect(result.schemaTs).toBe(handWritten);
+  }, 30_000);
+
+  test('warns but writes when an existing schema has no tables', () => {
+    const result = run('--schema', 'empty_schema');
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('no tables matched');
+    expect(result.schemaTs).not.toContain('pgSchema');
+  }, 30_000);
+
+  test('writes the schema when the targets exist', () => {
+    const result = run('--database', 'app', '--schema', 'main');
+    expect(result.status).toBe(0);
+    expect(result.schemaTs).toContain('mainSchema.table("users"');
+  }, 30_000);
 });
 
 describe('duckdb-introspect binary', () => {

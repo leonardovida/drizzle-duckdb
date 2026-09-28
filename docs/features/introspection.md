@@ -45,6 +45,8 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 
 The CLI exits with code 2 on invalid usage: a missing `--url` (which also prints the help text), a flag without its value, an unknown option, a stray positional argument, or an invalid `--ducklake-data-inlining-row-limit`. Other failures exit with code 1.
 
+Before writing anything, the CLI checks that the `--database` and every `--schema` exist. If one is missing it exits with code 1, names the missing database or schema and lists the available ones, and leaves the output file untouched. A schema that exists but has no tables still writes an empty module and prints a warning.
+
 ### Examples
 
 **Local database:**
@@ -103,6 +105,12 @@ Use `--all-databases` to introspect tables from all attached databases (use with
 ```bash
 bunx duckdb-introspect --url md: --all-databases --out ./schema.ts
 ```
+
+`--all-databases` skips the connection-local `temp` catalog and DuckDB's `system` catalog.
+
+### Tables Outside the Current Database
+
+The generated schema does not encode the database (catalog). `pgSchema("main")` produces `"main"."orders"`, which DuckDB resolves against the connection's current database. Tables introspected with `--database` set to another database, or from other databases with `--all-databases`, only work after the connection runs `USE <database>`. The generated file flags this with a header comment and a `/* database: "..." */` comment above each affected table. Tables from different databases that share a schema name also share one `pgSchema()` object, so a single connection can only query one of those databases at a time. Introspect each database into its own file when you need several.
 
 ## Programmatic API
 
@@ -175,7 +183,9 @@ The introspector generates Drizzle schema files with:
 
 1. **Imports** from `drizzle-orm`, `drizzle-orm/pg-core`, and DuckDB helpers
 2. **Schema declarations** for each database schema
-3. **Table definitions** with columns, constraints, and indexes
+3. **Table definitions** with columns, primary keys, unique constraints and foreign keys
+4. **View definitions** (with `--include-views`) as `schema.view(name, { ...columns }).existing()`, which Drizzle treats as read-only and drizzle-kit does not try to create
+5. **Comments** for CHECK constraints and `CREATE INDEX` indexes, which are not emitted as Drizzle config
 
 Table variables use the camelCased table name. They are renamed only on a collision: a table name shared across schemas gets a schema prefix (and a database prefix with `--all-databases`), a name that is a JavaScript reserved word or matches an imported helper gets a `Table` suffix, and any remaining clash gets a number suffix.
 
@@ -236,19 +246,24 @@ Things to note in the output:
 - DuckDB reports `TEXT` as `VARCHAR` and drops the `VARCHAR(255)` length, so both columns become `varchar()`.
 - Primary keys become `primaryKey()` entries in the table callback, and a single-column `UNIQUE` becomes `unique(name).on(t.col)`.
 - DuckDB timestamp helpers get ``.default(sql`current_timestamp`)``. With `--use-pg-time` the column becomes `timestamp(...).defaultNow()`.
-- A default the introspector does not recognize is kept as a `/* default: ... */` comment instead of a `.default(...)` call.
+- Literal defaults become `.default(value)`. Other defaults, such as `gen_random_uuid()`, `current_date` or `nextval('seq')`, become ``.default(sql`...`)``, so the column is optional in `$inferInsert`.
+- Generated columns (`GENERATED ALWAYS AS (...)`) become ``.generatedAlwaysAs(sql`...`)``. Drizzle leaves them out of inserts, which DuckDB requires. If the table's `CREATE TABLE` text cannot be read, the introspector cannot tell a generated column from a default, so it keeps the expression as a `/* default: ... */` comment.
 
 ## Type Mappings
 
 ### Numeric Types
 
-| DuckDB Type                      | Drizzle Builder                       |
-| -------------------------------- | ------------------------------------- |
-| `TINYINT`, `SMALLINT`, `INTEGER` | `integer()`                           |
-| `BIGINT`, `UBIGINT`              | `bigint({ mode: 'number' })`          |
-| `FLOAT`, `REAL`, `FLOAT4`        | `real()`                              |
-| `DOUBLE`                         | `doublePrecision()`                   |
-| `DECIMAL(p,s)`                   | `numeric({ precision: p, scale: s })` |
+| DuckDB Type                         | Drizzle Builder                       |
+| ----------------------------------- | ------------------------------------- |
+| `TINYINT`, `SMALLINT`, `INTEGER`    | `integer()`                           |
+| `UTINYINT`, `USMALLINT`, `UINTEGER` | `integer()`                           |
+| `BIGINT`                            | `bigint({ mode: 'number' })`          |
+| `UBIGINT`, `HUGEINT`, `UHUGEINT`    | `bigint({ mode: 'bigint' })`          |
+| `FLOAT`, `REAL`, `FLOAT4`           | `real()`                              |
+| `DOUBLE`                            | `doublePrecision()`                   |
+| `DECIMAL(p,s)`                      | `numeric({ precision: p, scale: s })` |
+
+DuckDB returns the unsigned 8, 16 and 32-bit types as JS numbers, so they use `integer()` even though `UINTEGER` values go past the Postgres `int4` range. `UBIGINT`, `HUGEINT` and `UHUGEINT` come back as JS `bigint` values, so they use `bigint` mode to keep every digit. `BIGINT` keeps `mode: 'number'`, which rounds values beyond `Number.MAX_SAFE_INTEGER`. Change it to `mode: 'bigint'` by hand if you store larger values.
 
 ### String and Other Scalar Types
 
@@ -276,18 +291,18 @@ DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARC
 
 ### DuckDB-Specific Types
 
-| DuckDB Type       | Drizzle Builder                  |
-| ----------------- | -------------------------------- |
-| `type[]` (list)   | `duckDbList('name', 'TYPE')`     |
-| `type[n]` (array) | `duckDbArray('name', 'TYPE', n)` |
-| `STRUCT(...)`     | `duckDbStruct('name', { ... })`  |
-| `MAP(K, V)`       | `duckDbMap('name', 'V')`         |
-| `JSON`            | `duckDbJson('name')`             |
-| `BLOB`            | `duckDbBlob('name')`             |
-| `INET`            | `duckDbInet('name')`             |
-| `INTERVAL`        | `duckDbInterval('name')`         |
+| DuckDB Type       | Drizzle Builder                            |
+| ----------------- | ------------------------------------------ |
+| `type[]` (list)   | `duckDbList('name', 'TYPE')`               |
+| `type[n]` (array) | `duckDbArray('name', 'TYPE', n)`           |
+| `STRUCT(...)`     | `duckDbStruct('name', { ... })`            |
+| `MAP(K, V)`       | `duckDbMap('name', 'V', { keyType: 'K' })` |
+| `JSON`            | `duckDbJson('name')`                       |
+| `BLOB`            | `duckDbBlob('name')`                       |
+| `INET`            | `duckDbInet('name')`                       |
+| `INTERVAL`        | `duckDbInterval('name')`                   |
 
-The generated `duckDbMap` keeps the value type only, so the key type defaults to `STRING` (`VARCHAR`). Add `{ keyType }` by hand for other key types.
+The generated `duckDbMap` always has the value type. A non-string key type is emitted as `{ keyType }`, for example `duckDbMap("counts", "VARCHAR", { keyType: "INTEGER" })`. String keys (`VARCHAR`) leave out the option because `VARCHAR` is the default.
 
 Unrecognized types fall back to `text()` with a `/* unsupported DuckDB type: ... */` comment.
 
@@ -298,6 +313,8 @@ The introspector captures:
 - **Primary keys**: single and composite
 - **Foreign keys**: with referenced table and columns
 - **Unique constraints**: single column and multi-column
+
+CHECK constraints and indexes created with `CREATE INDEX` are not emitted as `check()`, `index()` or `uniqueIndex()` config. Each one is listed in a comment above its table, for example `/* check "users_age_check" (not emitted): CHECK((age > 0)) */`, so you can add it by hand if you use drizzle-kit.
 
 ## Workflow Example
 

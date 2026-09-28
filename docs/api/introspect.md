@@ -127,6 +127,12 @@ const result = await introspect(db, {
 });
 ```
 
+`allDatabases` skips the connection-local `temp` catalog and DuckDB's `system` catalog.
+
+### Limitation: Tables Outside the Current Database
+
+The generated schema does not encode the database (catalog). A table in `pgSchema("main")` is queried as `"main"."orders"`, which DuckDB resolves against the connection's current database. Tables that come from any other database, through `database` or `allDatabases`, work only after the connection runs `USE <database>`. The generated file starts with a comment that names those databases, and each affected table has a `/* database: "..." */` comment above it. Tables from different databases that share a schema name also share one `pgSchema()` object. Introspect each database into its own file when one connection needs tables from several databases.
+
 ## Generated Schema Example
 
 For a database with this table:
@@ -166,31 +172,34 @@ export const users = mainSchema.table("users", {
 
 ## Type Mapping
 
-| DuckDB Type                      | Generated Drizzle Type                             |
-| -------------------------------- | -------------------------------------------------- |
-| `TINYINT`, `SMALLINT`, `INTEGER` | `integer()`                                        |
-| `BIGINT`, `UBIGINT`              | `bigint({ mode: 'number' })`                       |
-| `VARCHAR` (also `TEXT`)          | `varchar()`                                        |
-| `BOOLEAN`                        | `boolean()`                                        |
-| `DOUBLE`                         | `doublePrecision()`                                |
-| `FLOAT`, `REAL`                  | `real()`                                           |
-| `DECIMAL(p,s)`                   | `numeric({ precision: p, scale: s })`              |
-| `UUID`                           | `uuid()`                                           |
-| `TIMESTAMP`                      | `duckDbTimestamp()`                                |
-| `TIMESTAMPTZ`                    | `duckDbTimestamp({ withTimezone: true })`          |
-| `DATE`                           | `duckDbDate()`                                     |
-| `TIME`                           | `duckDbTime()`                                     |
-| `JSON`                           | `duckDbJson()`                                     |
-| `VARCHAR[]`                      | `duckDbList('VARCHAR')`                            |
-| `INTEGER[3]`                     | `duckDbArray('INTEGER', 3)`                        |
-| `STRUCT(...)`                    | `duckDbStruct({...})`                              |
-| `MAP(VARCHAR, INTEGER)`          | `duckDbMap('INTEGER')`                             |
-| `BLOB`                           | `duckDbBlob()`                                     |
-| `INET`                           | `duckDbInet()`                                     |
-| `INTERVAL`                       | `duckDbInterval()`                                 |
-| Anything else                    | `text()` with an `unsupported DuckDB type` comment |
+| DuckDB Type                         | Generated Drizzle Type                             |
+| ----------------------------------- | -------------------------------------------------- |
+| `TINYINT`, `SMALLINT`, `INTEGER`    | `integer()`                                        |
+| `UTINYINT`, `USMALLINT`, `UINTEGER` | `integer()`                                        |
+| `BIGINT`                            | `bigint({ mode: 'number' })`                       |
+| `UBIGINT`, `HUGEINT`, `UHUGEINT`    | `bigint({ mode: 'bigint' })`                       |
+| `VARCHAR` (also `TEXT`)             | `varchar()`                                        |
+| `BOOLEAN`                           | `boolean()`                                        |
+| `DOUBLE`                            | `doublePrecision()`                                |
+| `FLOAT`, `REAL`                     | `real()`                                           |
+| `DECIMAL(p,s)`                      | `numeric({ precision: p, scale: s })`              |
+| `UUID`                              | `uuid()`                                           |
+| `TIMESTAMP`                         | `duckDbTimestamp()`                                |
+| `TIMESTAMPTZ`                       | `duckDbTimestamp({ withTimezone: true })`          |
+| `DATE`                              | `duckDbDate()`                                     |
+| `TIME`                              | `duckDbTime()`                                     |
+| `JSON`                              | `duckDbJson()`                                     |
+| `VARCHAR[]`                         | `duckDbList('VARCHAR')`                            |
+| `INTEGER[3]`                        | `duckDbArray('INTEGER', 3)`                        |
+| `STRUCT(...)`                       | `duckDbStruct({...})`                              |
+| `MAP(VARCHAR, INTEGER)`             | `duckDbMap('INTEGER')`                             |
+| `MAP(INTEGER, VARCHAR)`             | `duckDbMap('VARCHAR', { keyType: 'INTEGER' })`     |
+| `BLOB`                              | `duckDbBlob()`                                     |
+| `INET`                              | `duckDbInet()`                                     |
+| `INTERVAL`                          | `duckDbInterval()`                                 |
+| Anything else                       | `text()` with an `unsupported DuckDB type` comment |
 
-With `useCustomTimeTypes: false`, timestamp, date and time columns use the pg-core builders, and timestamp columns with a `current_timestamp` default get `.defaultNow()`. With the DuckDB helpers they get ``.default(sql`current_timestamp`)``. Defaults the introspector does not recognize become a `/* default: ... */` comment. See the [Introspection guide]({{ '/features/introspection' | relative_url }}#type-mappings) for the full mapping.
+With `useCustomTimeTypes: false`, timestamp, date and time columns use the pg-core builders, and timestamp columns with a `current_timestamp` default get `.defaultNow()`. With the DuckDB helpers they get ``.default(sql`current_timestamp`)``. Other non-literal defaults, such as `gen_random_uuid()` or `current_date`, become ``.default(sql`...`)``. Generated columns become ``.generatedAlwaysAs(sql`...`)``. With `includeViews`, views become `schema.view(name, { ...columns }).existing()`. CHECK constraints and `CREATE INDEX` indexes are listed as comments above their table instead of Drizzle config. See the [Introspection guide]({{ '/features/introspection' | relative_url }}#type-mappings) for the full mapping.
 
 ## CLI Usage
 
