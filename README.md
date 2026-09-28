@@ -136,20 +136,17 @@ const db = drizzle(client);
 await db.execute(sql`SET duckdb.force_execution = true`);
 ```
 
-When using a `pg.Pool`, wrap it so transactions pin one backend connection:
+A `pg.Pool` works too. The driver wraps it with `createPgDuckConnectionPool()`, so each transaction runs on one pooled client and `await db.close()` ends the pool:
 
 ```typescript
 import pg from 'pg';
-import {
-  createPgDuckConnectionPool,
-  drizzle,
-} from '@duckdbfan/drizzle-duckdb';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-const db = drizzle(createPgDuckConnectionPool(pool));
+const db = drizzle(pool);
 ```
 
 ### With Logging

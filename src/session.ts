@@ -31,7 +31,7 @@ import {
 import type { WithSubquery } from 'drizzle-orm/subquery';
 import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
-import { mapResultRow } from './sql/result-mapper.ts';
+import { mapResultRow, resolveFieldDecoder } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
 import type { DuckDBDialect } from './dialect.ts';
 import type {
@@ -158,6 +158,42 @@ function getScalarParamIndexes(
   return indexes;
 }
 
+function isNumericColumn(decoder: unknown): boolean {
+  return (
+    is(decoder, Column) &&
+    (decoder as Column).columnType.startsWith('PgNumeric')
+  );
+}
+
+/**
+ * DECIMAL columns are read as exact strings so numeric() columns keep every
+ * digit, as node-postgres does for NUMERIC. Any other field, such as
+ * sql`sum(${t.price})`, keeps the JS number it had before.
+ */
+function restoreNonNumericDecimals(
+  rows: unknown[][],
+  fields: SelectedFieldsOrdered,
+  decimalColumns: readonly number[]
+): void {
+  const toNumber = decimalColumns.filter(
+    (index) =>
+      !isNumericColumn(
+        fields[index] && resolveFieldDecoder(fields[index].field)
+      )
+  );
+  if (toNumber.length === 0) {
+    return;
+  }
+  for (const row of rows) {
+    for (const index of toNumber) {
+      const value = row[index];
+      if (typeof value === 'string') {
+        row[index] = Number(value);
+      }
+    }
+  }
+}
+
 interface QueryParamPreparationOptions {
   logger: Logger;
   queryString: string;
@@ -260,15 +296,19 @@ export class DuckDBPreparedQuery<
       return rows as T['execute'];
     }
 
-    const { rows } = await executeArraysOnClient(
+    const { rows, exactDecimalColumns } = await executeArraysOnClient(
       this.client,
       this.queryString,
       params,
-      { prepareCache: this.prepareCache }
+      { prepareCache: this.prepareCache, exactDecimals: !customResultMapper }
     );
 
     if (customResultMapper) {
       return customResultMapper(rows);
+    }
+
+    if (exactDecimalColumns) {
+      restoreNonNumericDecimals(rows, fields!, exactDecimalColumns);
     }
 
     return rows.map((row) =>

@@ -73,7 +73,7 @@ async function canLoadDuckLake(): Promise<boolean> {
 }
 
 describe.skipIf(!(await canLoadDuckLake()))('migrate() with DuckLake', () => {
-  test('explains that DuckLake cannot be the default migration catalog', async () => {
+  test('applies migrations with DuckLake as the default catalog', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'drizzle-ducklake-mig-'));
     const db = await drizzle(':memory:', {
       ducklake: {
@@ -82,19 +82,39 @@ describe.skipIf(!(await canLoadDuckLake()))('migrate() with DuckLake', () => {
         attachOptions: { dataPath: join(directory, 'data') },
       },
     });
+    const later = {
+      hash: 'journal-migration-2',
+      folderMillis: 2000,
+      sql: ['insert into journal_effects values (1)'],
+      bps: true,
+    };
     try {
-      const error = await db.dialect
-        .migrate(migrations, db.session, { migrationsFolder: '.' })
-        .then(
-          () => undefined,
-          (reason: unknown) => reason as Error
-        );
-      expect(error?.message).toMatch(
-        /migrate\(\) does not support DuckLake as the default catalog/
+      await db.dialect.migrate(migrations, db.session, {
+        migrationsFolder: '.',
+      });
+      // A second run applies only the new migration.
+      await db.dialect.migrate([...migrations, later], db.session, {
+        migrationsFolder: '.',
+      });
+      await db.dialect.migrate([...migrations, later], db.session, {
+        migrationsFolder: '.',
+      });
+
+      expect(
+        await db.execute(
+          sql`select id, hash from drizzle.__drizzle_migrations order by id`
+        )
+      ).toEqual([
+        { id: 1, hash: 'journal-migration' },
+        { id: 2, hash: 'journal-migration-2' },
+      ]);
+      expect(await db.execute(sql`select id from journal_effects`)).toEqual([
+        { id: 1 },
+      ]);
+      const [catalog] = await db.execute<{ type: string }>(
+        sql`select d.type from duckdb_tables() t join duckdb_databases() d using (database_name) where t.table_name = '__drizzle_migrations'`
       );
-      expect(String((error?.cause as Error | undefined)?.message)).toMatch(
-        /DuckLake does not support/
-      );
+      expect(catalog).toEqual({ type: 'ducklake' });
     } finally {
       await db.close();
       await rm(directory, { recursive: true, force: true });

@@ -102,20 +102,20 @@ function assertMigrationJournalName(option: string, name: string): void {
   }
 }
 
-// A DuckDB transaction can only write to one attached database, so the
-// journal cannot live in another catalog while migrations change DuckLake.
-const DUCKLAKE_MIGRATIONS_MESSAGE =
-  'migrate() cannot create its journal table in a DuckLake catalog, because DuckLake does not support sequences, primary keys or indexes. migrate() does not support DuckLake as the default catalog. Apply DuckLake schema changes with db.execute() instead, or attach DuckLake with ducklake: { use: false } and keep migrate() for tables in the main database.';
-
-function toMigrationSetupError(error: unknown): unknown {
-  if (
-    errorMessages(error).some((message) =>
-      message.includes('DuckLake does not support')
-    )
-  ) {
-    return new Error(DUCKLAKE_MIGRATIONS_MESSAGE, { cause: error });
+/**
+ * DuckLake has no sequences, primary keys or indexes, so a journal in a
+ * DuckLake catalog is a plain table. pg_duckdb and other clients without
+ * duckdb_databases() use the regular journal.
+ */
+async function isDuckLakeCurrentCatalog(session: PgSession): Promise<boolean> {
+  try {
+    const [row] = await session.all<{ type: string }>(
+      sql`select type from duckdb_databases() where database_name = current_database()`
+    );
+    return row?.type === 'ducklake';
+  } catch {
+    return false;
   }
-  return error;
 }
 
 // Drizzle's relational builder emits Postgres JSON functions. DuckDB names
@@ -242,10 +242,22 @@ export class DuckDBDialect extends PgDialect {
       )
     `;
 
+    const isDuckLake = await isDuckLakeCurrentCatalog(session);
+
     const setupJournal = async () => {
       await session.execute(
         sql`CREATE SCHEMA IF NOT EXISTS ${sql.identifier(migrationsSchema)}`
       );
+      if (isDuckLake) {
+        await session.execute(sql`
+          CREATE TABLE IF NOT EXISTS ${migrationTable} (
+            id integer NOT NULL,
+            hash text NOT NULL,
+            created_at bigint
+          )
+        `);
+        return;
+      }
       await session.execute(
         sql`CREATE SEQUENCE IF NOT EXISTS ${sql.identifier(
           migrationsSchema
@@ -290,9 +302,11 @@ export class DuckDBDialect extends PgDialect {
             }
 
             await tx.execute(
-              sql`insert into ${migrationTable} ("hash", "created_at") values(${migration.hash}, ${
-                migration.folderMillis
-              })`
+              isDuckLake
+                ? sql`insert into ${migrationTable} ("id", "hash", "created_at") select coalesce(max("id"), 0) + 1, ${migration.hash}, ${migration.folderMillis} from ${migrationTable}`
+                : sql`insert into ${migrationTable} ("hash", "created_at") values(${migration.hash}, ${
+                    migration.folderMillis
+                  })`
             );
           }
         }
@@ -323,11 +337,7 @@ export class DuckDBDialect extends PgDialect {
     // write-write conflict, so retry the whole run with backoff.
     for (let attempt = 1; ; attempt += 1) {
       try {
-        try {
-          await setupJournal();
-        } catch (error) {
-          throw toMigrationSetupError(error);
-        }
+        await setupJournal();
         await applyPendingMigrations();
         return;
       } catch (error) {

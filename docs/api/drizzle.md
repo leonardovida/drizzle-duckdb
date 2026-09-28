@@ -62,29 +62,13 @@ const db5 = drizzle(connection);
 
 Call `await db.close()` on databases created by the async forms. It closes the pool and the DuckDB instance. For the sync forms you own the client, so close it yourself.
 
-### One database per file per process
+### One instance per file per process
 
-Each async call opens a new DuckDB instance, even for a path that is already open. DuckDB's file lock does not stop a second instance in the same process, and two instances on one file do not see each other's writes. Committed writes from one of them can be lost when both close. This happens with a migration script and the app in one process, dev server hot reload, or tests that call `drizzle(path)` twice.
+The async forms share one DuckDB instance per database path in a process, through `DuckDBInstance.fromCache()`. Two `drizzle('./app.duckdb')` calls, for example a migration script and the app, or tests that open the same file, read and write the same database. Closing one of them leaves the other usable.
 
-Create the database once per file and share it:
+Opening a path that is already open with different instance options throws `Can't open a connection to same database file with a different configuration`. Pass the same `options` everywhere, or share one `db`.
 
-```typescript
-// db.ts
-export const db = await drizzle('./app.duckdb');
-```
-
-If you need several databases on one file, open the instance yourself and pass its connections or a pool. `DuckDBInstance.fromCache(path)` returns the same instance for the same path:
-
-```typescript
-import { DuckDBInstance } from '@duckdb/node-api';
-import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
-
-const instance = await DuckDBInstance.fromCache('./app.duckdb');
-const appDb = drizzle(createDuckDBConnectionPool(instance));
-const migrationDb = drizzle(await instance.connect());
-```
-
-In-memory paths are not affected, because every `:memory:` instance is a separate database.
+`:memory:` is not shared. Every `drizzle(':memory:')` call gets its own database.
 
 ## Parameters
 
@@ -118,7 +102,8 @@ interface DuckDBConnectionPool {
 
 - `DuckDBConnection` from `@duckdb/node-api`, obtained with `instance.connect()`
 - A pool from `createDuckDBConnectionPool()` or any object with `acquire()` and `release()`
-- A `PgDuckClient`: a Postgres wire client such as `pg.Client` connected to a server with pg_duckdb, or a `pg.Pool` wrapped with `createPgDuckConnectionPool()`
+- A `PgDuckClient`: a Postgres wire client such as `pg.Client` connected to a server with pg_duckdb
+- A `pg.Pool`. It is wrapped with `createPgDuckConnectionPool()` automatically, so a transaction runs on one pooled client and `db.close()` ends the pool
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';

@@ -63,16 +63,7 @@ const db = await drizzle('./my-database.duckdb');
 
 The file is created if it doesn't exist.
 
-Open each file once per process. Every `drizzle(path)` call creates a new DuckDB instance, and DuckDB does not stop a second instance on the same file in the same process. Two instances on one file do not see each other's writes, and committed writes from one of them can be lost when both close. Share one `db` across the app, migration code and tests, or open the instance yourself and pass its connections or a pool:
-
-```typescript
-import { DuckDBInstance } from '@duckdb/node-api';
-import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
-
-// fromCache returns the same instance for the same path
-const instance = await DuckDBInstance.fromCache('./my-database.duckdb');
-const db = drizzle(createDuckDBConnectionPool(instance));
-```
+Calls on the same path share one DuckDB instance in a process, so a migration script, the app and tests all see the same data. Opening the path again with different instance options throws. `:memory:` is never shared. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
 
 ## MotherDuck Cloud
 

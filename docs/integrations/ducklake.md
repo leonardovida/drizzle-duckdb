@@ -113,24 +113,17 @@ DuckLake only supports `NOT NULL` constraints. Primary keys, foreign keys, uniqu
 
 ### Migrations
 
-`migrate()` does not work when DuckLake is the default catalog, which is the default `use: true` setting. Its tracking table uses a sequence, a primary key and a unique index, and DuckLake has none of them. `migrate()` throws `migrate() cannot create its journal table in a DuckLake catalog, ...` with the DuckDB error as `error.cause`.
-
-A DuckDB transaction can only write to one attached database, so the journal also cannot live in another catalog while a migration changes DuckLake tables. Use one of these instead:
-
-- Create and change DuckLake tables with `db.execute()`, for example with `CREATE TABLE IF NOT EXISTS` at startup.
-- Attach DuckLake with `use: false` on a file database. `migrate()` then keeps its journal in that file and can manage the tables that live there:
+`migrate()` works with DuckLake as the default catalog. The driver creates its tracking table without a sequence, primary key or unique index, which DuckLake does not support. The migrations themselves must avoid primary keys, unique constraints, foreign keys and `serial` columns for the same reason.
 
 ```typescript
-const db = await drizzle('./app.duckdb', {
+const db = await drizzle(':memory:', {
   ducklake: {
-    catalog: './ducklake.duckdb',
-    use: false,
-    attachOptions: { dataPath: './ducklake-data' },
+    catalog: './meta.ducklake',
+    attachOptions: { dataPath: './data' },
   },
 });
 
-await migrate(db, './drizzle'); // journal and tables in app.duckdb
-await db.execute(sql`CREATE TABLE IF NOT EXISTS ducklake.events (id INTEGER)`);
+await migrate(db, './drizzle'); // journal and tables in the DuckLake catalog
 ```
 
 See [Migrations]({{ '/features/migrations' | relative_url }}#ducklake).
