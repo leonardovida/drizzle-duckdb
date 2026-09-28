@@ -117,6 +117,7 @@ When introspecting MotherDuck databases, be aware that:
 
 1. **Default behavior**: Only your current database is introspected
 2. **Shared databases**: Databases like `sample_data` won't be included unless explicitly requested
+3. **Catalogs are not encoded**: Generated tables resolve against the connection's current database. Tables from `--database` or `--all-databases` work only after the connection runs `USE <database>`, so introspect each database into its own file when one app needs several
 
 ```bash
 # Introspect your specific database
