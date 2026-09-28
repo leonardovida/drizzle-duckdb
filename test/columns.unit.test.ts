@@ -119,9 +119,16 @@ describe('formatLiteral', () => {
     expect(result).toBe('\'{"a":1,"b":2}\'');
   });
 
-  test('formats array as JSON string', () => {
-    const result = formatLiteral([1, 2, 3]);
-    expect(result).toBe("'[1,2,3]'");
+  test('formats arrays as list literals, recursing into nested arrays', () => {
+    expect(formatLiteral([1, 2, 3])).toBe('[1, 2, 3]');
+    expect(formatLiteral([[1], ["it's"]])).toBe("[[1], ['it''s']]");
+    expect(formatLiteral([])).toBe('[]');
+  });
+
+  test('formats non-finite numbers as typed DOUBLE literals', () => {
+    expect(formatLiteral(NaN)).toBe("'NaN'::DOUBLE");
+    expect(formatLiteral(Infinity)).toBe("'Infinity'::DOUBLE");
+    expect(formatLiteral(-Infinity)).toBe("'-Infinity'::DOUBLE");
   });
 });
 

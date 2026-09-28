@@ -1,5 +1,10 @@
 /**
- * AST visitor to transform Postgres array operators to DuckDB functions.
+ * AST visitor to rewrite Postgres first dimension array bounds helpers,
+ * array_lower(arr, 1) and array_upper(arr, 1), which DuckDB does not have.
+ *
+ * The @>, <@ and && operators are left alone: DuckDB supports them on
+ * LIST and ARRAY values with the same semantics as array_has_all and
+ * array_has_any.
  */
 
 import type {
@@ -10,12 +15,6 @@ import type {
   From,
   Join,
 } from 'node-sql-parser';
-
-const OPERATOR_MAP: Record<string, { fn: string; swap?: boolean }> = {
-  '@>': { fn: 'array_has_all' },
-  '<@': { fn: 'array_has_all', swap: true },
-  '&&': { fn: 'array_has_any' },
-};
 
 function getFunctionName(expr: Record<string, unknown>): string | undefined {
   const name = expr.name as { name?: Array<{ value?: unknown }> } | undefined;
@@ -116,32 +115,12 @@ function walkExpression(
 
   if ('type' in expr && exprObj.type === 'binary_expr') {
     const binary = expr as Binary;
-    const mapping = OPERATOR_MAP[binary.operator];
-
-    if (mapping) {
-      const fnExpr = {
-        type: 'function' as const,
-        name: { name: [{ type: 'default', value: mapping.fn }] },
-        args: {
-          type: 'expr_list' as const,
-          value: mapping.swap
-            ? [binary.right, binary.left]
-            : [binary.left, binary.right],
-        },
-      };
-
-      if (parent && key) {
-        (parent as Record<string, unknown>)[key] = fnExpr;
-      }
-      transformed = true;
-    } else {
-      transformed =
-        walkExpression(binary.left as ExpressionValue, binary, 'left') ||
-        transformed;
-      transformed =
-        walkExpression(binary.right as ExpressionValue, binary, 'right') ||
-        transformed;
-    }
+    transformed =
+      walkExpression(binary.left as ExpressionValue, binary, 'left') ||
+      transformed;
+    transformed =
+      walkExpression(binary.right as ExpressionValue, binary, 'right') ||
+      transformed;
   }
 
   if ('type' in expr && exprObj.type === 'function') {
@@ -292,7 +271,7 @@ function walkSelectImpl(select: Select): boolean {
   return transformed;
 }
 
-export function transformArrayOperators(ast: AST | AST[]): boolean {
+export function transformArrayBounds(ast: AST | AST[]): boolean {
   const statements = Array.isArray(ast) ? ast : [ast];
   let transformed = false;
 

@@ -97,6 +97,19 @@ function unwrapColumnRef(
   return null;
 }
 
+/**
+ * Pick the qualifier for the unqualified side of `qualified = unqualified`.
+ * When the qualified column already belongs to the preferred table, the
+ * other column must come from the other side of the join.
+ */
+function qualifierForUnqualified(
+  qualifiedCol: ColumnRefItem,
+  preferred: Qualifier,
+  other: Qualifier
+): Qualifier {
+  return qualifiedCol.table === preferred.table ? other : preferred;
+}
+
 function walkOnClause(
   expr: Binary | ExpressionValue | null | undefined,
   leftQualifier: Qualifier,
@@ -135,11 +148,17 @@ function walkOnClause(
         ambiguousColumns.add(leftColName);
         transformed = true;
       } else if (leftQualified && rightUnqualified) {
-        applyQualifier(rightCol!, rightQualifier);
+        applyQualifier(
+          rightCol!,
+          qualifierForUnqualified(leftCol!, rightQualifier, leftQualifier)
+        );
         ambiguousColumns.add(rightColName);
         transformed = true;
       } else if (leftUnqualified && rightQualified) {
-        applyQualifier(leftCol!, leftQualifier);
+        applyQualifier(
+          leftCol!,
+          qualifierForUnqualified(rightCol!, leftQualifier, rightQualifier)
+        );
         ambiguousColumns.add(leftColName);
         transformed = true;
       }
@@ -154,36 +173,30 @@ function walkOnClause(
       leftColName !== rightColName
     ) {
       if (leftQualified && rightUnqualified && !rightColName.includes('.')) {
-        applyQualifier(rightCol, rightQualifier);
+        applyQualifier(
+          rightCol,
+          qualifierForUnqualified(leftCol, rightQualifier, leftQualifier)
+        );
         transformed = true;
       } else if (
         leftUnqualified &&
         rightQualified &&
         !leftColName.includes('.')
       ) {
-        applyQualifier(leftCol, leftQualifier);
+        applyQualifier(
+          leftCol,
+          qualifierForUnqualified(rightCol, leftQualifier, rightQualifier)
+        );
         transformed = true;
       }
     }
 
     transformed =
-      walkOnClause(
-        isBinaryExpr(expr.left as Binary)
-          ? (expr.left as Binary)
-          : (expr.left as ExpressionValue),
-        leftQualifier,
-        rightQualifier,
-        ambiguousColumns
-      ) || transformed;
+      walkOnClause(left, leftQualifier, rightQualifier, ambiguousColumns) ||
+      transformed;
     transformed =
-      walkOnClause(
-        isBinaryExpr(expr.right as Binary)
-          ? (expr.right as Binary)
-          : (expr.right as ExpressionValue),
-        leftQualifier,
-        rightQualifier,
-        ambiguousColumns
-      ) || transformed;
+      walkOnClause(right, leftQualifier, rightQualifier, ambiguousColumns) ||
+      transformed;
   }
 
   return transformed;

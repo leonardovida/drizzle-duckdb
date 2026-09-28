@@ -10,79 +10,63 @@ import {
 } from '../src/sql/result-mapper.ts';
 
 describe('normalizeInet', () => {
+  const ipv4 = (address: number | bigint, mask = 32) => ({
+    ip_type: 1,
+    address,
+    mask,
+  });
+
   test('converts numeric IPv4 address to dotted quad notation', () => {
-    const result = normalizeInet({ address: 3232235777, mask: 32 });
-    expect(result).toBe('192.168.1.1');
+    expect(normalizeInet(ipv4(3232235777))).toBe('192.168.1.1');
   });
 
   test('converts bigint IPv4 address to dotted quad notation', () => {
-    const result = normalizeInet({ address: BigInt(3232235777), mask: 32 });
-    expect(result).toBe('192.168.1.1');
+    expect(normalizeInet(ipv4(BigInt(3232235777)))).toBe('192.168.1.1');
   });
 
   test('appends mask suffix when mask is not 32', () => {
-    const result = normalizeInet({ address: 3232235776, mask: 24 });
-    expect(result).toBe('192.168.1.0/24');
+    expect(normalizeInet(ipv4(3232235776, 24))).toBe('192.168.1.0/24');
   });
 
-  test('does not append /32 suffix when mask is 32', () => {
-    const result = normalizeInet({ address: 3232235777, mask: 32 });
-    expect(result).toBe('192.168.1.1');
+  test('converts zero and max IPv4 addresses', () => {
+    expect(normalizeInet(ipv4(0, 0))).toBe('0.0.0.0/0');
+    expect(normalizeInet(ipv4(4294967295))).toBe('255.255.255.255');
   });
 
-  test('handles missing mask (defaults to no suffix)', () => {
-    const result = normalizeInet({ address: 2130706433 });
-    expect(result).toBe('127.0.0.1');
+  test('converts IPv6 addresses stored as signed HUGEINT', () => {
+    const ipv6 = (unsigned: bigint, mask = 128) => ({
+      ip_type: 2,
+      address: unsigned - (1n << 127n),
+      mask,
+    });
+    expect(normalizeInet(ipv6(1n))).toBe('::1');
+    expect(normalizeInet(ipv6(0n))).toBe('::');
+    expect(normalizeInet(ipv6((1n << 128n) - 1n))).toBe(
+      'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'
+    );
+    expect(normalizeInet(ipv6(0xffff01020304n))).toBe('::ffff:1.2.3.4');
+    expect(normalizeInet(ipv6(0x20010db8n << 96n, 32))).toBe('2001:db8::/32');
   });
 
-  test('uses fallback toString() for out-of-range address', () => {
-    const outOfRange = {
-      address: BigInt('340282366920938463463374607431768211455'), // > maxIpv4
-      toString: () => '::1',
-    };
-    const result = normalizeInet(outOfRange);
-    expect(result).toBe('::1');
+  test('leaves objects that are not INET values unchanged', () => {
+    for (const value of [
+      { address: 5 },
+      { address: 5, zip: '1' },
+      { address: 5, mask: 32 },
+      { ip_type: 3, address: 5n, mask: 32 },
+      { ip_type: 1, address: 5n, mask: 32, extra: true },
+      { ip_type: 1, address: -1n, mask: 32 },
+      {},
+    ]) {
+      expect(normalizeInet(value)).toBe(value);
+    }
   });
 
-  test('returns original value for object without proper toString', () => {
-    const obj = { address: BigInt('340282366920938463463374607431768211455') };
-    const result = normalizeInet(obj);
-    expect(result).toBe(obj);
-  });
-
-  test('passes through string values unchanged', () => {
-    const result = normalizeInet('192.168.1.1');
-    expect(result).toBe('192.168.1.1');
-  });
-
-  test('passes through null', () => {
-    const result = normalizeInet(null);
-    expect(result).toBe(null);
-  });
-
-  test('passes through undefined', () => {
-    const result = normalizeInet(undefined);
-    expect(result).toBe(undefined);
-  });
-
-  test('passes through number values', () => {
-    const result = normalizeInet(12345);
-    expect(result).toBe(12345);
-  });
-
-  test('handles empty object', () => {
-    const result = normalizeInet({});
-    expect(result).toEqual({});
-  });
-
-  test('converts zero address correctly', () => {
-    const result = normalizeInet({ address: 0, mask: 0 });
-    expect(result).toBe('0.0.0.0/0');
-  });
-
-  test('converts max IPv4 address correctly', () => {
-    const result = normalizeInet({ address: 4294967295, mask: 32 });
-    expect(result).toBe('255.255.255.255');
+  test('passes through non-object values unchanged', () => {
+    expect(normalizeInet('192.168.1.1')).toBe('192.168.1.1');
+    expect(normalizeInet(null)).toBe(null);
+    expect(normalizeInet(undefined)).toBe(undefined);
+    expect(normalizeInet(12345)).toBe(12345);
   });
 });
 

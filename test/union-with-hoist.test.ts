@@ -69,4 +69,41 @@ describe('union with per arm WITH clauses', () => {
     expect(result.map((r) => Number(r.relevanceRank))).toEqual([10, 5, 0, 0]);
     expect(result.map((r) => r.id)).toEqual([2, 3, 1, 2]);
   });
+
+  test('keeps arm parentheses when an arm has ORDER BY and LIMIT', async () => {
+    const first = db
+      .$with('first_arm')
+      .as(db.select({ id: a.id, name: a.name }).from(a));
+    const second = db
+      .$with('second_arm')
+      .as(db.select({ id: b.id, name: b.name }).from(b));
+
+    const result = await db
+      .with(first)
+      .select()
+      .from(first)
+      .orderBy(desc(first.id))
+      .limit(1)
+      .unionAll(db.with(second).select().from(second));
+
+    expect(result.map((r) => r.id).sort()).toEqual([2, 2, 3]);
+  });
+
+  test('does not let a hoisted CTE shadow a table used by another arm', async () => {
+    const shadow = db.$with('a').as(
+      db
+        .select({
+          id: sql<number>`99`.as('id'),
+          name: sql<string>`'shadow'`.as('name'),
+        })
+        .from(sql`(select 1)`)
+    );
+
+    const result = await db
+      .select({ id: a.id, name: a.name })
+      .from(a)
+      .unionAll(db.with(shadow).select().from(shadow));
+
+    expect(result.map((r) => r.id).sort()).toEqual([1, 2, 99]);
+  });
 });

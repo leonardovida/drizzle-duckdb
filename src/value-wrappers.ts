@@ -30,6 +30,11 @@ import {
   type TimestampValueWrapper,
   type DuckDBValueKind,
 } from './value-wrappers-core.ts';
+import {
+  parseTimestampString,
+  subMillisecondMicros,
+  timestampStringToDateInput,
+} from './time.ts';
 
 /**
  * Convert a Date/string/epoch number to microseconds since Unix epoch.
@@ -50,23 +55,14 @@ function dateToMicros(value: Date | string | number | bigint): bigint {
     return BigInt(Math.trunc(value)) * 1000n;
   }
 
-  // For strings, normalize the format for reliable parsing
-  // Handle both 'YYYY-MM-DD HH:MM:SS' and 'YYYY-MM-DDTHH:MM:SS' formats
-  let normalized = value;
-  if (!value.includes('T') && value.includes(' ')) {
-    // Convert 'YYYY-MM-DD HH:MM:SS' to ISO format
-    normalized = value.replace(' ', 'T');
-  }
-  // Add 'Z' suffix if no timezone offset to treat as UTC
-  if (!normalized.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(normalized)) {
-    normalized += 'Z';
-  }
-
-  const date = new Date(normalized);
+  // Strings without an offset are treated as UTC. Date only keeps
+  // milliseconds, so the remaining microsecond digits are added back.
+  const parts = parseTimestampString(value);
+  const date = new Date(timestampStringToDateInput(value, parts));
   if (isNaN(date.getTime())) {
     throw new Error(`Invalid timestamp string: ${value}`);
   }
-  return BigInt(date.getTime()) * 1000n;
+  return BigInt(date.getTime()) * 1000n + subMillisecondMicros(parts?.fraction);
 }
 
 /**

@@ -21,9 +21,8 @@ describe('AST Transformer Stress Tests', () => {
         ) AS level1 WHERE id > 10
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
-      expect(result.sql).not.toContain('@>');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles nested subqueries with JOINs at each level', () => {
@@ -49,8 +48,8 @@ describe('AST Transformer Stress Tests', () => {
         )
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -65,8 +64,8 @@ describe('AST Transformer Stress Tests', () => {
         LEFT JOIN aggregated ON 1=1
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles recursive CTE pattern', () => {
@@ -130,11 +129,8 @@ describe('AST Transformer Stress Tests', () => {
           AND attributes && ARRAY['new', 'sale']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      // Should have two array_has_all (for @> and <@) and one array_has_any
-      const lowerSql = result.sql.toLowerCase();
-      expect((lowerSql.match(/array_has_all/g) || []).length).toBe(2);
-      expect((lowerSql.match(/array_has_any/g) || []).length).toBe(1);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles array operators in HAVING clause', () => {
@@ -145,8 +141,8 @@ describe('AST Transformer Stress Tests', () => {
         HAVING ARRAY_AGG(tag) @> ARRAY['premium']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles array operators in SELECT expressions', () => {
@@ -158,9 +154,8 @@ describe('AST Transformer Stress Tests', () => {
         FROM products
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
-      expect(result.sql.toLowerCase()).toContain('array_has_any');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles nested array operator expressions', () => {
@@ -170,9 +165,8 @@ describe('AST Transformer Stress Tests', () => {
            OR (tags && ARRAY['c'] AND NOT tags @> ARRAY['d'])
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql).not.toContain('@>');
-      expect(result.sql).not.toContain('&&');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -247,11 +241,8 @@ describe('AST Transformer Stress Tests', () => {
         SELECT id, tags FROM archived_products WHERE tags @> ARRAY['featured']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      // Both branches should be transformed
-      expect(
-        (result.sql.toLowerCase().match(/array_has_all/g) || []).length
-      ).toBe(2);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles UNION ALL with JOINs in each branch', () => {
@@ -271,7 +262,8 @@ describe('AST Transformer Stress Tests', () => {
         SELECT id FROM (SELECT * FROM products WHERE tags && ARRAY['b']) sub2
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles EXCEPT with CTEs', () => {
@@ -282,7 +274,8 @@ describe('AST Transformer Stress Tests', () => {
         SELECT id FROM discontinued_products WHERE tags @> ARRAY['obsolete']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -298,8 +291,8 @@ describe('AST Transformer Stress Tests', () => {
         WHERE tags @> ARRAY['active']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
       // Window function should be preserved
       expect(result.sql.toLowerCase()).toContain('over');
     });
@@ -335,9 +328,8 @@ describe('AST Transformer Stress Tests', () => {
         FROM products
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
-      expect(result.sql.toLowerCase()).toContain('array_has_any');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles nested CASE expressions', () => {
@@ -354,7 +346,8 @@ describe('AST Transformer Stress Tests', () => {
         FROM products
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -370,7 +363,8 @@ describe('AST Transformer Stress Tests', () => {
         GROUP BY category
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles complex aggregation with multiple JOINs', () => {
@@ -448,7 +442,8 @@ describe('AST Transformer Stress Tests', () => {
           AND tags @> ARRAY['real-operator']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
       // String literals should be preserved
       expect(result.sql).toContain("'Product @> Special'");
     });
@@ -465,7 +460,8 @@ describe('AST Transformer Stress Tests', () => {
         WHERE p.tags @> ARRAY['active']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles subquery in FROM with array operator', () => {
@@ -476,7 +472,8 @@ describe('AST Transformer Stress Tests', () => {
         LEFT JOIN categories c ON featured_products.category_id = c.id
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles EXISTS with array operator', () => {
@@ -489,7 +486,8 @@ describe('AST Transformer Stress Tests', () => {
         )
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles IN with subquery', () => {
@@ -501,7 +499,8 @@ describe('AST Transformer Stress Tests', () => {
         AND tags @> ARRAY['available']
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -527,7 +526,8 @@ describe('AST Transformer Stress Tests', () => {
         LIMIT 50 OFFSET 100
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -585,8 +585,8 @@ describe('AST Transformer Stress Tests', () => {
         /* Block comment with && */
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      // Comments might be stripped by parser, but query should work
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
 
     it('handles multiple statements (should process first)', () => {
@@ -605,8 +605,8 @@ describe('AST Transformer Stress Tests', () => {
         WHERE ((((tags @> ARRAY['a'])))) AND (((id > 0)))
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('array_has_all');
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 
@@ -645,8 +645,6 @@ describe('AST Transformer Stress Tests', () => {
       `;
       const result = transformSQL(sql);
       expect(result.transformed).toBe(true);
-      expect(result.sql).not.toContain('@>');
-      expect(result.sql).not.toContain('&&');
     });
 
     it('handles data warehouse style query with multiple JOINs', () => {
@@ -697,7 +695,8 @@ describe('AST Transformer Stress Tests', () => {
         ORDER BY day
       `;
       const result = transformSQL(sql);
-      expect(result.transformed).toBe(true);
+      // Native array operators alone do not need a rewrite.
+      expect(result).toEqual({ sql, transformed: false });
     });
   });
 });
