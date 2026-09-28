@@ -1,7 +1,12 @@
-import { entityKind } from 'drizzle-orm/entity';
+import { entityKind, is } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { NoopLogger } from 'drizzle-orm/logger';
-import { PgTransaction } from 'drizzle-orm/pg-core';
+import { PgArray, PgTransaction } from 'drizzle-orm/pg-core';
+import type { PgColumn } from 'drizzle-orm/pg-core';
+import type {
+  PgSelectBuilder,
+  SelectedFields,
+} from 'drizzle-orm/pg-core/query-builders';
 import type { SelectedFieldsOrdered } from 'drizzle-orm/pg-core/query-builders/select.types';
 import type {
   PgTransactionConfig,
@@ -13,11 +18,22 @@ import type {
   RelationalSchemaConfig,
   TablesRelationalConfig,
 } from 'drizzle-orm/relations';
-import { fillPlaceholders, type Query, SQL, sql } from 'drizzle-orm/sql/sql';
+import {
+  fillPlaceholders,
+  Param,
+  Placeholder,
+  type Query,
+  type QueryWithTypings,
+  SQL,
+  sql,
+  type SQLWrapper,
+} from 'drizzle-orm/sql/sql';
+import type { WithSubquery } from 'drizzle-orm/subquery';
+import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
 import { mapResultRow } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
-import type { DuckDBDialect } from './dialect.ts';
+import { DUCKDB_SCALAR_COLUMN_TYPING, type DuckDBDialect } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
@@ -36,6 +52,11 @@ import {
 } from './client.ts';
 import { isPool } from './client.ts';
 import type { PreparedStatementCacheConfig } from './options.ts';
+import {
+  createDuckDBSelectMethods,
+  DuckDBQueryBuilder,
+  type DuckDBSelectBuilder,
+} from './select-builder.ts';
 
 export type { DuckDBClientLike, RowData } from './client.ts';
 
@@ -58,6 +79,13 @@ function isSavepointSyntaxError(error: unknown): boolean {
   return (
     error.message.toLowerCase().includes('savepoint') &&
     error.message.toLowerCase().includes('syntax error')
+  );
+}
+
+function isTransactionAbortedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('transaction is aborted')
   );
 }
 
@@ -89,12 +117,51 @@ function assertValidTransactionOption(
   );
 }
 
+const TRANSACTION_CONFIG_WARNING =
+  'Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.';
+
+let hasWarnedTransactionConfig = false;
+
+function warnTransactionConfigIgnored(): void {
+  if (hasWarnedTransactionConfig) {
+    return;
+  }
+  hasWarnedTransactionConfig = true;
+  console.warn(TRANSACTION_CONFIG_WARNING);
+}
+
+/**
+ * Params bound to a non-array column must keep their string value even when
+ * it looks like a Postgres array literal, for example `{}` in a text column.
+ */
+function getScalarParamIndexes(
+  params: unknown[],
+  typings: QueryWithTypings['typings']
+): Set<number> | undefined {
+  let indexes: Set<number> | undefined;
+  for (let index = 0; index < params.length; index += 1) {
+    const param = params[index];
+    const isScalar =
+      typings?.[index] === DUCKDB_SCALAR_COLUMN_TYPING ||
+      (is(param, Param) &&
+        is(param.value, Placeholder) &&
+        is(param.encoder, Column) &&
+        !is(param.encoder, PgArray));
+    if (isScalar) {
+      indexes ??= new Set();
+      indexes.add(index);
+    }
+  }
+  return indexes;
+}
+
 interface QueryParamPreparationOptions {
   logger: Logger;
   queryString: string;
   params: unknown[];
   rejectStringArrayLiterals: boolean;
   warnOnStringArrayLiteral?: (sql: string) => void;
+  scalarParamIndexes?: ReadonlySet<number>;
 }
 
 function prepareQueryParams({
@@ -103,12 +170,14 @@ function prepareQueryParams({
   params,
   rejectStringArrayLiterals,
   warnOnStringArrayLiteral,
+  scalarParamIndexes,
 }: QueryParamPreparationOptions): unknown[] {
   const preparedParams = prepareParams(params, {
     rejectStringArrayLiterals,
     warnOnStringArrayLiteral: rejectStringArrayLiterals
       ? undefined
       : () => warnOnStringArrayLiteral?.(queryString),
+    scalarParamIndexes,
   });
 
   logger.logQuery(queryString, preparedParams);
@@ -135,7 +204,9 @@ export class DuckDBPreparedQuery<
     private prepareCache: PreparedStatementCacheConfig | undefined,
     queryMetadata?: QueryMetadata,
     cacheConfig?: CacheConfig,
-    private warnOnStringArrayLiteral?: (sql: string) => void
+    private warnOnStringArrayLiteral?: (sql: string) => void,
+    private scalarParamIndexes?: ReadonlySet<number>,
+    private onStatementError?: (error: unknown) => void
   ) {
     super(
       ...([
@@ -150,42 +221,56 @@ export class DuckDBPreparedQuery<
   async execute(
     placeholderValues: Record<string, unknown> | undefined = {}
   ): Promise<T['execute']> {
-    this.dialect.assertNoPgJsonColumns();
+    try {
+      return await this.executeQuery(placeholderValues);
+    } catch (error) {
+      this.onStatementError?.(error);
+      throw error;
+    }
+  }
+
+  private async executeQuery(
+    placeholderValues: Record<string, unknown>
+  ): Promise<T['execute']> {
     const params = prepareQueryParams({
       logger: this.logger,
       queryString: this.queryString,
       params: fillPlaceholders(this.params, placeholderValues),
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
+      scalarParamIndexes: this.scalarParamIndexes,
     });
 
     const { fields, joinsNotNullableMap, customResultMapper } =
       this as typeof this & { joinsNotNullableMap?: Record<string, boolean> };
 
-    if (fields) {
-      const { rows } = await executeArraysOnClient(
+    // Match PgPreparedQuery: relational queries pass a result mapper without
+    // fields and expect array rows, including for empty results.
+    if (!fields && !customResultMapper) {
+      const rows = await executeOnClient(
         this.client,
         this.queryString,
         params,
         { prepareCache: this.prepareCache }
       );
 
-      if (rows.length === 0) {
-        return [] as T['execute'];
-      }
-
-      return customResultMapper
-        ? customResultMapper(rows)
-        : rows.map((row) =>
-            mapResultRow<T['execute']>(fields, row, joinsNotNullableMap)
-          );
+      return rows as T['execute'];
     }
 
-    const rows = await executeOnClient(this.client, this.queryString, params, {
-      prepareCache: this.prepareCache,
-    });
+    const { rows } = await executeArraysOnClient(
+      this.client,
+      this.queryString,
+      params,
+      { prepareCache: this.prepareCache }
+    );
 
-    return rows as T['execute'];
+    if (customResultMapper) {
+      return customResultMapper(rows);
+    }
+
+    return rows.map((row) =>
+      mapResultRow<T['execute']>(fields!, row, joinsNotNullableMap)
+    );
   }
 
   all(
@@ -218,6 +303,9 @@ export class DuckDBSession<
   private prepareCache: PreparedStatementCacheConfig | undefined;
   private hasWarnedArrayLiteral = false;
   private rollbackOnly = false;
+  // Set on sessions that run a transaction. DuckDB aborts the transaction when
+  // a statement fails during execution, and a later COMMIT silently rolls back.
+  private statementFailures: unknown[] | undefined;
 
   constructor(
     private client: DuckDBClientLike,
@@ -259,24 +347,22 @@ export class DuckDBSession<
       this.prepareCache,
       queryMetadata,
       cacheConfig,
-      this.rejectStringArrayLiterals ? undefined : this.warnOnStringArrayLiteral
+      this.rejectStringArrayLiterals
+        ? undefined
+        : this.warnOnStringArrayLiteral,
+      getScalarParamIndexes(query.params, (query as QueryWithTypings).typings),
+      this.statementFailures ? this.recordStatementFailure : undefined
     );
-  }
-
-  override execute<T>(query: SQL): Promise<T> {
-    this.dialect.resetPgJsonFlag();
-    return super.execute(query);
-  }
-
-  override all<T = unknown>(query: SQL): Promise<T[]> {
-    this.dialect.resetPgJsonFlag();
-    return super.all(query);
   }
 
   override async transaction<T>(
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
     config?: PgTransactionConfig
   ): Promise<T> {
+    if (config) {
+      warnTransactionConfigIgnored();
+    }
+
     let pinnedConnection: DuckDBExecutionClient | undefined;
     let pool: DuckDBConnectionPool | undefined;
 
@@ -287,12 +373,13 @@ export class DuckDBSession<
       clientForTx = pinnedConnection;
     }
 
-    const session = new DuckDBSession(
+    const session = new DuckDBSession<TFullSchema, TSchema>(
       clientForTx,
       this.dialect,
       this.schema,
       this.options
     );
+    session.statementFailures = [];
 
     const tx = new DuckDBTransaction<TFullSchema, TSchema>(
       this.dialect,
@@ -303,21 +390,27 @@ export class DuckDBSession<
     try {
       await tx.execute(sql`BEGIN TRANSACTION;`);
 
+      let result: T;
       try {
-        // Setup failures must roll back before the connection is reused.
-        if (config) {
-          await tx.setTransaction(config);
-        }
-        const result = await transaction(tx);
+        result = await transaction(tx);
         if (session.isRollbackOnly()) {
           throw new TransactionRollbackError();
         }
-        await tx.execute(sql`commit`);
-        return result;
+        await session.assertTransactionNotAborted();
       } catch (error) {
-        await tx.execute(sql`rollback`);
+        await session.rollbackQuietly();
         throw error;
       }
+
+      try {
+        await tx.execute(sql`commit`);
+      } catch (error) {
+        // A failed COMMIT usually ends the transaction already. Roll back in
+        // case it did not, but surface the commit error.
+        await session.rollbackQuietly();
+        throw error;
+      }
+      return result;
     } finally {
       if (pinnedConnection && pool) {
         await pool.release(pinnedConnection);
@@ -340,21 +433,72 @@ export class DuckDBSession<
     );
   };
 
+  private recordStatementFailure = (error: unknown) => {
+    this.statementFailures?.push(error);
+  };
+
+  /**
+   * DuckDB keeps parser and binder failures recoverable but aborts the
+   * transaction on execution failures. COMMIT then succeeds without saving
+   * anything, so probe the transaction before committing.
+   */
+  private async assertTransactionNotAborted(): Promise<void> {
+    if (!this.statementFailures?.length) {
+      return;
+    }
+
+    try {
+      await this.execute(sql`select 1`);
+    } catch {
+      const cause =
+        this.statementFailures.find(
+          (error) =>
+            !isSavepointSyntaxError(error) && !isTransactionAbortedError(error)
+        ) ?? this.statementFailures[0];
+      throw new Error(
+        'DuckDB aborted the transaction because a statement inside it failed. No changes were committed. Rethrow the statement error, or catch it outside db.transaction(), instead of continuing the transaction.',
+        { cause }
+      );
+    }
+  }
+
+  private async rollbackQuietly(): Promise<void> {
+    try {
+      await this.execute(sql`rollback`);
+    } catch {
+      // Keep the original error. DuckDB reports "no transaction is active"
+      // when a failed statement or COMMIT already ended the transaction.
+    }
+  }
+
   private prepareQueryExecution(query: SQL): {
     sql: string;
     params: unknown[];
   } {
-    this.dialect.resetPgJsonFlag();
     const builtQuery = this.dialect.sqlToQuery(query);
-    this.dialect.assertNoPgJsonColumns();
     const params = prepareQueryParams({
       logger: this.logger,
       queryString: builtQuery.sql,
       params: builtQuery.params,
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
+      scalarParamIndexes: getScalarParamIndexes(
+        builtQuery.params,
+        builtQuery.typings
+      ),
     });
     return { sql: builtQuery.sql, params };
+  }
+
+  private async *trackStreamFailures<T>(
+    stream: AsyncGenerator<T, void, void>
+  ): AsyncGenerator<T, void, void> {
+    try {
+      yield* stream;
+    } catch (error) {
+      this.recordStatementFailure(error);
+      throw error;
+    }
   }
 
   executeBatches<T extends RowData = RowData>(
@@ -363,11 +507,8 @@ export class DuckDBSession<
   ): AsyncGenerator<GenericRowData<T>[], void, void> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
 
-    return executeInBatches(
-      this.client,
-      queryString,
-      params,
-      options
+    return this.trackStreamFailures(
+      executeInBatches(this.client, queryString, params, options)
     ) as AsyncGenerator<GenericRowData<T>[], void, void>;
   }
 
@@ -376,12 +517,19 @@ export class DuckDBSession<
     options: ExecuteInBatchesOptions = {}
   ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
-    return executeInBatchesRaw(this.client, queryString, params, options);
+    return this.trackStreamFailures(
+      executeInBatchesRaw(this.client, queryString, params, options)
+    );
   }
 
   async executeArrow(query: SQL): Promise<unknown> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
-    return executeArrowOnClient(this.client, queryString, params);
+    try {
+      return await executeArrowOnClient(this.client, queryString, params);
+    } catch (error) {
+      this.recordStatementFailure(error);
+      throw error;
+    }
   }
 
   markRollbackOnly(): void {
@@ -413,6 +561,16 @@ export class DuckDBTransaction<
 > extends PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema> {
   static readonly [entityKind]: string = 'DuckDBTransaction';
 
+  constructor(
+    dialect: DuckDBDialect,
+    session: DuckDBSession<TFullSchema, TSchema>,
+    schema: RelationalSchemaConfig<TSchema> | undefined,
+    nestedIndex = 0
+  ) {
+    super(dialect, session, schema, nestedIndex);
+    this.$with = new DuckDBQueryBuilder(dialect).$with;
+  }
+
   private getInternals(): DuckDBTransactionWithInternals<TFullSchema, TSchema> {
     // PgTransaction keeps dialect/session private, but DuckDB transaction
     // helpers need the session for DuckDB-specific execution paths.
@@ -426,10 +584,70 @@ export class DuckDBTransaction<
     this.getInternals().session.markRollbackOnly();
   }
 
+  private selectMethods(withList?: WithSubquery[]) {
+    const { dialect, session } = this.getInternals();
+    return createDuckDBSelectMethods(
+      session as unknown as PgSession<DuckDBQueryResultHKT>,
+      dialect,
+      withList
+    );
+  }
+
+  override with(
+    ...queries: WithSubquery[]
+  ): ReturnType<
+    PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+  > {
+    return {
+      ...super.with(...queries),
+      ...this.selectMethods(queries),
+    } as ReturnType<
+      PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+    >;
+  }
+
+  override select(): DuckDBSelectBuilder<undefined>;
+  override select<TSelection extends SelectedFields>(
+    fields: TSelection
+  ): DuckDBSelectBuilder<TSelection>;
+  override select(
+    fields?: SelectedFields
+  ): DuckDBSelectBuilder<SelectedFields | undefined> {
+    return this.selectMethods().select(fields);
+  }
+
+  override selectDistinct(): PgSelectBuilder<undefined>;
+  override selectDistinct<TSelection extends SelectedFields>(
+    fields: TSelection
+  ): PgSelectBuilder<TSelection>;
+  override selectDistinct(
+    fields?: SelectedFields
+  ): PgSelectBuilder<SelectedFields | undefined> {
+    return this.selectMethods().selectDistinct(fields);
+  }
+
+  override selectDistinctOn(
+    on: (PgColumn | SQLWrapper)[]
+  ): PgSelectBuilder<undefined>;
+  override selectDistinctOn<TSelection extends SelectedFields>(
+    on: (PgColumn | SQLWrapper)[],
+    fields: TSelection
+  ): PgSelectBuilder<TSelection>;
+  override selectDistinctOn(
+    on: (PgColumn | SQLWrapper)[],
+    fields?: SelectedFields
+  ): PgSelectBuilder<SelectedFields | undefined> {
+    return this.selectMethods().selectDistinctOn(on, fields);
+  }
+
   rollback(): never {
     throw new TransactionRollbackError();
   }
 
+  /**
+   * @deprecated DuckDB has no SET TRANSACTION statement, so transaction config
+   * is ignored. This helper will be removed in the next major version.
+   */
   getTransactionConfigSQL(config: PgTransactionConfig): SQL {
     assertValidTransactionOption(
       'isolation level',
@@ -466,10 +684,15 @@ export class DuckDBTransaction<
     return sql.raw(chunks.join(' '));
   }
 
+  /**
+   * @deprecated DuckDB has no SET TRANSACTION statement. This method is a
+   * no-op that warns once, and passing config will throw in the next major
+   * version.
+   */
   setTransaction(config: PgTransactionConfig): Promise<void> {
-    return this.getInternals().session.execute(
-      sql`set transaction ${this.getTransactionConfigSQL(config)}`
-    );
+    void config;
+    warnTransactionConfigIgnored();
+    return Promise.resolve();
   }
 
   executeBatches<T extends RowData = RowData>(
@@ -531,10 +754,13 @@ export class DuckDBTransaction<
       }
       return result;
     } catch (error) {
-      if (createdSavepoint) {
+      // A successful rollback to the savepoint leaves the outer transaction
+      // usable, matching Postgres. Only a failed rollback poisons it.
+      try {
         await internals.session.execute(rollbackSql);
+      } catch {
+        this.markRollbackOnly();
       }
-      this.markRollbackOnly();
       throw error;
     }
   }

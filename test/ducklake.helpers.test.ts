@@ -29,7 +29,7 @@ describe('DuckLake helpers', () => {
     });
 
     expect(sql).toBe(
-      `ATTACH 'ducklake:md:meta_db' AS "lake" (CREATE_IF_NOT_EXISTS=true, DATA_PATH='./data', READ_ONLY=true)`
+      `ATTACH IF NOT EXISTS 'ducklake:md:meta_db' AS "lake" (CREATE_IF_NOT_EXISTS true, DATA_PATH './data', READ_ONLY true)`
     );
   });
 
@@ -45,7 +45,7 @@ describe('DuckLake helpers', () => {
     });
 
     expect(sql).toBe(
-      `ATTACH 'ducklake:md:meta''db' AS "lake""name" (METADATA_CATALOG='cat''alog', READ_ONLY=false)`
+      `ATTACH IF NOT EXISTS 'ducklake:md:meta''db' AS "lake""name" (METADATA_CATALOG 'cat''alog', READ_ONLY false)`
     );
   });
 
@@ -66,7 +66,7 @@ describe('DuckLake helpers', () => {
     expect(connection.run).toHaveBeenNthCalledWith(2, 'LOAD ducklake');
     expect(connection.run).toHaveBeenNthCalledWith(
       3,
-      `ATTACH 'ducklake:md:meta_db' AS "lake"`
+      `ATTACH IF NOT EXISTS 'ducklake:md:meta_db' AS "lake"`
     );
     expect(connection.run).toHaveBeenNthCalledWith(4, 'USE "lake"');
   });
@@ -80,6 +80,8 @@ describe('DuckLake helpers', () => {
       false
     );
     expect(isDuckDbFileCatalog('postgres://localhost/db')).toBe(false);
+    expect(isDuckDbFileCatalog('metadata.ducklake')).toBe(true);
+    expect(isDuckDbFileCatalog('ducklake:metadata.ducklake')).toBe(true);
   });
 
   test('resolveDuckLakePoolSize defaults to 1 for local catalogs', () => {

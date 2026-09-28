@@ -3,8 +3,15 @@ import { entityKind } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { DefaultLogger } from 'drizzle-orm/logger';
 import { PgDatabase } from 'drizzle-orm/pg-core/db';
-import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders';
-import type { PgSession } from 'drizzle-orm/pg-core';
+import type {
+  PgSelectBuilder,
+  SelectedFields,
+} from 'drizzle-orm/pg-core/query-builders';
+import type {
+  PgColumn,
+  PgSession,
+  PgTransactionConfig,
+} from 'drizzle-orm/pg-core';
 import {
   createTableRelationsHelpers,
   extractTablesRelationalConfig,
@@ -13,7 +20,8 @@ import {
   type TablesRelationalConfig,
 } from 'drizzle-orm/relations';
 import { type DrizzleConfig } from 'drizzle-orm/utils';
-import type { SQL } from 'drizzle-orm/sql/sql';
+import type { SQL, SQLWrapper } from 'drizzle-orm/sql/sql';
+import type { WithSubquery } from 'drizzle-orm/subquery';
 import type {
   DuckDBClientLike,
   DuckDBQueryResultHKT,
@@ -21,8 +29,11 @@ import type {
 } from './session.ts';
 import { DuckDBSession } from './session.ts';
 import { DuckDBDialect } from './dialect.ts';
-import { DuckDBSelectBuilder } from './select-builder.ts';
-import { aliasFields } from './sql/selection.ts';
+import {
+  createDuckDBSelectMethods,
+  DuckDBQueryBuilder,
+  type DuckDBSelectBuilder,
+} from './select-builder.ts';
 import type {
   ExecuteBatchesRawChunk,
   ExecuteInBatchesOptions,
@@ -45,6 +56,7 @@ import {
 } from './options.ts';
 import {
   configureDuckLake,
+  createDuckLakeConnectionSetup,
   resolveDuckLakePoolSize,
   wrapDuckLakePool,
   type DuckLakeConfig,
@@ -306,14 +318,15 @@ async function createFromConnectionString<
   try {
     const { ducklake: ducklakeConfig, ...restConfig } = config;
     const poolOptions = resolvePoolOptions(config.pool);
-    const { poolSize, resolvedPoolSize, isLocalCatalog } =
-      resolveDuckLakePoolSize(config.pool, ducklakeConfig);
+    const { poolSize, isLocalCatalog } = resolveDuckLakePoolSize(
+      config.pool,
+      ducklakeConfig
+    );
 
     if (
       ducklakeConfig &&
-      resolvedPoolSize !== false &&
-      typeof resolvedPoolSize === 'number' &&
-      resolvedPoolSize > 1 &&
+      typeof poolSize === 'number' &&
+      poolSize > 1 &&
       isLocalCatalog
     ) {
       console.warn(
@@ -332,9 +345,7 @@ async function createFromConnectionString<
         ...poolOptions,
         size: poolSize,
         setup: ducklakeConfig
-          ? async (connection) => {
-              await configureDuckLake(connection, ducklakeConfig);
-            }
+          ? createDuckLakeConnectionSetup(ducklakeConfig)
           : undefined,
       });
     }
@@ -441,6 +452,7 @@ export class DuckDBDatabase<
     super(dialect, session, schema);
     this.$client = client;
     this.$instance = instance;
+    this.$with = new DuckDBQueryBuilder(dialect).$with;
   }
 
   /**
@@ -471,21 +483,60 @@ export class DuckDBDatabase<
     }
   }
 
-  select(): DuckDBSelectBuilder<undefined>;
-  select<TSelection extends SelectedFields>(
+  private selectMethods(withList?: WithSubquery[]) {
+    // Cast needed: DuckDBSession is compatible but types don't align exactly with PgSession
+    return createDuckDBSelectMethods(
+      this.session as unknown as PgSession<DuckDBQueryResultHKT>,
+      this.dialect,
+      withList
+    );
+  }
+
+  override with(
+    ...queries: WithSubquery[]
+  ): ReturnType<
+    PgDatabase<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+  > {
+    return {
+      ...super.with(...queries),
+      ...this.selectMethods(queries),
+    } as ReturnType<
+      PgDatabase<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+    >;
+  }
+
+  override select(): DuckDBSelectBuilder<undefined>;
+  override select<TSelection extends SelectedFields>(
     fields: TSelection
   ): DuckDBSelectBuilder<TSelection>;
-  select(
+  override select(
     fields?: SelectedFields
   ): DuckDBSelectBuilder<SelectedFields | undefined> {
-    const selectedFields = fields ? aliasFields(fields) : undefined;
+    return this.selectMethods().select(fields);
+  }
 
-    // Cast needed: DuckDBSession is compatible but types don't align exactly with PgSession
-    return new DuckDBSelectBuilder({
-      fields: selectedFields ?? undefined,
-      session: this.session as unknown as PgSession<DuckDBQueryResultHKT>,
-      dialect: this.dialect,
-    });
+  override selectDistinct(): PgSelectBuilder<undefined>;
+  override selectDistinct<TSelection extends SelectedFields>(
+    fields: TSelection
+  ): PgSelectBuilder<TSelection>;
+  override selectDistinct(
+    fields?: SelectedFields
+  ): PgSelectBuilder<SelectedFields | undefined> {
+    return this.selectMethods().selectDistinct(fields);
+  }
+
+  override selectDistinctOn(
+    on: (PgColumn | SQLWrapper)[]
+  ): PgSelectBuilder<undefined>;
+  override selectDistinctOn<TSelection extends SelectedFields>(
+    on: (PgColumn | SQLWrapper)[],
+    fields: TSelection
+  ): PgSelectBuilder<TSelection>;
+  override selectDistinctOn(
+    on: (PgColumn | SQLWrapper)[],
+    fields?: SelectedFields
+  ): PgSelectBuilder<SelectedFields | undefined> {
+    return this.selectMethods().selectDistinctOn(on, fields);
   }
 
   executeBatches<T extends RowData = RowData>(
@@ -506,9 +557,14 @@ export class DuckDBDatabase<
     return this.session.executeArrow(query);
   }
 
+  /**
+   * Run a transaction. The `config` argument is deprecated: DuckDB has no
+   * SET TRANSACTION statement, so it is ignored with a one-time warning.
+   */
   override async transaction<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>
+    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
+    config?: PgTransactionConfig
   ): Promise<T> {
-    return await this.session.transaction<T>(transaction);
+    return await this.session.transaction<T>(transaction, config);
   }
 }

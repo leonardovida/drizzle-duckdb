@@ -120,7 +120,8 @@ function buildDuckLakeAttachOptionsSql(
     if (typeof value === 'string' && value.length === 0) {
       continue;
     }
-    options.push(`${optionName}=${optionValueToSql(value)}`);
+    // DuckDB's ATTACH options use `NAME value`; `NAME=value` is a parser error.
+    options.push(`${optionName} ${optionValueToSql(value)}`);
   }
 
   return options;
@@ -131,8 +132,12 @@ function buildNormalizedDuckLakeAttachSql(
 ): string {
   const options = buildDuckLakeAttachOptionsSql(config.attachOptions);
 
+  // Pooled connections share one DuckDB instance and its attached catalogs.
+  // Each new connection re-runs setup, so the attach must be idempotent.
   const attachSql = [
-    `ATTACH ${quoteString(config.catalog)} AS ${quoteIdentifier(config.alias)}`,
+    `ATTACH IF NOT EXISTS ${quoteString(config.catalog)} AS ${quoteIdentifier(
+      config.alias
+    )}`,
   ];
 
   if (options.length > 0) {
@@ -175,6 +180,26 @@ export async function configureDuckLake(
   );
 }
 
+/**
+ * Returns a per-connection setup hook for connections that share one DuckDB
+ * instance. Concurrent ATTACH IF NOT EXISTS calls can both miss the existing
+ * catalog, so setup runs one connection at a time.
+ */
+export function createDuckLakeConnectionSetup(
+  config: DuckLakeConfig
+): (connection: DuckDBConnection) => Promise<void> {
+  const normalized = normalizeDuckLakeConfig(config);
+  let tail: Promise<void> = Promise.resolve();
+
+  return (connection) => {
+    const run = tail.then(() =>
+      configureNormalizedDuckLake(connection, normalized)
+    );
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 function isDuckDBConnection(
   connection: DuckDBExecutionClient
 ): connection is DuckDBConnection {
@@ -186,6 +211,7 @@ export function wrapDuckLakePool(
   config: DuckLakeConfig
 ): DuckDBConnectionPool {
   const configuredConnections = new WeakSet<DuckDBConnection>();
+  const setupConnection = createDuckLakeConnectionSetup(config);
   const poolWithSize = pool as unknown as { size?: number };
   const size =
     typeof poolWithSize.size === 'number' ? poolWithSize.size : undefined;
@@ -205,7 +231,7 @@ export function wrapDuckLakePool(
       }
 
       try {
-        await configureDuckLake(connection, config);
+        await setupConnection(connection);
         configuredConnections.add(connection);
         return connection;
       } catch (error) {
@@ -252,6 +278,7 @@ export function isDuckDbFileCatalog(catalog: string): boolean {
   return (
     trimmed.endsWith('.duckdb') ||
     trimmed.endsWith('.ddb') ||
+    trimmed.endsWith('.ducklake') ||
     trimmed.includes('/') ||
     trimmed.includes('\\') ||
     trimmed.startsWith('./') ||

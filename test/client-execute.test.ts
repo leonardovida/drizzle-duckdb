@@ -1,3 +1,7 @@
+import {
+  JSDuckDBValueConverter,
+  JsonDuckDBValueConverter,
+} from '@duckdb/node-api';
 import { describe, expect, test } from 'vitest';
 import {
   executeArrowOnClient,
@@ -640,5 +644,103 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(releaseCalls).toBe(1);
+  });
+});
+
+describe('consumed node-api results', () => {
+  // node-api readers fetch chunks from the result, so a second reader on the
+  // same result sees no rows. Model that with a shared chunk cursor.
+  function makeChunkedClient(options: {
+    rows: unknown[][];
+    jsonFails?: boolean;
+    jsFails?: boolean;
+  }): DuckDBClientLike {
+    const makeResult = () => {
+      let remaining = [options.rows];
+      const takeChunks = () => {
+        const chunks = remaining.map((rows) => ({
+          rowCount: rows.length,
+          convertRows: (converter: unknown) => {
+            if (
+              (converter === JsonDuckDBValueConverter && options.jsonFails) ||
+              (converter === JSDuckDBValueConverter && options.jsFails)
+            ) {
+              throw new Error('Unexpected type id: 0');
+            }
+            return rows;
+          },
+        }));
+        remaining = [];
+        return chunks;
+      };
+      const readRows = (converter: unknown) =>
+        takeChunks().flatMap((chunk) => chunk.convertRows(converter));
+
+      return {
+        columnNames: () => ['ts_ns'],
+        deduplicatedColumnNames: () => ['ts_ns'],
+        columnName: () => 'ts_ns',
+        columnCount: 1,
+        columnTypeId: () => 22,
+        fetchAllChunks: async () => takeChunks(),
+        fetchChunk: async () => takeChunks()[0] ?? null,
+        getRowsJS: async () => readRows(JSDuckDBValueConverter),
+        getRowsJson: async () => readRows(JsonDuckDBValueConverter),
+        getColumnsObjectJS: async () => ({
+          ts_ns: readRows(JSDuckDBValueConverter).map((row) => row[0]),
+        }),
+        getColumnsObjectJson: async () => ({
+          ts_ns: readRows(JsonDuckDBValueConverter).map((row) => row[0]),
+        }),
+        async *yieldRowsJs() {
+          yield readRows(JSDuckDBValueConverter);
+        },
+        async *yieldRowsJson() {
+          yield readRows(JsonDuckDBValueConverter);
+        },
+      };
+    };
+
+    return {
+      run: async () => makeResult(),
+      stream: async () => makeResult(),
+    } as unknown as DuckDBClientLike;
+  }
+
+  const collectBatches = async (client: DuckDBClientLike) => {
+    const rows: unknown[][] = [];
+    for await (const chunk of executeInBatchesRaw(client, 'select', [])) {
+      rows.push(...chunk.rows);
+    }
+    return rows;
+  };
+
+  test('falls back to JS values without re-reading a consumed result', async () => {
+    const client = makeChunkedClient({ rows: [[1], [2]], jsonFails: true });
+
+    expect(await executeOnClient(client, 'select', [])).toEqual([
+      { ts_ns: 1 },
+      { ts_ns: 2 },
+    ]);
+    expect(await collectBatches(client)).toEqual([[1], [2]]);
+    expect(await executeArrowOnClient(client, 'select', [])).toEqual({
+      ts_ns: [1, 2],
+    });
+  });
+
+  test('throws instead of returning no rows when every reader fails', async () => {
+    const client = makeChunkedClient({
+      rows: [[1]],
+      jsonFails: true,
+      jsFails: true,
+    });
+
+    await expect(executeOnClient(client, 'select', [])).rejects.toThrow(
+      /cannot materialize/
+    );
+    await expect(collectBatches(client)).rejects.toThrow(/cannot materialize/);
+    await expect(executeArrowOnClient(client, 'select', [])).rejects.toThrow(
+      /cannot materialize/
+    );
   });
 });
