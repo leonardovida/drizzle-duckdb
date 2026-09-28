@@ -271,7 +271,7 @@ const events = pgTable('events', {
 **Modes:**
 
 - `mode: 'date'` (default): returns JavaScript `Date` objects
-- `mode: 'string'`: returns ISO-formatted strings
+- `mode: 'string'`: returns strings in DuckDB's text format, such as `'2024-01-15 10:30:00'`. `TIMESTAMPTZ` values are rendered in UTC with `+00`. See [Columns]({{ '/api/columns' | relative_url }}#timestamps-dates-and-times) for precision details
 
 **Usage:**
 
@@ -358,6 +358,8 @@ await db.insert(tasks).values({
   timeout: '5 seconds',
 });
 ```
+
+Reads return DuckDB's interval text, such as `'02:30:00'` and `'00:00:05'`.
 
 ## Type Inference
 

@@ -204,8 +204,13 @@ duckDbTimestamp('col', { mode: 'date' });
 
 // Return strings in DuckDB format
 duckDbTimestamp('col', { mode: 'string' });
-// Returns: '2024-01-15 10:30:00+00'
+// Returns: '2024-01-15 10:30:00'
+
+duckDbTimestamp('col', { mode: 'string', withTimezone: true });
+// Returns: '2024-01-15 10:30:00+00' (always UTC)
 ```
+
+String mode usually keeps milliseconds only, because DuckDB returns timestamps to JavaScript as `Date` values. See [Timestamps, Dates, and Times]({{ '/api/columns' | relative_url }}#timestamps-dates-and-times).
 
 ## Query Transformation
 
@@ -362,6 +367,8 @@ for await (const chunk of db.executeBatches(
 
 `bindMode: 'bind'` forces native binding, including on Bun and when the environment variable is set. Columns with `duckDbType` set to `TIMESTAMP_S`, `TIMESTAMP_MS` or `TIMESTAMP_NS` always use literals.
 
+Both paths store the same value. Strings without an offset are UTC, and a naive `TIMESTAMP` string with an offset is converted to UTC, whatever the session `TimeZone`.
+
 ### Other Column Types
 
 Some column types use SQL literals rather than native DuckDB value bindings:
@@ -371,9 +378,9 @@ Some column types use SQL literals rather than native DuckDB value bindings:
 
 The following column types use native DuckDB value bindings:
 
-- **`duckDbList`**: uses `DuckDBListValue` for native array binding. An empty list is sent as a typed literal such as `[]::VARCHAR[]`
-- **`duckDbArray`**: uses `DuckDBArrayValue` for native array binding. An empty value is sent as a typed literal
-- **`duckDbMap`**: uses `DuckDBMapValue` for native map binding. Empty maps, and maps with an empty list value, use a `map(...)` SQL literal
+- **`duckDbList`**: uses `DuckDBListValue` for native array binding. Empty lists, lists of structs or `Buffer` values, and lists whose inner lists are all empty are sent as typed literals such as `[]::VARCHAR[]`
+- **`duckDbArray`**: uses `DuckDBArrayValue` for native array binding. The same values as for `duckDbList` are sent as typed literals
+- **`duckDbMap`**: uses `DuckDBMapValue` for native map binding. Empty maps, and maps with struct, `Buffer` or empty list values, use a `map(...)` SQL literal
 - **`duckDbBlob`**: uses `DuckDBBlobValue` for native binary binding
 - **`duckDbJson`**: uses native string binding with delayed `JSON.stringify()`
 

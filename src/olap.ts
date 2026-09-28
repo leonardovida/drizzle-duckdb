@@ -180,8 +180,9 @@ function overClause(options?: PartitionOrder) {
     chunks.push(sql`order by ${sql.join(orders, sql`, `)}`);
   }
 
+  // Window functions need an OVER clause even without partitions or orders.
   if (chunks.length === 0) {
-    return sql``;
+    return sql`over ()`;
   }
 
   return sql`over (${sql.join(chunks, sql` `)})`;

@@ -73,10 +73,29 @@ describe('formatLiteral', () => {
     expect(result).toBe('NULL');
   });
 
-  test('formats Date as ISO string in quotes', () => {
-    const date = new Date('2024-03-15T12:30:45.000Z');
-    const result = formatLiteral(date);
-    expect(result).toBe("'2024-03-15T12:30:45.000Z'");
+  test('formats Date as a timestamp literal typed from the hint', () => {
+    const date = new Date('2024-03-15T12:30:45.123Z');
+    expect(formatLiteral(date)).toBe(
+      "TIMESTAMPTZ '2024-03-15 12:30:45.123+00'"
+    );
+    expect(formatLiteral(date, 'TIMESTAMPTZ')).toBe(
+      "TIMESTAMPTZ '2024-03-15 12:30:45.123+00'"
+    );
+    expect(formatLiteral(date, 'TIMESTAMP')).toBe(
+      "TIMESTAMP '2024-03-15 12:30:45.123'"
+    );
+    expect(formatLiteral(date, 'timestamp (3)')).toBe(
+      "TIMESTAMP '2024-03-15 12:30:45.123'"
+    );
+    expect(formatLiteral(date, 'DATE')).toBe("DATE '2024-03-15'");
+  });
+
+  test('formats bytes as a hex blob literal', () => {
+    expect(formatLiteral(Buffer.from([0, 1, 0x27, 0x5c, 0xff]))).toBe(
+      "from_hex('0001275cff')"
+    );
+    expect(formatLiteral(new Uint8Array([0xab]))).toBe("from_hex('ab')");
+    expect(formatLiteral(new Uint8Array())).toBe("from_hex('')");
   });
 
   test('formats number without quotes', () => {
