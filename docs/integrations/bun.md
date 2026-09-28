@@ -77,7 +77,7 @@ bun run scripts/introspect.ts
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.5",
-    "@duckdbfan/drizzle-duckdb": "^1.6.0",
+    "@duckdbfan/drizzle-duckdb": "^1.7.0",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
