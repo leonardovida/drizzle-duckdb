@@ -17,10 +17,14 @@ export interface PgDuckQueryResult<TRow = unknown> {
 }
 
 export interface PgDuckClient {
+  /**
+   * Returns a result, or its rows. For SQL with several statements,
+   * node-postgres returns one result per statement, and the last one is used.
+   */
   query(
     query: string | PgDuckQueryConfig,
     values?: unknown[]
-  ): Promise<PgDuckQueryResult | unknown[]>;
+  ): Promise<PgDuckQueryResult | PgDuckQueryResult[] | unknown[]>;
   close?(): Promise<void> | void;
   end?(): Promise<void> | void;
 }

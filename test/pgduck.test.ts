@@ -79,4 +79,61 @@ describe('pg_duckdb client support', () => {
     expect(calls).toEqual(['BEGIN TRANSACTION;', 'select 1', 'commit']);
     expect(releaseCalls).toBe(1);
   });
+
+  test('uses the last result of a multi-statement query', async () => {
+    // node-postgres returns one Result per statement for simple queries.
+    const client: PgDuckClient = {
+      async query() {
+        return [
+          { command: 'CREATE', rowCount: null, fields: [], rows: [] },
+          {
+            command: 'SELECT',
+            rowCount: 1,
+            fields: [{ name: 'a' }],
+            rows: [[1]],
+          },
+        ];
+      },
+    };
+
+    const db = drizzle(client);
+
+    expect(
+      await db.execute(sql.raw('create temp table x(a int); select 1 as a'))
+    ).toEqual([{ a: 1 }]);
+  });
+
+  test('keeps plain row arrays whose rows look like results', async () => {
+    const client: PgDuckClient = {
+      async query() {
+        return [{ rows: [], fields: 'x' }];
+      },
+    };
+
+    const db = drizzle(client);
+
+    expect(await db.execute(sql`select 1`)).toEqual([
+      { rows: [], fields: 'x' },
+    ]);
+  });
+
+  test('throws when array rows come without field names', async () => {
+    const withoutFields: PgDuckClient = {
+      async query() {
+        return { rows: [[1, 'Ada']] };
+      },
+    };
+    const bareRows: PgDuckClient = {
+      async query() {
+        return [[1, 'Ada']];
+      },
+    };
+
+    await expect(drizzle(withoutFields).execute(sql`select 1`)).rejects.toThrow(
+      /array rows without field metadata/
+    );
+    await expect(drizzle(bareRows).execute(sql`select 1`)).rejects.toThrow(
+      /array rows without field metadata/
+    );
+  });
 });

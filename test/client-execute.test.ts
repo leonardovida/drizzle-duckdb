@@ -661,8 +661,9 @@ describe('consumed node-api results', () => {
         const chunks = remaining.map((rows) => ({
           rowCount: rows.length,
           convertRows: (converter: unknown) => {
+            // Any converter other than the JS one reads ts_ns as a string.
             if (
-              (converter === JsonDuckDBValueConverter && options.jsonFails) ||
+              (converter !== JSDuckDBValueConverter && options.jsonFails) ||
               (converter === JSDuckDBValueConverter && options.jsFails)
             ) {
               throw new Error('Unexpected type id: 0');

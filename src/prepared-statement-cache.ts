@@ -1,6 +1,7 @@
 import type {
   DuckDBConnection,
   DuckDBPreparedStatement,
+  DuckDBType,
   DuckDBValue,
 } from '@duckdb/node-api';
 
@@ -131,10 +132,15 @@ export function clearPreparedStatementCache(
 
 export function bindPreparedStatement(
   statement: DuckDBPreparedStatement,
-  values: DuckDBValue[] | undefined
+  values: DuckDBValue[] | undefined,
+  types?: DuckDBType[]
 ): void {
   if (values) {
-    statement.bind(values);
+    if (types) {
+      statement.bind(values, types);
+    } else {
+      statement.bind(values);
+    }
     return;
   }
 

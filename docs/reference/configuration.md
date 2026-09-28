@@ -140,6 +140,8 @@ const db = drizzle(connection, { prepareCache: true });
 const db = drizzle(connection, { prepareCache: { size: 16 } });
 ```
 
+SQL with several statements, or with only comments, cannot be prepared. It runs without the cache, the same as with `prepareCache` off.
+
 ### rejectStringArrayLiterals
 
 Throw an error when a parameter without column information looks like a Postgres-style array literal (`'{...}'`).
