@@ -147,7 +147,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "__drizzle_migrations_created_at_unique"
 
 All pending migrations, and the rows that record them, run in one transaction. A migration is pending when its journal `when` timestamp is later than the newest `created_at` already recorded.
 
-Concurrent `migrate()` calls on the same database in one process run one after another. Calls from separate connections retry on DuckDB write-write conflicts and skip migrations the other call already applied. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
+Concurrent `migrate()` calls on the same `db` object run one after another. Other concurrent calls retry on DuckDB write-write conflicts and skip migrations the other call already applied. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
 
 With DuckLake as the default catalog, the tracking table is a plain table without the sequence, primary key and unique index, because DuckLake supports none of them. See [DuckLake]({{ '/features/migrations' | relative_url }}#ducklake).
 

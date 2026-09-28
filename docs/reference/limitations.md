@@ -15,9 +15,9 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | ------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Select queries                       | Full    | All standard select operations work                                                                                                                |
 | Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                                                           |
-| Joins                                | Full    | All join types supported. Same-name columns are auto-qualified                                                                                     |
-| Subqueries                           | Full    |                                                                                                                                                    |
-| CTEs (WITH clauses)                  | Full    | Join column ambiguity auto-resolved                                                                                                                |
+| Joins                                | Full    | All join types supported. Bare columns in raw SQL ON clauses are qualified when the source is clear                                                |
+| Subqueries                           | Full    | Fields are qualified by the subquery alias                                                                                                         |
+| CTEs (WITH clauses)                  | Full    | Fields are qualified by the CTE name                                                                                                               |
 | Aggregations                         | Full    |                                                                                                                                                    |
 | Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config is ignored                                   |
 | Concurrent queries                   | Partial | One query per connection. Use pooling for parallelism                                                                                              |
@@ -80,7 +80,7 @@ If a result column has a type the installed `@duckdb/node-api` cannot convert, t
 
 A `numeric()` column returns the exact DECIMAL value as a string, as node-postgres does for NUMERIC. `numeric('amount', { precision: 38, scale: 10 })` keeps all 38 digits.
 
-Everywhere else DECIMAL values come back as JavaScript numbers, so values with more than about 15 significant digits lose precision. That covers raw `db.execute()` results, SQL expressions such as ``sql<number>`sum(${t.amount})` ``, relational queries (`db.query`), streams and Arrow results. Cast to `VARCHAR` in SQL when you need the exact value there:
+Everywhere else DECIMAL values come back as JavaScript numbers, so values with more than about 15 significant digits lose precision. That covers raw `db.execute()` results, SQL expressions such as ``sql<number>`sum(${t.amount})` ``, `executeBatches()` and `executeArrow()` results. Relational queries (`db.query`) also read the rounded number, and a `numeric()` column turns it into a string such as `'1.2345678901234569e+27'`. Cast to `VARCHAR` in SQL when you need the exact value there:
 
 ```typescript
 const rows = await db.execute(sql`
@@ -129,6 +129,10 @@ Cached executions on one connection run serially because binding mutates the
 native prepared statement. Use a connection pool when queries need to run in
 parallel.
 
+DuckDB prepares one statement at a time. SQL with several statements, or with
+only comments, runs without the cache, so migrations without
+`--> statement-breakpoint` markers also work with `prepareCache` on.
+
 ## Result Handling
 
 ### Materialized Results
@@ -145,7 +149,17 @@ for await (const chunk of db.executeBatches(
 }
 ```
 
-`db.executeArrow()` materializes the whole result in column-major form. It returns an Arrow table only when the client result exposes an Arrow API. `@duckdb/node-api` does not, so with it you get JavaScript arrays keyed by column name.
+`db.executeArrow()` materializes the whole result in column-major form. It returns an Arrow table only when the client result exposes an Arrow API. `@duckdb/node-api` does not, so with it you get JavaScript arrays keyed by column name. Duplicate column names get the same suffixes as in `db.execute()`, so `select 1 as a, 2 as a` returns `{ a: [1], a_1: [2] }`.
+
+While an `executeBatches()` loop is open, its connection cannot run other queries. See [executeBatches()]({{ '/api/database' | relative_url }}#executebatches).
+
+### Result Value Types
+
+Each result column is converted on its own. `TIMESTAMP_NS`, `TIME WITH TIME ZONE` and `TIME_NS` columns come back as DuckDB's text, which keeps precision a JavaScript value would lose. Other columns keep their JavaScript values, whatever else the query selects: `BLOB` is a `Buffer`, `BIGINT`, `HUGEINT` and `UBIGINT` are `bigint`, and `DATE` is a `Date`.
+
+Raw `db.execute()` results use `@duckdb/node-api` values directly. `COUNT(*)` and `SUM` of an integer column return a `bigint`, `TIME` returns microseconds as a `bigint`, and `INTERVAL` returns `{ months, days, micros }`. Columns selected through the query builder use their column's decoder, for example `duckDbInterval()` returns interval text.
+
+A SQL field uses its own `.mapWith()` decoder, even when it mentions a DuckDB column. ``sql`extract(hour from ${events.startTime})`.mapWith(Number)`` returns a number, not a TIME string. Only a bare ``sql`${column}` `` without `.mapWith()` uses the column's decoder.
 
 **For very large datasets:** Prefer server-side aggregation, `executeBatches()` for incremental reads, or add `LIMIT`/pagination when you genuinely need all rows.
 
@@ -239,7 +253,7 @@ Postgres array operators are not rewritten. DuckDB supports them on `LIST` and f
 | `column <@ ARRAY[...]` | `array_has_all([...], column)` |
 | `column && ARRAY[...]` | `array_has_any(column, [...])` |
 
-Only the first-dimension bounds helpers `array_lower(a, 1)` and `array_upper(a, 1)` are rewritten, because DuckDB does not have them.
+Only the first-dimension bounds helpers `array_lower(a, 1)` and `array_upper(a, 1)` are rewritten, because DuckDB does not have them. The rewrite applies anywhere in the statement, including casts, `ARRAY[...]`, `ORDER BY`, `GROUP BY` and the `SET` and `WHERE` clauses of `UPDATE`.
 
 All three styles work:
 
@@ -255,6 +269,21 @@ import { arrayHasAll, arrayHasAny, duckDbArrayContains } from '@duckdbfan/drizzl
 // Postgres operator (runs natively)
 .where(arrayContains(products.tags, ['a', 'b']))
 ```
+
+### generate_series Aliases
+
+Postgres lets you use a `generate_series` alias as a column. DuckDB treats the alias as a table, and names the column `generate_series`. The driver rewrites those references in `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and `FILTER`:
+
+```sql
+-- Before: SELECT gs FROM generate_series(1, 3) AS gs GROUP BY gs
+-- After:  SELECT "gs".generate_series AS "gs" FROM generate_series(1, 3) AS "gs" GROUP BY "gs".generate_series
+```
+
+A bare select item keeps its output name, so the result key is still `gs`.
+
+### WITH Inside Set Operations
+
+Drizzle can emit a `WITH` clause inside each arm of a `UNION`, `INTERSECT` or `EXCEPT`. DuckDB 1.4 has a binder bug for that shape, so the driver moves the arm CTEs into one top-level `WITH` when their names do not collide. The merged `WITH` is `RECURSIVE` when any arm uses `WITH RECURSIVE`. The driver leaves the SQL unchanged when an arm has its own `ORDER BY`, `LIMIT` or `OFFSET`, when a CTE name matches a table that another arm reads, or when a merged `RECURSIVE` would make a plain CTE read itself.
 
 ### String Array Literals
 
@@ -299,7 +328,7 @@ For hand-written SQL, the driver also qualifies bare column references in JOIN O
 - USING columns are never qualified.
 - Table aliases are used instead of the original table name, without the schema.
 
-When the source cannot be decided, the SQL is left unchanged.
+When the source cannot be decided, the SQL is left unchanged and DuckDB reports the ambiguous column. For example, `JOIN "c" ON "id" = "c"."id"` after two earlier sources stays as written. Qualify such columns yourself.
 
 ## Schema Features
 
@@ -364,19 +393,38 @@ for await (const chunk of db.executeBatches(
 `duckDbTimestamp` columns of type `TIMESTAMP` or `TIMESTAMPTZ` bind as native DuckDB timestamp values on Node.js. They use SQL literals such as `TIMESTAMP '2024-01-15 10:30:00.000+00'` in these cases:
 
 - The code runs on Bun, because of bigint handling differences in the DuckDB native bindings
-- The `DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS` environment variable is set to any value other than `0`
+- The `DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS` environment variable is set to any non-empty value other than `0`
 - The column sets `bindMode: 'literal'`
 
 `bindMode: 'bind'` forces native binding, including on Bun and when the environment variable is set. Columns with `duckDbType` set to `TIMESTAMP_S`, `TIMESTAMP_MS` or `TIMESTAMP_NS` always use literals.
 
 Both paths store the same value. Strings without an offset are UTC, and a naive `TIMESTAMP` string with an offset is converted to UTC, whatever the session `TimeZone`.
 
+### Plain JavaScript Values
+
+Values without a DuckDB column helper, such as `sql` template parameters, `sql.param(...)` values and pg-core columns, bind like this:
+
+| Value                                             | Binds as                                                                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Integer in the 32-bit range                       | `INTEGER`                                                                                                        |
+| Integer outside the 32-bit range                  | `BIGINT`, so `3000000000` is stored as written                                                                   |
+| Integer beyond `Number.MAX_SAFE_INTEGER`          | `DOUBLE`, because the number is no longer exact                                                                  |
+| Other number                                      | `DOUBLE`                                                                                                         |
+| `bigint`                                          | `HUGEINT`                                                                                                        |
+| `Date`                                            | `TIMESTAMP` holding the UTC time. An invalid `Date` throws `Invalid Date parameter: cannot bind an invalid Date` |
+| `Buffer` or `Uint8Array`                          | `BLOB`                                                                                                           |
+| Array, for example ``sql`${sql.param([1, 2])}` `` | `LIST`, with the item type worked out from every item                                                            |
+
+List item types come from all items, not the first one. `[null, 7, 8]` binds as `INTEGER[]`, `[1, 2.5]` as `DOUBLE[]` and `[1, 3e9]` as `BIGINT[]`. `duckDbList`, `duckDbArray` and `duckDbMap` values use the column's element or value type when the items fit it, and a `Date` inside a `TIMESTAMPTZ` list or map binds as a `TIMESTAMPTZ` value.
+
+A JavaScript array written directly into a `sql` template, as in ``sql`${[1, 2]}` ``, is expanded by Drizzle into separate parameters. Wrap it in `sql.param()` to bind one list.
+
 ### Other Column Types
 
-Some column types use SQL literals rather than native DuckDB value bindings:
+Some column types use SQL literals or plain string binding rather than native DuckDB values:
 
 - **`duckDbStruct`**: uses `struct_pack(...)` SQL literals to handle nested arrays correctly (empty arrays need type hints that native binding doesn't provide)
-- **`duckDbDate`, `duckDbTime`, `duckDbInterval`**: use passthrough binding
+- **`duckDbDate`, `duckDbTime`, `duckDbInterval`**: bind the value you pass without conversion, and DuckDB casts it to the column type
 
 The following column types use native DuckDB value bindings:
 
@@ -396,5 +444,5 @@ The following column types use native DuckDB value bindings:
 | String array warnings    | Use native arrays or DuckDB helpers         |
 | Default schema is `main` | Explicitly use `pgSchema('main')` if needed |
 | CTE join ambiguity       | Automatic (or use different column names)   |
-| DECIMAL precision        | Cast to `VARCHAR` in SQL for exact values   |
+| DECIMAL precision        | Use `numeric()` or cast to `VARCHAR` in SQL |
 | Transaction config       | Remove it. DuckDB ignores it                |

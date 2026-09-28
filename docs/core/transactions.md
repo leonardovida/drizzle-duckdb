@@ -30,7 +30,27 @@ If any operation fails, all changes are rolled back.
 
 ## Pooling and Transactions
 
-When you create a database with connection pooling (`drizzle(':memory:', { pool: { size: 4 } })` or the async connection-string form), transactions **pin a single pooled connection** for their entire lifetime. `BEGIN`, all queries in the callback, and `COMMIT`/`ROLLBACK` run on that one connection to keep the transaction atomic. No extra configuration is required. Non-transactional queries still use the pool.
+When you create a database with connection pooling (`drizzle(':memory:', { pool: { size: 4 } })` or the async connection-string form), transactions **pin a single pooled connection** for their entire lifetime. `BEGIN`, all queries in the callback, and `COMMIT`/`ROLLBACK` run on that one connection to keep the transaction atomic. No extra configuration is required. Non-transactional queries still use the pool. A `pg.Pool` passed to `drizzle()` for pg_duckdb works the same way, with one pooled client per transaction.
+
+## Streaming Inside a Transaction
+
+`tx.executeBatches()` streams on the transaction's connection. Until the loop finishes or breaks, any other query on `tx` throws `This connection is streaming a result from executeBatches()`, because DuckDB would end the open result early. Collect what you need inside the loop and write after it:
+
+```typescript
+await db.transaction(async (tx) => {
+  const ids: number[] = [];
+  for await (const chunk of tx.executeBatches<{ id: number }>(
+    sql`select id from ${orders} where status = 'pending'`
+  )) {
+    ids.push(...chunk.map((row) => row.id));
+  }
+  // The stream is closed, so tx can run other queries again
+  await tx
+    .update(orders)
+    .set({ status: 'queued' })
+    .where(inArray(orders.id, ids));
+});
+```
 
 ## With Return Value
 
@@ -208,7 +228,7 @@ async function transferFunds(fromId: number, toId: number, amount: number) {
       .returning();
 
     if (from.balance < 0) {
-      tx.rollback();
+      // Throwing rolls the transaction back
       throw new Error('Insufficient funds');
     }
 
@@ -261,12 +281,10 @@ async function createOrderWithItems(
         .where(eq(products.id, item.productId));
 
       if (!product) {
-        tx.rollback();
         throw new Error(`Product ${item.productId} not found`);
       }
 
       if (product.stock < item.quantity) {
-        tx.rollback();
         throw new Error(`Insufficient stock for ${product.name}`);
       }
     }

@@ -139,9 +139,75 @@ try {
 
 **Symptom**: Large `DECIMAL` values come back rounded.
 
-**Cause**: `DECIMAL` results are returned as JavaScript numbers, which keep about 15 significant digits.
+**Cause**: `numeric()` columns selected with `db.select()` return exact strings. Raw `db.execute()` results, SQL expressions, relational queries, `executeBatches()` and `executeArrow()` read `DECIMAL` as JavaScript numbers, which keep about 15 significant digits.
 
-**Solution**: Cast to `VARCHAR` in SQL when you need the exact value, for example ``sql`CAST(${orders.total} AS VARCHAR)` ``, and parse it with a decimal library.
+**Solution**: Select the column through a `numeric()` column, or cast to `VARCHAR` in SQL, for example ``sql`CAST(${orders.total} AS VARCHAR)` ``, and parse it with a decimal library. See [DECIMAL Precision]({{ '/reference/limitations' | relative_url }}#decimal-precision).
+
+### COUNT or SUM returns a bigint
+
+**Symptom**: ``sql`count(*)` `` or a raw `SUM` over an integer column returns `1n` instead of `1`, and `JSON.stringify` throws on the result.
+
+**Cause**: DuckDB computes `COUNT` as `BIGINT` and integer `SUM` as `HUGEINT`, and `@duckdb/node-api` reads both as `bigint`.
+
+**Solution**: Use `countN()` and `sumN()`, add `.mapWith(Number)`, or use Drizzle's `count()`.
+
+### "This connection is streaming a result from executeBatches()"
+
+**Symptom**: A query inside a `for await` loop over `executeBatches()` throws `This connection is streaming a result from executeBatches(). Finish or break the stream before running another query on the same connection.`
+
+**Cause**: The query runs on the connection that is streaming, for example on `tx` inside a transaction or on a single connection. DuckDB would end the open stream early, so the driver throws instead.
+
+**Solution**: Finish or break the loop first, or collect the rows and write after the loop. On a pool outside a transaction, other queries use other connections. See [Streaming Inside a Transaction]({{ '/core/transactions' | relative_url }}#streaming-inside-a-transaction).
+
+### "DuckDB connection is closed" or "DuckDB connection pool is closed"
+
+**Symptom**: A query rejects with `DuckDB connection is closed. The query was interrupted or not started because the connection or its pool was closed.` or `DuckDB connection pool is closed`.
+
+**Cause**: `db.close()` or `pool.close()` ran while the query was in flight, or before it started. `close()` interrupts running queries so they do not stay pending.
+
+**Solution**: Close the database only after its queries have finished, for example at shutdown after the server stops accepting requests.
+
+### "Invalid Date parameter: cannot bind an invalid Date"
+
+**Symptom**: An insert or query throws `Invalid Date parameter: cannot bind an invalid Date`.
+
+**Cause**: A parameter is a `Date` whose time is `NaN`, for example `new Date('not a date')`.
+
+**Solution**: Validate dates before binding them, for example with `Number.isNaN(date.getTime())`.
+
+### Ambiguous column reference in a join
+
+**Symptom**: A join fails with a DuckDB binder error such as `Ambiguous reference to column name "id"`.
+
+**Cause**: The SQL has a bare column in a join condition, and the driver cannot tell which source it belongs to, for example after two earlier joins. The driver leaves such SQL unchanged instead of guessing.
+
+**Solution**: Qualify the column, or build the join with the query builder. Subquery and CTE fields built by this driver are always qualified by their alias. See [JOIN Column Qualification]({{ '/reference/limitations' | relative_url }}#join-column-qualification).
+
+## Connection Issues
+
+### "Can't open a connection to same database file with a different configuration"
+
+**Symptom**: `drizzle(path, ...)` throws `Connection Error: Can't open a connection to same database file with a different configuration than existing connections`.
+
+**Cause**: The connection-string forms share one DuckDB instance per file in a process. The file is already open with different instance options.
+
+**Solution**: Pass the same `connection.options` everywhere, or share one `db`. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
+
+### "DuckLake alias ... is already used by a duckdb database"
+
+**Symptom**: The first query after `drizzle(path, { ducklake })` throws `DuckLake alias "ducklake" is already used by a duckdb database at '...'`.
+
+**Cause**: `ATTACH IF NOT EXISTS` did nothing, because the alias already names another database. This happens when the main database file is named `ducklake.duckdb`, or when two DuckLake catalogs use the default alias.
+
+**Solution**: Set `ducklake.alias` to a different name. See [DuckLake]({{ '/integrations/ducklake' | relative_url }}#pooling-guidance).
+
+### "pg_duckdb client returned array rows without field metadata"
+
+**Symptom**: Queries through a custom pg_duckdb client throw this error.
+
+**Cause**: The client returns rows as arrays, as with `rowMode: 'array'`, but no `fields`, so the driver cannot name the columns.
+
+**Solution**: Return `fields` with array rows, or return object rows. `pg.Client` and `pg.Pool` do this by default.
 
 ## Next.js Issues
 
@@ -270,6 +336,22 @@ await db.execute(sql`
 await db.execute(sql`CREATE SCHEMA IF NOT EXISTS drizzle`);
 await migrate(db, './drizzle');
 ```
+
+### "Catalog write-write conflict" During Migrations
+
+**Symptom**: `migrate()` fails with a `TransactionContext Error` such as `Catalog write-write conflict`.
+
+**Cause**: Another connection or process ran DDL or a migration on the same database at the same time, and the conflict lasted longer than the retries.
+
+**Solution**: Run `migrate()` again once the other migration has finished, or run migrations from one process before the app starts. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
+
+### "migration journal names cannot contain double quotes"
+
+**Symptom**: `migrate()` throws `Invalid migrationsTable "...": migration journal names cannot contain double quotes (").`
+
+**Cause**: DuckDB's `nextval()` cannot find a sequence whose name contains `"`.
+
+**Solution**: Pick a `migrationsTable` and `migrationsSchema` without double quotes.
 
 ### Postgres Syntax Not Compatible
 

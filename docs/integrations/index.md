@@ -12,7 +12,7 @@ Framework and platform-specific guides for using Drizzle DuckDB.
 
 ## Topics
 
-- [Next.js]({{ '/integrations/nextjs' | relative_url }}) - Server Components, API Routes, and Server Actions
-- [MotherDuck]({{ '/integrations/motherduck' | relative_url }}) - Cloud-hosted DuckDB
-- [DuckLake]({{ '/integrations/ducklake' | relative_url }}) - DuckLake catalog setup
-- [Bun]({{ '/integrations/bun' | relative_url }}) - Recommended runtime for Drizzle DuckDB
+- [Next.js]({{ '/integrations/nextjs' | relative_url }}): Server Components, API Routes, and Server Actions
+- [MotherDuck]({{ '/integrations/motherduck' | relative_url }}): cloud-hosted DuckDB
+- [DuckLake]({{ '/integrations/ducklake' | relative_url }}): DuckLake catalog setup
+- [Bun]({{ '/integrations/bun' | relative_url }}): run scripts and tooling on Bun

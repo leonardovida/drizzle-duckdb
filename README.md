@@ -159,7 +159,7 @@ const db = drizzle(connection, {
 });
 ```
 
-> Tip: With connection strings (recommended), pass the path: `const db = await drizzle(':memory:')`. The driver creates a pool, and `await db.close()` closes it.
+> Tip: With connection strings (recommended), pass the path: `const db = await drizzle(':memory:')`. The driver creates a pool, and `await db.close()` closes it. Calls with the same file path share one DuckDB instance in a process, so they see each other's writes.
 
 ## Connection Pooling
 
@@ -288,14 +288,16 @@ but new code should use the verb-style Flight helpers.
 `mdGetFlightLogs()` returns one `MotherDuckFlightLogLineRow` per log line with
 `line_number`, `reported_at`, and `line` fields. The old blob-shaped
 `MotherDuckFlightLogsRow` type remains exported for the deprecated
-`mdFlightLogs()` and `mdJobRunLogs()` compatibility views.
+`mdFlightLogs()` and `mdJobRunLogs()` compatibility views, which join lines in
+`line_number` order, descending when `order` is `'desc'`.
 Use `mdGetFlightRun()` to fetch one run by its Flight ID and run number. Pass
 `limit`, `offset`, and `order: 'asc' | 'desc'` to `mdGetFlightLogs()` when you
 only need a page of older or newer log lines.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
-and `flightSecretNames`.
+and `flightSecretNames`. An empty `config: {}` or `flightSecretNames: []` is
+sent as a typed empty map or list.
 Use `maxRuntimeSec` on `mdCreateFlight()` or `mdUpdateFlight()` to cap each run
 in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
 
@@ -394,7 +396,7 @@ import { migrate } from '@duckdbfan/drizzle-duckdb';
 await migrate(db, { migrationsFolder: './drizzle' });
 ```
 
-Migration metadata is stored in `drizzle.__drizzle_migrations` by default. See [Migrations Documentation](https://leonardovida.github.io/drizzle-duckdb/features/migrations) for configuration options.
+Migration metadata is stored in `drizzle.__drizzle_migrations` by default. Concurrent `migrate()` calls apply each migration once, and `migrate()` also works with DuckLake as the default catalog. See [Migrations Documentation](https://leonardovida.github.io/drizzle-duckdb/features/migrations) for configuration options.
 
 ## Schema Introspection
 
@@ -436,6 +438,9 @@ const db = await drizzle(':memory:', {
 
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals: false,
+
+  // Map camelCase keys to snake_case column names
+  casing: 'snake_case',
 
   // Pass your schema for relational queries
   schema: mySchema,

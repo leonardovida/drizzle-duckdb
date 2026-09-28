@@ -44,6 +44,8 @@ await db.insert(users).values({
 });
 ```
 
+The driver binds lists with the column's element type, or with a type worked out from every item. Lists that start with `null`, such as `[null, 85, 92]`, and mixed numbers such as `[1, 2.5]` bind correctly. Empty lists, lists of structs or `Buffer` values, and `[[]]` are sent as typed SQL literals.
+
 Arrays are returned as native JavaScript arrays:
 
 ```typescript
@@ -147,6 +149,8 @@ Postgres first-dimension bounds helpers are rewritten for DuckDB lists:
 | ------------------- | ------------------------------------------------------------------ |
 | `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
 | `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
+
+The rewrite applies anywhere in the statement, including casts, `ORDER BY`, `GROUP BY` and `UPDATE` statements.
 
 ## Combining Array Conditions
 
@@ -256,7 +260,7 @@ const admins = await db.execute(sql`
 
 ## Postgres Array Literal Warning
 
-Strings bound to a column are never changed. Inserting `'{1,2}'` into a `text` column, or comparing a `text` column with `eq(t.note, '{1,2}')`, stores and compares the string as written.
+Strings bound to a column are never changed. Inserting `'{1,2}'` into a `text` column, or comparing a `text` column with `eq(t.note, '{1,2}')`, stores and compares the string as written. Braced values in other scalar columns are not treated as array literals either, so a UUID written as `'{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}'` in a `uuid()` column binds as that UUID.
 
 Parameters without column information are checked for Postgres-style array literals. That covers values in plain `sql` templates, `sql.param(...)` values and bare `sql.placeholder(...)` values. Text written directly into the SQL string is not checked:
 
@@ -294,6 +298,8 @@ await db.execute(
   sql`SELECT * FROM users WHERE tags = ${sql.param(['a', 'b', 'c'])}`
 );
 ```
+
+Without `sql.param()`, Drizzle expands a JavaScript array in a `sql` template into separate parameters. See [Plain JavaScript Values]({{ '/reference/limitations' | relative_url }}#plain-javascript-values) for how list item types are chosen.
 
 ## See Also
 

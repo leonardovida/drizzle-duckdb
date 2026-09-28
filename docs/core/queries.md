@@ -158,7 +158,7 @@ const bigCategories = await db
 
 ### Numeric OLAP helpers
 
-DuckDB returns DECIMAL aggregates as strings by default. Use the OLAP helpers to coerce to numbers when that trade-off is acceptable:
+Drizzle's `sum()` and `avg()` return strings, as they do on Postgres. A raw ``sql`count(*)` `` or ``sql`sum(${orders.quantity})` `` over an integer column returns a `bigint`, because DuckDB computes those as `BIGINT` or `HUGEINT`. Use the OLAP helpers to get numbers when that trade-off is acceptable:
 
 ```typescript
 const totals = await db
@@ -257,6 +257,8 @@ const cte2 = db.$with('product_details').as(
 
 const result = await db.with(cte1, cte2).select().from(cte2);
 ```
+
+CTE and subquery fields render qualified by their name, such as `"regional_sales"."total_sales"`. A join between a table and a CTE on a shared column name, such as `eq(users.id, cte.id)`, therefore runs without an ambiguity error.
 
 ## Working with large result sets
 
@@ -383,8 +385,8 @@ await db.execute(sql`
   CREATE INDEX idx_users_email ON users(email)
 `);
 
-// Query with type annotation
-const result = await db.execute<{ count: number }>(
+// Query with type annotation. COUNT(*) reads as a bigint
+const result = await db.execute<{ count: bigint }>(
   sql`SELECT COUNT(*) as count FROM users WHERE active = true`
 );
 
@@ -392,14 +394,26 @@ const result = await db.execute<{ count: number }>(
 const userId = 1;
 const user = await db.execute(sql`SELECT * FROM users WHERE id = ${userId}`);
 
+// Bind a JavaScript array as one LIST parameter
+const tagged = await db.execute(
+  sql`SELECT * FROM users WHERE list_has_any(tags, ${sql.param(['a', 'b'])})`
+);
+
 // SQL fragments in queries
 const results = await db
   .select({
     name: users.name,
     upperName: sql<string>`UPPER(${users.name})`,
+    signupHour: sql<number>`extract(hour from ${users.createdAt})`.mapWith(
+      Number
+    ),
   })
   .from(users);
 ```
+
+Parameters bind by JavaScript type. Integers outside the 32-bit range bind as `BIGINT`, a `Buffer` as `BLOB`, a `Date` as a UTC `TIMESTAMP`, and list item types come from every item. See [Plain JavaScript Values]({{ '/reference/limitations' | relative_url }}#plain-javascript-values).
+
+A SQL field keeps its own `.mapWith()` decoder, even when it mentions a DuckDB column helper such as `duckDbTimestamp()`.
 
 ## Performance Tips
 

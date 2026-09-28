@@ -151,11 +151,11 @@ await db.execute(sql`
   )
 `);
 
-// Execute with type parameter
-const result = await db.execute<{ count: number }>(
+// Execute with type parameter. COUNT(*) is a BIGINT, which reads as a bigint
+const result = await db.execute<{ count: bigint }>(
   sql`SELECT COUNT(*) as count FROM users`
 );
-console.log(result[0].count);
+console.log(Number(result[0].count));
 
 // Execute with parameters
 const userId = 1;
@@ -163,6 +163,8 @@ const user = await db.execute<{ id: number; name: string }>(
   sql`SELECT * FROM users WHERE id = ${userId}`
 );
 ```
+
+`execute()` returns `@duckdb/node-api` values without column decoders: `BIGINT` and `HUGEINT` as `bigint`, `DECIMAL` as a number and `INTERVAL` as `{ months, days, micros }`. See [Result Value Types]({{ '/reference/limitations' | relative_url }}#result-value-types) and [Plain JavaScript Values]({{ '/reference/limitations' | relative_url }}#plain-javascript-values) for how parameters bind.
 
 ### transaction()
 
@@ -242,7 +244,7 @@ const columns = await db.executeArrow(sql`select 1 as a, 'x' as b`);
 // { a: [1], b: ['x'] }
 ```
 
-The return type is `unknown`. Cast it to the shape you expect.
+The return type is `unknown`. Cast it to the shape you expect. Duplicate column names get the same suffixes as in `execute()`, so `select 1 as a, 2 as a` returns `{ a: [1], a_1: [2] }`.
 
 ### close()
 
@@ -259,7 +261,9 @@ try {
 
 If you passed your own client, `close()` closes that client too, but not the `DuckDBInstance` it came from.
 
-Queries still running when you call `close()` are interrupted and reject with DuckDB's interrupt error. `close()` waits up to 5 seconds for them to settle before it disconnects. An open `executeBatches()` loop throws on its next chunk, and new queries on the closed connections throw.
+Queries still running when you call `close()` are interrupted and reject instead of staying pending. `close()` waits up to 5 seconds for them to settle before it disconnects. An open `executeBatches()` loop throws on its next chunk. Interrupted and later queries reject with `DuckDB connection is closed. The query was interrupted or not started because the connection or its pool was closed.`, or with `DuckDB connection pool is closed` when they run on a pool.
+
+With the connection-string forms, databases on the same file share one DuckDB instance. Closing one of them leaves the others usable. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
 
 ### $client and $instance
 
@@ -294,6 +298,8 @@ const result = await db
   .from(regionalSales)
   .where(gt(regionalSales.totalSales, 1000));
 ```
+
+Fields of a CTE, a subquery built with `.as()` or a view render qualified by its name, for example `"regional_sales"."total_sales"`. Joining a CTE or subquery on a column name that another source also has therefore works without an ambiguity error.
 
 ## Query Building
 

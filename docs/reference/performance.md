@@ -59,6 +59,9 @@ serialized per connection to keep concurrent parameter sets isolated. Use a
 connection pool for parallel query execution. Each pooled connection keeps its
 own cache.
 
+SQL with several statements, or with only comments, cannot be prepared. It runs
+without the cache.
+
 ### Sizing Guidelines
 
 | Workload Type               | Recommended Size |
@@ -248,7 +251,7 @@ const stats = await db
   .select({
     category: products.category,
     total: sql<number>`sum(${products.price})`,
-    count: sql<number>`count(*)`,
+    count: sql<number>`count(*)`.mapWith(Number), // COUNT reads as a bigint otherwise
   })
   .from(products)
   .groupBy(products.category);
@@ -308,7 +311,7 @@ const table = pgTable('events', {
 
 ### CTEs and JOINs
 
-CTEs work as in Postgres. Column references in JOIN conditions are automatically qualified to prevent ambiguity errors:
+CTEs work as in Postgres. CTE and subquery fields render qualified by their alias, so JOIN conditions on shared column names do not hit ambiguity errors:
 
 ```typescript
 const cte = db.$with('stats').as(
@@ -321,7 +324,7 @@ const cte = db.$with('stats').as(
     .groupBy(orders.userId)
 );
 
-// Columns are automatically qualified in the ON clause
+// ... on "users"."id" = "stats"."userId"
 const result = await db
   .with(cte)
   .select()
@@ -374,13 +377,13 @@ await warmUp(db);
 
 ### Symptoms and Solutions
 
-| Symptom                                | Likely Cause                | Solution                 |
-| -------------------------------------- | --------------------------- | ------------------------ |
-| First query is slow, repeats are fast  | Cache population            | Warm up at startup       |
-| All queries uniformly slow             | No prepared statement cache | Enable `prepareCache`    |
-| Concurrent requests queue up           | Single connection           | Use connection pool      |
-| Memory spikes on large results         | Full materialization        | Use streaming            |
-| JOIN queries fail with ambiguous error | Unqualified columns         | Update to latest version |
+| Symptom                                | Likely Cause                | Solution              |
+| -------------------------------------- | --------------------------- | --------------------- |
+| First query is slow, repeats are fast  | Cache population            | Warm up at startup    |
+| All queries uniformly slow             | No prepared statement cache | Enable `prepareCache` |
+| Concurrent requests queue up           | Single connection           | Use connection pool   |
+| Memory spikes on large results         | Full materialization        | Use streaming         |
+| JOIN queries fail with ambiguous error | Unqualified raw SQL columns | Qualify the columns   |
 
 ### Enable Query Logging
 

@@ -12,8 +12,8 @@ Learn the fundamentals of working with Drizzle DuckDB.
 
 ## Topics
 
-- [Database Connection]({{ '/core/connection' | relative_url }}) - Connect to in-memory, local file, or MotherDuck
-- [Schema Definition]({{ '/core/schema' | relative_url }}) - Define tables, columns, and relations
-- [Queries]({{ '/core/queries' | relative_url }}) - SELECT, INSERT, UPDATE, DELETE, CTEs, and aggregations
-- [Transactions]({{ '/core/transactions' | relative_url }}) - Atomic operations and rollback handling
-- [Array Operations]({{ '/core/arrays' | relative_url }}) - Working with LIST and ARRAY columns
+- [Database Connection]({{ '/core/connection' | relative_url }}): connect to in-memory, local file, or MotherDuck
+- [Schema Definition]({{ '/core/schema' | relative_url }}): define tables, columns, and relations
+- [Queries]({{ '/core/queries' | relative_url }}): SELECT, INSERT, UPDATE, DELETE, CTEs, and aggregations
+- [Transactions]({{ '/core/transactions' | relative_url }}): atomic operations and rollback handling
+- [Array Operations]({{ '/core/arrays' | relative_url }}): working with LIST and ARRAY columns
