@@ -51,6 +51,73 @@ const PG_JSON_UNSUPPORTED_MESSAGE =
 export const DUCKDB_SCALAR_COLUMN_TYPING =
   'duckdb:scalar' as unknown as QueryTypingsValue;
 
+const MIGRATION_CONFLICT_MAX_ATTEMPTS = 10;
+const MIGRATION_RETRY_BASE_DELAY_MS = 20;
+const MIGRATION_RETRY_MAX_DELAY_MS = 1000;
+
+// DuckDB reports optimistic concurrency failures as TransactionContext
+// errors, for example "Catalog write-write conflict on create with ..." or
+// "Conflict on tuple deletion!".
+const TRANSACTION_CONFLICT_PATTERN =
+  /write-write conflict|transaction conflict|TransactionContext Error:.*\bconflict\b/i;
+
+function errorMessages(error: unknown): string[] {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current instanceof Error ? current.message : String(current));
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return messages;
+}
+
+function isTransactionConflictError(error: unknown): boolean {
+  return errorMessages(error).some((message) =>
+    TRANSACTION_CONFLICT_PATTERN.test(message)
+  );
+}
+
+function migrationRetryDelayMs(attempt: number): number {
+  const backoff = Math.min(
+    MIGRATION_RETRY_MAX_DELAY_MS,
+    MIGRATION_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)
+  );
+  // Jitter keeps two retrying migrators from colliding again in lockstep.
+  return backoff / 2 + Math.random() * (backoff / 2);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// DuckDB's nextval() parses its string argument as a qualified name and drops
+// escaped "" quotes, so the journal sequence cannot be found for such names.
+function assertMigrationJournalName(option: string, name: string): void {
+  if (name.includes('"')) {
+    throw new Error(
+      `Invalid ${option} ${JSON.stringify(name)}: migration journal names cannot contain double quotes (").`
+    );
+  }
+}
+
+// A DuckDB transaction can only write to one attached database, so the
+// journal cannot live in another catalog while migrations change DuckLake.
+const DUCKLAKE_MIGRATIONS_MESSAGE =
+  'migrate() cannot create its journal table in a DuckLake catalog, because DuckLake does not support sequences, primary keys or indexes. migrate() does not support DuckLake as the default catalog. Apply DuckLake schema changes with db.execute() instead, or attach DuckLake with ducklake: { use: false } and keep migrate() for tables in the main database.';
+
+function toMigrationSetupError(error: unknown): unknown {
+  if (
+    errorMessages(error).some((message) =>
+      message.includes('DuckLake does not support')
+    )
+  ) {
+    return new Error(DUCKLAKE_MIGRATIONS_MESSAGE, { cause: error });
+  }
+  return error;
+}
+
 // Drizzle's relational builder emits Postgres JSON functions. DuckDB names
 // them differently, so rewrite the exact template chunks it produces.
 // json_group_array is a macro and rejects ORDER BY, so aggregate with list().
@@ -153,14 +220,16 @@ export class DuckDBDialect extends PgDialect {
     const migrationsSchema = migrationConfig.migrationsSchema ?? 'drizzle';
     const migrationsTableName =
       migrationConfig.migrationsTable ?? '__drizzle_migrations';
+    assertMigrationJournalName('migrationsSchema', migrationsSchema);
+    assertMigrationJournalName('migrationsTable', migrationsTableName);
+
     const migrationsSequence = `${migrationsTableName}_id_seq`;
     const legacySequence = 'migrations_pk_seq';
 
-    const escapeIdentifier = (value: string) => value.replace(/"/g, '""');
-    // nextval() takes the qualified name as a string literal.
-    const sequenceLiteral = `"${escapeIdentifier(
-      migrationsSchema
-    )}"."${escapeIdentifier(migrationsSequence)}"`.replace(/'/g, "''");
+    // nextval() takes the qualified name as a string literal. Names never
+    // contain double quotes (see assertMigrationJournalName).
+    const sequenceLiteral =
+      `"${migrationsSchema}"."${migrationsSequence}"`.replace(/'/g, "''");
     const migrationTable = sql`${sql.identifier(
       migrationsSchema
     )}.${sql.identifier(migrationsTableName)}`;
@@ -173,34 +242,38 @@ export class DuckDBDialect extends PgDialect {
       )
     `;
 
-    await session.execute(
-      sql`CREATE SCHEMA IF NOT EXISTS ${sql.identifier(migrationsSchema)}`
-    );
-    await session.execute(
-      sql`CREATE SEQUENCE IF NOT EXISTS ${sql.identifier(
-        migrationsSchema
-      )}.${sql.identifier(migrationsSequence)}`
-    );
-    if (legacySequence !== migrationsSequence) {
+    const setupJournal = async () => {
+      await session.execute(
+        sql`CREATE SCHEMA IF NOT EXISTS ${sql.identifier(migrationsSchema)}`
+      );
       await session.execute(
         sql`CREATE SEQUENCE IF NOT EXISTS ${sql.identifier(
           migrationsSchema
-        )}.${sql.identifier(legacySequence)}`
+        )}.${sql.identifier(migrationsSequence)}`
       );
-    }
-    await session.execute(migrationTableCreate);
+      if (legacySequence !== migrationsSequence) {
+        await session.execute(
+          sql`CREATE SEQUENCE IF NOT EXISTS ${sql.identifier(
+            migrationsSchema
+          )}.${sql.identifier(legacySequence)}`
+        );
+      }
+      await session.execute(migrationTableCreate);
 
-    // Concurrent migrators must not commit the same migration twice.
-    await session.execute(
-      sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
-        `${migrationsTableName}_created_at_unique`
-      )} ON ${migrationTable} (created_at)`
-    );
+      // Concurrent migrators must not commit the same migration twice.
+      await session.execute(
+        sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
+          `${migrationsTableName}_created_at_unique`
+        )} ON ${migrationTable} (created_at)`
+      );
+    };
 
     const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;
 
-    try {
-      await session.transaction(async (tx) => {
+    const applyPendingMigrations = () =>
+      session.transaction(async (tx) => {
+        // Read the journal inside the transaction on every attempt, so a
+        // retry skips migrations another migrator committed meanwhile.
         const dbMigrations = (await tx.execute(latestMigrationQuery)) as {
           hash: string;
           created_at: string;
@@ -224,22 +297,52 @@ export class DuckDBDialect extends PgDialect {
           }
         }
       });
-    } catch (error) {
-      // Another migrator may have committed while this transaction ran.
+
+    const isLatestMigrationApplied = async (): Promise<boolean> => {
       const latestMigration = migrations.at(-1);
-      if (latestMigration) {
+      if (!latestMigration) {
+        return false;
+      }
+      try {
         const [applied] = await session.all<{
           hash: string;
           created_at: string;
         }>(latestMigrationQuery);
-        if (
+        return (
           applied?.hash === latestMigration.hash &&
           Number(applied.created_at) === latestMigration.folderMillis
-        ) {
+        );
+      } catch {
+        // The journal table may not exist yet when setup failed.
+        return false;
+      }
+    };
+
+    // DuckDB uses optimistic concurrency. A concurrent migrator on the same
+    // database makes schema creation or migration DDL fail with a
+    // write-write conflict, so retry the whole run with backoff.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        try {
+          await setupJournal();
+        } catch (error) {
+          throw toMigrationSetupError(error);
+        }
+        await applyPendingMigrations();
+        return;
+      } catch (error) {
+        // Another migrator may have committed while this run failed.
+        if (await isLatestMigrationApplied()) {
           return;
         }
+        if (
+          attempt >= MIGRATION_CONFLICT_MAX_ATTEMPTS ||
+          !isTransactionConflictError(error)
+        ) {
+          throw error;
+        }
+        await delay(migrationRetryDelayMs(attempt));
       }
-      throw error;
     }
   }
 

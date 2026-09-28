@@ -18,3 +18,6 @@ export {
   type DuckLakeAttachOptions,
   type DuckLakeConfig,
 } from './ducklake.ts';
+export { DuckDBDialect } from './dialect.ts';
+export { DuckDBSelectBuilder } from './select-builder.ts';
+export type { DuckDbMigrationConfig } from './migration-config.ts';

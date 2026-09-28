@@ -94,6 +94,8 @@ await migrate(db, {
 });
 ```
 
+`migrationsSchema` and `migrationsTable` cannot contain a double quote (`"`). DuckDB's `nextval()` drops escaped quotes from the sequence name, so `migrate()` throws `Invalid migrationsTable "...": migration journal names cannot contain double quotes (").` before it creates anything. Spaces, dots, `'` and other characters work.
+
 ## How It Works
 
 1. **Creates schema**: the migrations schema is created if it doesn't exist.
@@ -115,7 +117,28 @@ await migrate(db, {
 4. **Runs pending migrations**: all pending migrations run inside one transaction. If any statement fails, none of the pending migrations are applied.
 5. **Records completion**: each applied migration is inserted into the tracking table in the same transaction.
 
-The unique index on `created_at` keeps two concurrent `migrate()` calls from recording the same migration twice. If the transaction fails because another process already applied the latest migration, `migrate()` returns without error.
+### Concurrent migrations
+
+Concurrent `migrate()` calls apply each migration once:
+
+- Calls on the same database in one process run one after another. `migrate()` queues calls that share a `DuckDBDatabase` instance created from a path, or the same connection or pool.
+- Calls from separate connections to one DuckDB instance can still race. DuckDB then fails one of them with a `TransactionContext Error` such as `Catalog write-write conflict`. `migrate()` retries the setup and the migration transaction up to 10 times with a short backoff (a few seconds in total). Each attempt reads the tracking table again, so migrations that the other call committed are skipped.
+- The unique index on `created_at` keeps two migrators from recording the same migration twice. If a run fails and the latest migration is already recorded, `migrate()` returns without error.
+
+A retry does not wait for a long migration in another connection to finish. If the other migration runs longer than the retry window, the call fails with the conflict error and you can run it again. Other errors, such as a failing statement in a migration, are not retried.
+
+### DuckLake
+
+`migrate()` does not support DuckLake as the default catalog. The tracking table needs a sequence, a primary key and a unique index, and DuckLake supports none of them. With `drizzle(path, { ducklake: { ... } })` and the default `use: true`, `migrate()` throws:
+
+```
+migrate() cannot create its journal table in a DuckLake catalog, because DuckLake does not support sequences, primary keys or indexes. ...
+```
+
+The original DuckDB error is attached as `error.cause`. A DuckDB transaction can write to only one attached database, so migrations cannot change DuckLake tables while the journal lives in another catalog. The options are:
+
+- Apply DuckLake schema changes with `db.execute()`, for example `CREATE TABLE IF NOT EXISTS`, instead of `migrate()`.
+- Attach DuckLake with `ducklake: { use: false }` on a file database such as `drizzle('./app.duckdb', { ducklake: { ..., use: false } })`. `migrate()` then keeps its journal in `app.duckdb` and works for migrations that only change tables in that database.
 
 ## Migration Tracking
 
@@ -230,6 +253,10 @@ await db.execute(sql`
   CREATE SEQUENCE IF NOT EXISTS drizzle.__drizzle_migrations_id_seq
 `);
 ```
+
+### "Catalog write-write conflict" errors
+
+Another connection ran DDL or a migration on the same database at the same time, and the conflict outlasted the retries described in [Concurrent migrations](#concurrent-migrations). Run `migrate()` again once the other migration has finished, or run migrations from a single process before the app starts.
 
 ### Schema doesn't exist
 

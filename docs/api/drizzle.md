@@ -62,6 +62,30 @@ const db5 = drizzle(connection);
 
 Call `await db.close()` on databases created by the async forms. It closes the pool and the DuckDB instance. For the sync forms you own the client, so close it yourself.
 
+### One database per file per process
+
+Each async call opens a new DuckDB instance, even for a path that is already open. DuckDB's file lock does not stop a second instance in the same process, and two instances on one file do not see each other's writes. Committed writes from one of them can be lost when both close. This happens with a migration script and the app in one process, dev server hot reload, or tests that call `drizzle(path)` twice.
+
+Create the database once per file and share it:
+
+```typescript
+// db.ts
+export const db = await drizzle('./app.duckdb');
+```
+
+If you need several databases on one file, open the instance yourself and pass its connections or a pool. `DuckDBInstance.fromCache(path)` returns the same instance for the same path:
+
+```typescript
+import { DuckDBInstance } from '@duckdb/node-api';
+import { createDuckDBConnectionPool, drizzle } from '@duckdbfan/drizzle-duckdb';
+
+const instance = await DuckDBInstance.fromCache('./app.duckdb');
+const appDb = drizzle(createDuckDBConnectionPool(instance));
+const migrationDb = drizzle(await instance.connect());
+```
+
+In-memory paths are not affected, because every `:memory:` instance is a separate database.
+
 ## Parameters
 
 ### connectionString / connection
@@ -153,7 +177,17 @@ type PoolPreset =
 
 `ducklake` works with the async forms and with an explicit pool. Passing it with a single connection throws. Use `configureDuckLake(connection, config)` in that case. With a local catalog (`:memory:`, a `.duckdb`, `.ddb` or `.ducklake` file, or a file path) and no `pool` setting, the driver uses a pool of size 1. A larger `pool` also works, and the driver logs a warning for local catalogs. See [DuckLake]({{ '/integrations/ducklake' | relative_url }}).
 
-The config type extends Drizzle's `DrizzleConfig`, so it also accepts `casing` and `cache`. The DuckDB driver does not apply either option.
+The config type extends Drizzle's `DrizzleConfig`, so it also accepts `casing` and `cache`. `casing: 'snake_case'` or `casing: 'camelCase'` maps TypeScript keys to column names as in other Drizzle drivers. The DuckDB driver does not apply `cache`.
+
+```typescript
+const users = pgTable('users', {
+  id: integer().primaryKey(),
+  userName: text(),
+});
+const db = drizzle(connection, { casing: 'snake_case' });
+await db.insert(users).values({ id: 1, userName: 'ada' });
+// insert into "users" ("id", "user_name") values ($1, $2)
+```
 
 ## Return Value
 
