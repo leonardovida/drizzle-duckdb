@@ -129,16 +129,12 @@ A retry does not wait for a long migration in another connection to finish. If t
 
 ### DuckLake
 
-`migrate()` does not support DuckLake as the default catalog. The tracking table needs a sequence, a primary key and a unique index, and DuckLake supports none of them. With `drizzle(path, { ducklake: { ... } })` and the default `use: true`, `migrate()` throws:
+`migrate()` works when DuckLake is the default catalog, which is the default `use: true` setting. DuckLake has no sequences, primary keys or indexes, so the driver detects a DuckLake catalog and creates a plain tracking table instead. It has the same columns, `id` is computed when each row is inserted, and there is no unique index on `created_at`.
 
-```
-migrate() cannot create its journal table in a DuckLake catalog, because DuckLake does not support sequences, primary keys or indexes. ...
-```
+Two points follow from that:
 
-The original DuckDB error is attached as `error.cause`. A DuckDB transaction can write to only one attached database, so migrations cannot change DuckLake tables while the journal lives in another catalog. The options are:
-
-- Apply DuckLake schema changes with `db.execute()`, for example `CREATE TABLE IF NOT EXISTS`, instead of `migrate()`.
-- Attach DuckLake with `ducklake: { use: false }` on a file database such as `drizzle('./app.duckdb', { ducklake: { ..., use: false } })`. `migrate()` then keeps its journal in `app.duckdb` and works for migrations that only change tables in that database.
+- Migrations run in one transaction, as with a regular database. Calls in one process are still queued. Two processes that migrate one DuckLake catalog at the same time rely on DuckLake's own conflict detection and the retry described above, without the unique index as a backstop. Run migrations from a single process when you can.
+- The migration SQL must itself be valid on DuckLake. Tables with primary keys, unique constraints, foreign keys or `serial` columns fail. Generate those migrations from a schema without them, or write them by hand.
 
 ## Migration Tracking
 

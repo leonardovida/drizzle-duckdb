@@ -149,7 +149,7 @@ All pending migrations, and the rows that record them, run in one transaction. A
 
 Concurrent `migrate()` calls on the same database in one process run one after another. Calls from separate connections retry on DuckDB write-write conflicts and skip migrations the other call already applied. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
 
-`migrate()` does not support DuckLake as the default catalog, because the tracking table needs a sequence, a primary key and an index. See [DuckLake]({{ '/features/migrations' | relative_url }}#ducklake) for the options.
+With DuckLake as the default catalog, the tracking table is a plain table without the sequence, primary key and unique index, because DuckLake supports none of them. See [DuckLake]({{ '/features/migrations' | relative_url }}#ducklake).
 
 ## Error Handling
 

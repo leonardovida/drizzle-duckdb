@@ -242,7 +242,7 @@ describe('Driver Factory Tests', () => {
         closeSync: vi.fn(),
       } as unknown as DuckDBInstance;
 
-      vi.spyOn(DuckDBInstance, 'create').mockResolvedValue(instance);
+      vi.spyOn(DuckDBInstance, 'fromCache').mockResolvedValue(instance);
 
       await expect(
         drizzle(':memory:', {

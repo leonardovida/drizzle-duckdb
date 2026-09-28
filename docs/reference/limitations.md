@@ -78,7 +78,9 @@ If a result column has a type the installed `@duckdb/node-api` cannot convert, t
 
 ## DECIMAL Precision
 
-`DECIMAL` values come back as JavaScript numbers, so values with more than about 15 significant digits lose precision. A `numeric()` column returns the rounded number as a string. Cast to `VARCHAR` in SQL when you need the exact value:
+A `numeric()` column returns the exact DECIMAL value as a string, as node-postgres does for NUMERIC. `numeric('amount', { precision: 38, scale: 10 })` keeps all 38 digits.
+
+Everywhere else DECIMAL values come back as JavaScript numbers, so values with more than about 15 significant digits lose precision. That covers raw `db.execute()` results, SQL expressions such as ``sql<number>`sum(${t.amount})` ``, relational queries (`db.query`), streams and Arrow results. Cast to `VARCHAR` in SQL when you need the exact value there:
 
 ```typescript
 const rows = await db.execute(sql`

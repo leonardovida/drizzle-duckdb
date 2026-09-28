@@ -52,9 +52,19 @@ export function isPool(
 
 export interface ExecuteClientOptions {
   prepareCache?: PreparedStatementCacheConfig;
+  /**
+   * Read top-level DECIMAL columns as exact strings instead of doubles. The
+   * result lists those columns in `exactDecimalColumns`.
+   */
+  exactDecimals?: boolean;
 }
 
-export type ExecuteArraysResult = { columns: string[]; rows: unknown[][] };
+export type ExecuteArraysResult = {
+  columns: string[];
+  rows: unknown[][];
+  /** Indexes of DECIMAL columns read as exact strings (see exactDecimals). */
+  exactDecimalColumns?: number[];
+};
 
 type MaterializedRows = ExecuteArraysResult;
 
@@ -629,13 +639,45 @@ const PerColumnValueConverter: DuckDBValueConverter<unknown> = (value, type) =>
     : JSDuckDBValueConverter(value, type, JSDuckDBValueConverter);
 
 /**
+ * Read top-level DECIMAL values as their exact text, which a double would
+ * round, for example DECIMAL(38,10). Nested values keep `converter`.
+ */
+function withExactDecimals(
+  converter: DuckDBValueConverter<unknown>
+): DuckDBValueConverter<unknown> {
+  return (value, type) =>
+    type.typeId === DuckDBTypeId.DECIMAL
+      ? value === null
+        ? null
+        : String(value)
+      : converter(value, type, converter);
+}
+
+function findDecimalColumns(result: ResultTypeMetadataLike): number[] {
+  if (
+    typeof result.columnCount !== 'number' ||
+    typeof result.columnTypeId !== 'function'
+  ) {
+    return [];
+  }
+  const columns: number[] = [];
+  for (let index = 0; index < result.columnCount; index += 1) {
+    if (result.columnTypeId(index) === DuckDBTypeId.DECIMAL) {
+      columns.push(index);
+    }
+  }
+  return columns;
+}
+
+/**
  * Reading chunks consumes a node-api result, so a reader that fails partway
  * must not be retried on the same result: the retry sees no rows. Convert the
  * fetched chunks instead, which can be retried with another converter.
  */
 function convertChunkRows(
   chunks: DataChunkLike[],
-  preferJson: boolean
+  preferJson: boolean,
+  exactDecimals = false
 ): unknown[][] {
   const convert = <T>(converter: DuckDBValueConverter<T>) => {
     const rows: unknown[][] = [];
@@ -647,25 +689,30 @@ function convertChunkRows(
     return rows;
   };
 
+  const finish = (converter: DuckDBValueConverter<unknown>) =>
+    convert(exactDecimals ? withExactDecimals(converter) : converter);
+
   if (preferJson) {
     try {
-      return convert(PerColumnValueConverter);
+      return finish(PerColumnValueConverter);
     } catch {
       // Fall back when precision-preserving materialization is unavailable.
     }
   }
 
-  return convert(JSDuckDBValueConverter);
+  return finish(JSDuckDBValueConverter as DuckDBValueConverter<unknown>);
 }
 
 async function readResultChunkRows(
   result: ResultTypeMetadataLike &
-    Required<Pick<ResultChunksLike, 'fetchAllChunks'>>
+    Required<Pick<ResultChunksLike, 'fetchAllChunks'>>,
+  exactDecimals = false
 ): Promise<unknown[][]> {
   try {
     return convertChunkRows(
       await result.fetchAllChunks(),
-      prefersJsonMaterialization(result)
+      prefersJsonMaterialization(result),
+      exactDecimals
     );
   } catch (error) {
     throw wrapUnsupportedNodeApiTypeError(result, error);
@@ -683,11 +730,18 @@ async function materializeResultRows(
     getRowsJS: () => Promise<unknown[][] | undefined>;
   } & ResultTypeMetadataLike &
     ResultJsonRowsLike &
-    ResultChunksLike
+    ResultChunksLike,
+  exactDecimals = false
 ): Promise<MaterializedRows> {
   if (hasFetchAllChunks(result)) {
-    const rows = await readResultChunkRows(result);
-    return { columns: resolveResultColumns(result), rows };
+    const exactDecimalColumns = exactDecimals ? findDecimalColumns(result) : [];
+    const rows = await readResultChunkRows(
+      result,
+      exactDecimalColumns.length > 0
+    );
+    return exactDecimalColumns.length > 0
+      ? { columns: resolveResultColumns(result), rows, exactDecimalColumns }
+      : { columns: resolveResultColumns(result), rows };
   }
 
   const getRowsJson =
@@ -724,7 +778,8 @@ async function executePreparedQuery(
   connection: DuckDBConnection,
   query: string,
   { values, types }: NodeApiParams,
-  cacheConfig: PreparedStatementCacheConfig
+  cacheConfig: PreparedStatementCacheConfig,
+  exactDecimals = false
 ): Promise<MaterializedRows> {
   const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
@@ -737,14 +792,14 @@ async function executePreparedQuery(
         throw error;
       }
       const result = await connection.run(query, values, types);
-      return await materializeResultRows(result);
+      return await materializeResultRows(result, exactDecimals);
     }
 
     try {
       bindPreparedStatement(statement, values, types);
       const result = await statement.run();
       cache.remember(query, statement);
-      return await materializeResultRows(result);
+      return await materializeResultRows(result, exactDecimals);
     } catch (error) {
       cache.evict(query);
       throw error;
@@ -825,7 +880,8 @@ async function materializeRows(
           connection,
           query,
           nodeApiParams,
-          options.prepareCache
+          options.prepareCache,
+          options.exactDecimals
         );
       }
 
@@ -834,7 +890,7 @@ async function materializeRows(
         nodeApiParams.values,
         nodeApiParams.types
       );
-      return await materializeResultRows(result);
+      return await materializeResultRows(result, options.exactDecimals);
     });
   });
 }

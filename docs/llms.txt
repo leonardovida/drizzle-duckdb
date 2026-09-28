@@ -40,7 +40,7 @@ await db.close();
 
 - `await drizzle(path)` and `await drizzle(path, config)`: path is ':memory:', './file.duckdb', 'md:' or 'md:database'. Returns a Promise and creates a pool.
 - `await drizzle({ connection: { path, options }, ...config })`: same, with DuckDB instance options such as `motherduck_token`.
-- `drizzle({ client, ...config })` and `drizzle(client, config?)`: synchronous. `client` is a `DuckDBConnection`, a pool from `createDuckDBConnectionPool()`, or a pg_duckdb client. You close the client yourself.
+- `drizzle({ client, ...config })` and `drizzle(client, config?)`: synchronous. `client` is a `DuckDBConnection`, a pool from `createDuckDBConnectionPool()`, a pg_duckdb client, or a `pg.Pool` (wrapped automatically so transactions stay on one client). You close the client yourself.
 
 ## Configuration
 
@@ -103,7 +103,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - Do NOT use Postgres json or jsonb columns. Use duckDbJson() instead.
 - DuckDB 1.4.x and 1.5.x do not support SAVEPOINT. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
 - DuckDB aborts the whole transaction when a statement fails at execution time. If the callback catches that error and continues, `db.transaction` rejects with "DuckDB aborted the transaction because a statement inside it failed..." and the statement error as `cause`. No changes are committed. Parser and catalog errors do not abort the transaction.
-- DECIMAL values are returned as JavaScript numbers and can lose precision. Cast to VARCHAR in SQL for exact values.
+- DECIMAL values selected through numeric() columns are exact strings. Raw db.execute() results and SQL expressions return DECIMAL as JavaScript numbers, which can lose precision. Cast to VARCHAR in SQL for exact values there.
 - A column type that @duckdb/node-api cannot convert to JavaScript throws an error naming the column. Cast it in SQL.
 - DuckDB runs one query per connection. Use the pool for parallel queries. Temp views and other session state exist only on the connection that created them.
 - DuckDB 1.5 adds VARIANT and built-in GEOMETRY. With @duckdb/node-api 1.5.4-r.1 and newer, VARIANT values materialize into JavaScript values. Project geometry with ST_AsText(...) or ST_AsWKB(...).
@@ -119,7 +119,7 @@ await migrate(db, {
 });
 ```
 
-All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls on one database in a process are queued, and calls from separate connections retry on DuckDB write-write conflicts. migrate() does not support DuckLake as the default catalog (DuckLake has no sequences, primary keys or indexes). Journal names cannot contain a double quote.
+All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls on one database in a process are queued, and calls from separate connections retry on DuckDB write-write conflicts. With DuckLake as the default catalog, the journal is a plain table (DuckLake has no sequences, primary keys or indexes), and migration SQL must avoid primary keys, unique constraints and serial columns. Journal names cannot contain a double quote.
 
 ## Schema Introspection
 

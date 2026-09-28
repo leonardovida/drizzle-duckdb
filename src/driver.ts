@@ -29,6 +29,7 @@ import type {
 } from './session.ts';
 import { DuckDBSession } from './session.ts';
 import { DuckDBDialect } from './dialect.ts';
+import { createPgDuckConnectionPool, type PgDuckPool } from './pgduck.ts';
 import {
   createDuckDBSelectMethods,
   DuckDBQueryBuilder,
@@ -227,6 +228,22 @@ function resolveDrizzleTarget<
   };
 }
 
+/**
+ * True for a node-postgres `Pool`. A `pg.Client` also has `connect()` and
+ * `query()`, so the pool is recognized by its connection counters.
+ */
+function isNodePostgresPool(value: unknown): value is PgDuckPool {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.connect === 'function' &&
+    typeof candidate.query === 'function' &&
+    typeof candidate.acquire !== 'function' &&
+    typeof candidate.totalCount === 'number' &&
+    typeof candidate.idleCount === 'number'
+  );
+}
+
 /** Internal: create database from a client (connection or pool) */
 function createFromClient<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -235,11 +252,16 @@ function createFromClient<
   config: DuckDBDrizzleConfig<TSchema> = {},
   instance?: DuckDBInstance
 ): DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>> {
-  let finalClient = client;
+  // pool.query() runs each statement on any free client, so BEGIN, the
+  // statements and COMMIT of one transaction would land on different
+  // backends. Lease one client per operation instead.
+  let finalClient: DuckDBClientLike = isNodePostgresPool(client)
+    ? createPgDuckConnectionPool(client)
+    : client;
 
   if (config.ducklake) {
-    if (isPool(client)) {
-      finalClient = wrapDuckLakePool(client, config.ducklake);
+    if (isPool(finalClient)) {
+      finalClient = wrapDuckLakePool(finalClient, config.ducklake);
     } else {
       throw new Error(
         'DuckLake configuration requires a connection string or pool. Use drizzle("path", { ducklake: ... }) or call configureDuckLake(connection, config) manually.'
@@ -312,7 +334,10 @@ async function createFromConnectionString<
   instanceOptions: Record<string, string> | undefined,
   config: DuckDBDrizzleConfig<TSchema> = {}
 ): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
-  const instance = await DuckDBInstance.create(path, instanceOptions);
+  // Share one instance per database path in this process. Two instances on
+  // the same file do not see each other's writes and can lose committed data.
+  // ':memory:' still gets a new database each time.
+  const instance = await DuckDBInstance.fromCache(path, instanceOptions);
   let createdClient: DuckDBClientLike | undefined;
 
   try {

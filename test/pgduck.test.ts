@@ -80,6 +80,53 @@ describe('pg_duckdb client support', () => {
     expect(releaseCalls).toBe(1);
   });
 
+  test('wraps a raw node-postgres Pool so transactions stay on one client', async () => {
+    const calls: string[] = [];
+    let nextClientId = 0;
+    let released = 0;
+    let ended = 0;
+    const leaseClient = () => {
+      const id = nextClientId++;
+      return {
+        async query(query: Parameters<PgDuckClient['query']>[0]) {
+          calls.push(`client${id}: ${queryText(query)}`);
+          return { fields: [], rows: [] };
+        },
+        release() {
+          released += 1;
+        },
+      };
+    };
+    // Shaped like pg.Pool: query() runs on any free client.
+    const rawPool = {
+      totalCount: 0,
+      idleCount: 0,
+      async connect() {
+        return leaseClient();
+      },
+      async query(query: Parameters<PgDuckClient['query']>[0]) {
+        return leaseClient().query(query);
+      },
+      async end() {
+        ended += 1;
+      },
+    };
+
+    const db = drizzle(rawPool as unknown as PgDuckClient);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select 1`);
+    });
+    await db.close();
+
+    expect(calls).toEqual([
+      'client0: BEGIN TRANSACTION;',
+      'client0: select 1',
+      'client0: commit',
+    ]);
+    expect(released).toBe(1);
+    expect(ended).toBe(1);
+  });
+
   test('uses the last result of a multi-statement query', async () => {
     // node-postgres returns one Result per statement for simple queries.
     const client: PgDuckClient = {
