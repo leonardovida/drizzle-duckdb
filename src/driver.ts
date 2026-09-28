@@ -247,7 +247,7 @@ function createFromClient<
     }
   }
 
-  const dialect = new DuckDBDialect();
+  const dialect = new DuckDBDialect({ casing: config.casing });
   const prepareCache = resolvePrepareCacheOption(config.prepareCache);
 
   const logger =

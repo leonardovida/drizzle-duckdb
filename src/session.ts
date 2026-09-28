@@ -33,7 +33,7 @@ import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
 import { mapResultRow } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
-import { DUCKDB_SCALAR_COLUMN_TYPING, type DuckDBDialect } from './dialect.ts';
+import type { DuckDBDialect } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
@@ -132,7 +132,9 @@ function warnTransactionConfigIgnored(): void {
 
 /**
  * Params bound to a non-array column must keep their string value even when
- * it looks like a Postgres array literal, for example `{}` in a text column.
+ * it looks like a Postgres array literal, for example `{}` in a text column
+ * or a braced UUID in a uuid column. The dialect types array columns and
+ * untyped params as 'none', so every other typing marks a scalar column.
  */
 function getScalarParamIndexes(
   params: unknown[],
@@ -141,8 +143,9 @@ function getScalarParamIndexes(
   let indexes: Set<number> | undefined;
   for (let index = 0; index < params.length; index += 1) {
     const param = params[index];
+    const typing = typings?.[index];
     const isScalar =
-      typings?.[index] === DUCKDB_SCALAR_COLUMN_TYPING ||
+      (typing !== undefined && typing !== 'none') ||
       (is(param, Param) &&
         is(param.value, Placeholder) &&
         is(param.encoder, Column) &&

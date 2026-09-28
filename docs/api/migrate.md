@@ -42,6 +42,8 @@ Either a string path to the migrations folder, or a configuration object:
 | `migrationsTable`  | `string` | `'__drizzle_migrations'` | Table name for tracking applied migrations |
 | `migrationsSchema` | `string` | `'drizzle'`              | Schema for the migrations table            |
 
+`DuckDbMigrationConfig` is exported from `@duckdbfan/drizzle-duckdb`. `migrationsTable` and `migrationsSchema` cannot contain a double quote (`"`). `migrate()` throws before it creates anything when they do.
+
 ## Basic Usage
 
 ```typescript
@@ -144,6 +146,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "__drizzle_migrations_created_at_unique"
 ```
 
 All pending migrations, and the rows that record them, run in one transaction. A migration is pending when its journal `when` timestamp is later than the newest `created_at` already recorded.
+
+Concurrent `migrate()` calls on the same database in one process run one after another. Calls from separate connections retry on DuckDB write-write conflicts and skip migrations the other call already applied. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
+
+`migrate()` does not support DuckLake as the default catalog, because the tracking table needs a sequence, a primary key and an index. See [DuckLake]({{ '/features/migrations' | relative_url }}#ducklake) for the options.
 
 ## Error Handling
 
