@@ -29,7 +29,9 @@ function mapEntries(
 ): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(obj)
-      .filter(([key]) => key !== 'enableRLS')
+      // Tables carry helper methods such as enableRLS; only skip functions so
+      // a column that shares one of those names is still selected.
+      .filter(([, value]) => typeof value !== 'function')
       .map(([key, value]) => {
         const qualified = prefix ? `${prefix}.${key}` : key;
 

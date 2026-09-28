@@ -142,42 +142,99 @@ function trackJoinedObjectNullability(
   }
 }
 
-export function normalizeInet(value: unknown): unknown {
-  if (
-    value &&
-    typeof value === 'object' &&
-    'address' in value &&
-    typeof (value as { address: unknown }).address !== 'undefined'
-  ) {
-    const { address, mask } = value as {
-      address: bigint | number;
-      mask?: number;
-    };
+type InetValue = {
+  ip_type: 1 | 2;
+  address: bigint | number;
+  mask: number;
+};
 
-    if (typeof address === 'bigint' || typeof address === 'number') {
-      const inet = typeof address === 'number' ? BigInt(address) : address;
-      const maxIpv4 = (1n << 32n) - 1n;
-      if (inet >= 0 && inet <= maxIpv4) {
-        const num = Number(inet);
-        const octets = [
-          (num >>> 24) & 255,
-          (num >>> 16) & 255,
-          (num >>> 8) & 255,
-          num & 255,
-        ];
-        const suffix =
-          typeof mask === 'number' && mask !== 32 ? `/${mask}` : '';
-        return `${octets.join('.')}${suffix}`;
-      }
-    }
+/**
+ * Match the plain object DuckDB returns for INET values, so structs that
+ * happen to have an `address` field are left alone.
+ */
+function isInetValue(value: unknown): value is InetValue {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const inet = value as Record<string, unknown>;
+  return (
+    Object.keys(inet).length === 3 &&
+    (inet.ip_type === 1 || inet.ip_type === 2) &&
+    (typeof inet.address === 'bigint' || Number.isSafeInteger(inet.address)) &&
+    typeof inet.mask === 'number'
+  );
+}
 
-    const fallback = (value as { toString?: () => string }).toString?.();
-    if (fallback && fallback !== '[object Object]') {
-      return fallback;
+function formatIpv4(address: bigint): string {
+  return [24n, 16n, 8n, 0n]
+    .map((shift) => ((address >> shift) & 255n).toString())
+    .join('.');
+}
+
+/** Format IPv6 the way DuckDB casts INET to VARCHAR. */
+function formatIpv6(address: bigint): string {
+  const groups = Array.from({ length: 8 }, (_, index) =>
+    Number((address >> BigInt(112 - index * 16)) & 0xffffn)
+  );
+  const leadingZeros = (count: number) =>
+    groups.slice(0, count).every((group) => group === 0);
+
+  // IPv4 mapped (::ffff:a.b.c.d) and compatible (::a.b.c.d) addresses keep
+  // their last 32 bits in dotted form.
+  const dotted =
+    (leadingZeros(5) && groups[5] === 0xffff) ||
+    (leadingZeros(6) && groups[6] !== 0);
+  const hexGroups = dotted ? groups.slice(0, 6) : groups;
+
+  let runStart = -1;
+  let runLength = 0;
+  for (let index = 0; index < hexGroups.length; ) {
+    if (hexGroups[index] !== 0) {
+      index += 1;
+      continue;
     }
+    let end = index;
+    while (end < hexGroups.length && hexGroups[end] === 0) end += 1;
+    if (end - index > runLength) {
+      runStart = index;
+      runLength = end - index;
+    }
+    index = end;
   }
 
-  return value;
+  const hex = hexGroups.map((group) => group.toString(16));
+  let text =
+    runLength >= 2
+      ? `${hex.slice(0, runStart).join(':')}::${hex.slice(runStart + runLength).join(':')}`
+      : hex.join(':');
+
+  if (dotted) {
+    text += `${text.endsWith(':') ? '' : ':'}${formatIpv4(address & 0xffffffffn)}`;
+  }
+  return text;
+}
+
+export function normalizeInet(value: unknown): unknown {
+  if (!isInetValue(value)) {
+    return value;
+  }
+
+  const address = BigInt(value.address);
+  if (value.ip_type === 1) {
+    if (address < 0n || address > 0xffffffffn) {
+      return value;
+    }
+    const suffix = value.mask !== 32 ? `/${value.mask}` : '';
+    return `${formatIpv4(address)}${suffix}`;
+  }
+
+  // DuckDB stores IPv6 as a signed HUGEINT offset by 2^127.
+  const unsigned = address + (1n << 127n);
+  if (unsigned < 0n || unsigned >= 1n << 128n) {
+    return value;
+  }
+  const suffix = value.mask !== 128 ? `/${value.mask}` : '';
+  return `${formatIpv6(unsigned)}${suffix}`;
 }
 
 export function normalizeTimestampString(

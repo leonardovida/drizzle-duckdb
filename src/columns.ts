@@ -17,7 +17,11 @@ import {
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
-import { timeFromMicros } from './time.ts';
+import {
+  parseTimestampString,
+  timeFromMicros,
+  timestampStringToDateInput,
+} from './time.ts';
 
 export { coerceArrayString } from './array-literals.ts';
 
@@ -71,6 +75,17 @@ type ArrayColType = `${AnyColType}[${number}]`;
 type StructColType = `STRUCT (${string})`;
 
 type Primitive = AnyColType | ListColType | ArrayColType | StructColType;
+
+/**
+ * A DuckDB type name. Known names autocomplete, and any other DuckDB type
+ * string (UUID, DECIMAL(10, 2), MAP(VARCHAR, INTEGER), ...) is accepted too.
+ */
+type DuckDbTypeName<TKnown extends string> = TKnown | (string & {});
+
+interface MapOptions {
+  /** DuckDB key type for the MAP column. Defaults to STRING. */
+  keyType?: DuckDbTypeName<AnyColType>;
+}
 
 type ArrayDriverValue =
   | unknown[]
@@ -147,13 +162,22 @@ export function formatLiteral(value: unknown, typeHint?: string): string {
     return 'NULL';
   }
 
-  const upperType = typeHint?.toUpperCase() ?? '';
   if (value instanceof Date) {
     return `'${value.toISOString()}'`;
   }
 
-  if (typeof value === 'number' || typeof value === 'bigint') {
+  if (typeof value === 'number') {
+    // NaN and Infinity are not SQL number tokens.
+    return Number.isFinite(value) ? value.toString() : `'${value}'::DOUBLE`;
+  }
+
+  if (typeof value === 'bigint') {
     return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    const elementType = arrayElementType(typeHint);
+    return `[${value.map((item) => formatLiteral(item, elementType)).join(', ')}]`;
   }
 
   if (typeof value === 'boolean') {
@@ -165,23 +189,13 @@ export function formatLiteral(value: unknown, typeHint?: string): string {
       ? value
       : (JSON.stringify(value) ?? String(value));
 
-  const escaped = str.replace(/'/g, "''");
-  // Simple quoting based on hint.
-  if (
-    upperType.includes('CHAR') ||
-    upperType.includes('TEXT') ||
-    upperType.includes('STRING') ||
-    upperType.includes('VARCHAR')
-  ) {
-    return `'${escaped}'`;
-  }
-
-  return `'${escaped}'`;
+  return `'${str.replace(/'/g, "''")}'`;
 }
 
 export function buildListLiteral(values: unknown[], elementType?: string): SQL {
   if (values.length === 0) {
-    return sql`[]`;
+    // An untyped [] cannot be inferred inside maps or parameters.
+    return elementType ? sql.raw(`[]::${elementType}[]`) : sql`[]`;
   }
   const chunks = values.map((v) => valueToSqlLiteral(v, elementType));
   return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
@@ -211,11 +225,13 @@ function valueToSqlLiteral(value: unknown, typeHint?: string): SQL {
 
 export function buildStructLiteral(
   value: Record<string, unknown>,
-  schema?: Record<string, Primitive>
+  schema?: Record<string, DuckDbTypeName<Primitive>>
 ): SQL {
   const parts = Object.entries(value).map(([key, val]) => {
     const typeHint = schema?.[key];
-    return sql`${sql.identifier(key)} := ${valueToSqlLiteral(val, typeHint)}`;
+    // Quote locally so keys are escaped whatever the dialect's escapeName does.
+    const name = sql.raw(`"${key.replace(/"/g, '""')}"`);
+    return sql`${name} := ${valueToSqlLiteral(val, typeHint)}`;
   });
   return sql`struct_pack(${sql.join(parts, sql.raw(', '))})`;
 }
@@ -227,16 +243,20 @@ export function buildMapLiteral(
   const keys = Object.keys(value);
   const vals = Object.values(value);
   const keyList = buildListLiteral(keys, 'TEXT');
-  const valList = buildListLiteral(
-    vals,
-    valueType?.endsWith('[]') ? valueType.slice(0, -2) : valueType
-  );
+  const valList = buildListLiteral(vals, valueType);
   return sql`map(${keyList}, ${valList})`;
+}
+
+function containsEmptyList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    (value.length === 0 || value.some(containsEmptyList))
+  );
 }
 
 export const duckDbList = <TData = unknown>(
   name: string,
-  elementType: AnyColType
+  elementType: DuckDbTypeName<AnyColType>
 ) =>
   customType<{
     data: TData[];
@@ -245,7 +265,11 @@ export const duckDbList = <TData = unknown>(
     dataType() {
       return `${elementType}[]`;
     },
-    toDriver(value: TData[]): ListValueWrapper {
+    toDriver(value: TData[]): ListValueWrapper | SQL {
+      // An empty list value cannot carry its element type as a parameter.
+      if (value.length === 0) {
+        return buildListLiteral(value, elementType);
+      }
       return wrapList(value, elementType);
     },
     fromDriver(value: unknown[] | string | ListValueWrapper): TData[] {
@@ -255,7 +279,7 @@ export const duckDbList = <TData = unknown>(
 
 export const duckDbArray = <TData = unknown>(
   name: string,
-  elementType: AnyColType,
+  elementType: DuckDbTypeName<AnyColType>,
   fixedLength?: number
 ) =>
   customType<{
@@ -267,7 +291,10 @@ export const duckDbArray = <TData = unknown>(
         ? `${elementType}[${fixedLength}]`
         : `${elementType}[]`;
     },
-    toDriver(value: TData[]): ArrayValueWrapper {
+    toDriver(value: TData[]): ArrayValueWrapper | SQL {
+      if (value.length === 0) {
+        return buildListLiteral(value, elementType);
+      }
       return wrapArray(value, elementType, fixedLength);
     },
     fromDriver(value: unknown[] | string | ArrayValueWrapper): TData[] {
@@ -277,16 +304,20 @@ export const duckDbArray = <TData = unknown>(
 
 export const duckDbMap = <TData extends Record<string, any>>(
   name: string,
-  valueType: AnyColType | ListColType | ArrayColType
+  valueType: DuckDbTypeName<AnyColType | ListColType | ArrayColType>,
+  options: MapOptions = {}
 ) =>
   customType<{ data: TData; driverData: MapValueWrapper | TData }>({
     dataType() {
-      return `MAP (STRING, ${valueType})`;
+      return `MAP (${options.keyType ?? 'STRING'}, ${valueType})`;
     },
     toDriver(value: TData) {
-      // Use SQL literals for empty maps due to DuckDB type inference issues
-      // with mapValue() when there are no entries to infer types from
-      if (Object.keys(value).length === 0) {
+      // Use SQL literals for empty maps and empty list values due to DuckDB
+      // type inference issues with mapValue() and listValue() without items
+      if (
+        Object.keys(value).length === 0 ||
+        Object.values(value).some(containsEmptyList)
+      ) {
         return buildMapLiteral(value, valueType);
       }
       return wrapMap(value, valueType);
@@ -298,7 +329,7 @@ export const duckDbMap = <TData extends Record<string, any>>(
 
 export const duckDbStruct = <TData extends Record<string, any>>(
   name: string,
-  schema: Record<string, Primitive>
+  schema: Record<string, DuckDbTypeName<Primitive>>
 ) =>
   customType<{ data: TData; driverData: TData }>({
     dataType() {
@@ -449,17 +480,24 @@ function resolveTimeType(options: TimeOptions): DuckDbTimeType {
   return options.withTimezone ? 'TIMETZ' : 'TIME';
 }
 
-function normalizeTimestampStringForDate(stringValue: string): string {
-  const trimmed = stringValue.trim();
-  const normalized = trimmed.replace(' ', 'T');
-
-  if (normalized.endsWith('Z')) {
-    return normalized;
+/**
+ * Render a timestamp for inline SQL. ISO-like strings are rebuilt from their
+ * parsed parts, anything else is passed to DuckDB as an escaped string.
+ */
+function timestampLiteral(value: Date | string): string {
+  if (value instanceof Date) {
+    return value.toISOString().replace('T', ' ').replace('Z', '+00');
   }
 
-  return normalized
-    .replace(/([+-]\d{2})$/, '$1:00')
-    .replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  const parts = parseTimestampString(value);
+  if (!parts) {
+    return value.replace(/'/g, "''");
+  }
+
+  const time = parts.time ? ` ${parts.time}` : '';
+  const fraction = parts.fraction ? `.${parts.fraction}` : '';
+  const offset = parts.offset === 'Z' ? '+00' : (parts.offset ?? '');
+  return `${parts.date}${time}${fraction}${offset}`;
 }
 
 function shouldBindTimestamp(options: TimestampOptions): boolean {
@@ -515,9 +553,7 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
         return wrapTimestamp(value, withTimezone, options.precision);
       }
 
-      const iso = value instanceof Date ? value.toISOString() : value;
-      const normalized = iso.replace('T', ' ').replace('Z', '+00');
-      return sql.raw(`${duckDbType} '${normalized}'`);
+      return sql.raw(`${duckDbType} '${timestampLiteral(value)}'`);
     },
     fromDriver(value: Date | string | SQL | TimestampValueWrapper) {
       if (
@@ -543,12 +579,7 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
         return value;
       }
       const stringValue = typeof value === 'string' ? value : value.toString();
-      const hasOffset =
-        stringValue.endsWith('Z') || /[+-]\d{2}(?::?\d{2})?$/.test(stringValue);
-      const normalized = hasOffset
-        ? normalizeTimestampStringForDate(stringValue)
-        : `${stringValue.replace(' ', 'T')}Z`;
-      return new Date(normalized);
+      return new Date(timestampStringToDateInput(stringValue));
     },
   })(name);
 
