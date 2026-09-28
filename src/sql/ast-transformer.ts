@@ -235,12 +235,14 @@ export function transformSQL(query: string): TransformResult {
         transformed = transformArrayBounds(ast) || transformed;
       }
 
-      if (needsJoinTransform) {
-        transformed = qualifyJoinColumns(ast) || transformed;
-      }
-
+      // Before join qualification, so `ON e.n = gs` is already gs.generate_series
+      // and is not qualified as a column of another source.
       if (needsGenerateSeriesTransform) {
         transformed = rewriteGenerateSeriesAliases(ast) || transformed;
+      }
+
+      if (needsJoinTransform) {
+        transformed = qualifyJoinColumns(ast) || transformed;
       }
 
       if (needsUnionTransform) {

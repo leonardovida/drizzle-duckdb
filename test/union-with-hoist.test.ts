@@ -3,6 +3,10 @@ import { desc, sql } from 'drizzle-orm';
 import { integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../src/index.ts';
+import {
+  clearTransformCache,
+  transformSQL,
+} from '../src/sql/ast-transformer.ts';
 
 let db: DuckDBDatabase;
 let instance: DuckDBInstance;
@@ -105,5 +109,22 @@ describe('union with per arm WITH clauses', () => {
       .unionAll(db.with(shadow).select().from(shadow));
 
     expect(result.map((r) => r.id).sort()).toEqual([1, 2, 99]);
+  });
+
+  test('keeps RECURSIVE when a later arm has a recursive CTE', async () => {
+    clearTransformCache();
+    const query = `(with a as (select 1 as n) select n from a) union all (with recursive r as (select 1 as n union all select n + 1 from r where n < 3) select n from r)`;
+    const rewritten = transformSQL(query);
+    expect(rewritten.transformed).toBe(true);
+    expect(rewritten.sql).toMatch(/^WITH RECURSIVE /);
+
+    const rows = await db.execute<{ n: number }>(sql.raw(rewritten.sql));
+    expect(rows.map((r) => r.n).sort()).toEqual([1, 1, 2, 3]);
+  });
+
+  test('skips the hoist when RECURSIVE would make a CTE read itself', () => {
+    clearTransformCache();
+    const query = `(with a as (select id from a) select id from a) union all (with recursive r as (select 1 as id union all select id + 1 from r where id < 3) select id from r)`;
+    expect(transformSQL(query)).toEqual({ sql: query, transformed: false });
   });
 });

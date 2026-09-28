@@ -148,3 +148,52 @@ test('Postgres array bounds functions are rewritten for first dimension', async 
     { id: 5, lower_bound: null, upper_bound: null },
   ]);
 });
+
+test('array bounds are rewritten in casts, ORDER BY, GROUP BY and UPDATE', async () => {
+  await ctx.db.execute(sql`
+    insert into ${items} (id, tags, numbers)
+    values (4, [], []), (5, NULL, NULL)
+  `);
+
+  const casts = await ctx.db.execute(sql`
+    select
+      id,
+      array_upper(tags, 1)::int as upper_bound,
+      cast(array_lower(tags, 1) as bigint) as lower_bound
+    from ${items}
+    where id in (1, 4)
+    order by id
+  `);
+  expect(casts).toEqual([
+    { id: 1, upper_bound: 2, lower_bound: 1n },
+    { id: 4, upper_bound: null, lower_bound: null },
+  ]);
+
+  const ordered = await ctx.db.execute(sql`
+    select id from ${items}
+    where id in (1, 2, 4)
+    order by array_upper(tags, 1) desc nulls last, id
+  `);
+  expect(ordered.map((row) => row.id)).toEqual([1, 2, 4]);
+
+  const grouped = await ctx.db.execute(sql`
+    select array_upper(tags, 1) as upper_bound, count(*) as n
+    from ${items}
+    group by array_upper(tags, 1)
+    order by 1 nulls last
+  `);
+  expect(grouped).toEqual([
+    { upper_bound: 1n, n: 1n },
+    { upper_bound: 2n, n: 2n },
+    { upper_bound: null, n: 2n },
+  ]);
+
+  await ctx.db.execute(sql`
+    update ${items} set numbers = array[array_upper(tags, 1)::int]
+    where array_lower(tags, 1) = 1 and id = 1
+  `);
+  const updated = await ctx.db.execute(
+    sql`select numbers from ${items} where id = 1`
+  );
+  expect(updated).toEqual([{ numbers: [2] }]);
+});

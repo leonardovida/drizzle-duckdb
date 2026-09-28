@@ -1,8 +1,10 @@
 import {
   Column,
   SQL,
+  StringChunk,
   getTableName,
   is,
+  sql,
   type AnyColumn,
   type DriverValueDecoder,
   type SelectedFieldsOrdered,
@@ -67,7 +69,31 @@ function findColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
     | undefined;
 }
 
-function resolveFieldDecoder(
+// Drizzle's default decoder, shared by every SQL that has no mapWith().
+const defaultSqlDecoder = (sql.empty() as SQLInternal).decoder;
+
+function isEmptyStringChunk(chunk: unknown): boolean {
+  return (
+    is(chunk, StringChunk) && chunk.value.every((part) => part.trim() === '')
+  );
+}
+
+/**
+ * Return the column when the SQL is only `sql\`${column}\``. Expressions that
+ * merely mention a column, such as `extract(hour from ${column})`, return
+ * undefined.
+ */
+function singleColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
+  if (!sqlValue) return undefined;
+  const chunks = sqlValue.queryChunks.filter(
+    (chunk: unknown) => !isEmptyStringChunk(chunk)
+  );
+  return chunks.length === 1 && is(chunks[0], Column)
+    ? (chunks[0] as AnyColumn)
+    : undefined;
+}
+
+export function resolveFieldDecoder(
   field: unknown
 ): DriverValueDecoder<unknown, unknown> {
   if (is(field, Column)) {
@@ -79,10 +105,14 @@ function resolveFieldDecoder(
   }
 
   const fieldSql = getFieldSql(field as SQLCarrier);
-  const column = findColumnInSql(fieldSql);
 
-  if (is(column, PgCustomColumn)) {
-    return column;
+  // `sql\`${customColumn}\`.as('x')` without mapWith() still decodes with the
+  // column. Any other expression uses its own decoder, as in stock Drizzle.
+  if (fieldSql?.decoder === defaultSqlDecoder) {
+    const column = singleColumnInSql(fieldSql);
+    if (is(column, PgCustomColumn)) {
+      return column;
+    }
   }
 
   return fieldSql?.decoder ?? passthroughDecoder;

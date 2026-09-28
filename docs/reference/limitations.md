@@ -280,24 +280,24 @@ const db = drizzle(connection, {
 
 ### JOIN Column Qualification
 
-When joining tables or CTEs using `eq()` with the same column name on both sides, drizzle-orm generates unqualified column references like `ON "country" = "country"`. DuckDB rejects this as ambiguous.
+Stock drizzle-orm references an aliased field of a subquery or CTE by its bare alias, for example `ON "users"."id" = "id"`. DuckDB rejects that as ambiguous when another joined source has an `id` column.
 
-The driver automatically qualifies these references:
+Subqueries (`.as()`), CTEs (`$with`) and views built with this driver expose their fields qualified by the subquery alias, so the ON clause becomes `"users"."id" = "sq"."id"`.
+
+For hand-written SQL, the driver also qualifies bare column references in JOIN ON clauses:
 
 ```sql
--- Before: ON "country" = "country"
--- After:  ON "cte1"."country" = "cte2"."country"
+-- Before: ... FROM "users" LEFT JOIN "cte" ON "users"."id" = "id"
+-- After:  ... FROM "users" LEFT JOIN "cte" ON "users"."id" = "cte"."id"
 ```
 
-This works for:
+- The bare side of `qualified = bare` goes to the newly joined source, unless the qualified side already is that source. Then it goes to the earlier source when there is exactly one.
+- `"id" = "id"` is qualified as earlier source and joined source, again only when there is exactly one earlier source.
+- Other bare references to a same-name column in SELECT, WHERE, GROUP BY, HAVING and ORDER BY get the qualifier chosen in the ON clause. A name that got different qualifiers stays bare.
+- USING columns are never qualified.
+- Table aliases are used instead of the original table name, without the schema.
 
-- Simple table joins
-- CTE joins (including CTEs that reference other CTEs)
-- Subqueries in FROM clauses with aliases
-- Multiple sequential joins
-- Table aliases (uses the alias, not the original table name)
-
-Qualification only occurs when both sides are columns with the **same name** and neither is already qualified.
+When the source cannot be decided, the SQL is left unchanged.
 
 ## Schema Features
 
