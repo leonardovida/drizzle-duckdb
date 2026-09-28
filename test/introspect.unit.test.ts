@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   parseStructFields,
   parseMapValue,
+  parseMapKey,
   splitTopLevel,
   buildDefault,
   toIdentifier,
@@ -157,6 +158,24 @@ describe('parseMapValue', () => {
   });
 });
 
+describe('parseMapKey', () => {
+  test('omits string key types', () => {
+    expect(parseMapKey('MAP(VARCHAR, INTEGER)')).toBeUndefined();
+    expect(parseMapKey('MAP(character varying, INTEGER)')).toBeUndefined();
+  });
+
+  test('returns non-string key types', () => {
+    expect(parseMapKey('MAP(INTEGER, VARCHAR)')).toBe('INTEGER');
+    expect(parseMapKey('MAP(DECIMAL(10,2), MAP(TEXT, INT))')).toBe(
+      'DECIMAL(10,2)'
+    );
+  });
+
+  test('returns undefined for malformed MAP', () => {
+    expect(parseMapKey('MAP(INTEGER)')).toBeUndefined();
+  });
+});
+
 describe('splitTopLevel', () => {
   test('splits simple comma-separated values', () => {
     const result = splitTopLevel('a, b, c', ',');
@@ -288,6 +307,30 @@ describe('buildDefault', () => {
   test('handles whitespace around value', () => {
     const result = buildDefault('  42  ');
     expect(result).toBe('.default(42)');
+  });
+
+  test('handles DuckDB boolean casts', () => {
+    expect(buildDefault("CAST('t' AS BOOLEAN)")).toBe('.default(true)');
+    expect(buildDefault("CAST('f' AS BOOLEAN)")).toBe('.default(false)');
+  });
+
+  test('escapes template syntax in sql defaults', () => {
+    expect(buildDefault('nextval(\'"s${x}"\')')).toBe(
+      '.default(sql`nextval(\'"s\\${x}"\')`)'
+    );
+    expect(buildDefault('nextval(\'"a`b\\c"\')')).toBe(
+      '.default(sql`nextval(\'"a\\`b\\\\c"\')`)'
+    );
+  });
+
+  test('does not treat concatenated literals as one string', () => {
+    expect(buildDefault("'a' || 'b'")).toBe('');
+  });
+
+  test('keeps integers beyond the safe range as strings', () => {
+    expect(buildDefault('9007199254740993')).toBe(
+      '.default("9007199254740993")'
+    );
   });
 });
 

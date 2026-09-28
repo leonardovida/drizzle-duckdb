@@ -5,150 +5,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { closeClientConnection, closeDuckDbInstance } from '../client.ts';
 import { drizzle } from '../index.ts';
-import { configureDuckLake, type DuckLakeConfig } from '../ducklake.ts';
+import { configureDuckLake } from '../ducklake.ts';
 import { introspect } from '../introspect.ts';
-
-interface CliOptions {
-  url?: string;
-  database?: string;
-  allDatabases: boolean;
-  schemas?: string[];
-  outFile: string;
-  outMeta?: string;
-  includeViews: boolean;
-  useCustomTimeTypes: boolean;
-  importBasePath?: string;
-  ducklake?: DuckLakeConfig;
-}
-
-function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = {
-    outFile: path.resolve(process.cwd(), 'drizzle/schema.ts'),
-    outMeta: undefined,
-    allDatabases: false,
-    includeViews: false,
-    useCustomTimeTypes: true,
-  };
-
-  const ensureDuckLakeConfig = (): DuckLakeConfig => {
-    if (!options.ducklake) {
-      options.ducklake = { catalog: '' };
-    }
-    return options.ducklake;
-  };
-
-  const ensureDuckLakeAttachOptions = (): NonNullable<
-    DuckLakeConfig['attachOptions']
-  > => {
-    const config = ensureDuckLakeConfig();
-    if (!config.attachOptions) {
-      config.attachOptions = {};
-    }
-    return config.attachOptions;
-  };
-
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!;
-    switch (arg) {
-      case '--url':
-        options.url = argv[++i];
-        break;
-      case '--database':
-      case '--db':
-        options.database = argv[++i];
-        break;
-      case '--all-databases':
-        options.allDatabases = true;
-        break;
-      case '--schema':
-      case '--schemas':
-        options.schemas = argv[++i]
-          ?.split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        break;
-      case '--out':
-      case '--outFile':
-        options.outFile = path.resolve(
-          process.cwd(),
-          argv[++i] ?? 'drizzle/schema.ts'
-        );
-        break;
-      case '--out-json':
-      case '--outJson':
-      case '--json':
-        options.outMeta = path.resolve(
-          process.cwd(),
-          argv[++i] ?? 'drizzle/schema.meta.json'
-        );
-        break;
-      case '--include-views':
-      case '--includeViews':
-        options.includeViews = true;
-        break;
-      case '--use-pg-time':
-        options.useCustomTimeTypes = false;
-        break;
-      case '--import-base':
-        options.importBasePath = argv[++i];
-        break;
-      case '--ducklake-catalog':
-        ensureDuckLakeConfig().catalog = argv[++i] ?? '';
-        break;
-      case '--ducklake-alias':
-        ensureDuckLakeConfig().alias = argv[++i];
-        break;
-      case '--ducklake-no-use':
-        ensureDuckLakeConfig().use = false;
-        break;
-      case '--ducklake-install':
-        ensureDuckLakeConfig().install = true;
-        break;
-      case '--ducklake-load':
-        ensureDuckLakeConfig().load = true;
-        break;
-      case '--ducklake-data-path':
-        ensureDuckLakeAttachOptions().dataPath = argv[++i];
-        break;
-      case '--ducklake-read-only':
-        ensureDuckLakeAttachOptions().readOnly = true;
-        break;
-      case '--ducklake-create-if-not-exists':
-        ensureDuckLakeAttachOptions().createIfNotExists = true;
-        break;
-      case '--ducklake-override-data-path':
-        ensureDuckLakeAttachOptions().overrideDataPath = true;
-        break;
-      case '--ducklake-data-inlining-row-limit': {
-        const value = argv[++i];
-        const parsed = value ? Number(value) : NaN;
-        if (Number.isFinite(parsed)) {
-          ensureDuckLakeAttachOptions().dataInliningRowLimit = parsed;
-        }
-        break;
-      }
-      case '--ducklake-encrypted':
-        ensureDuckLakeAttachOptions().encrypted = true;
-        break;
-      case '--ducklake-metadata-catalog':
-        ensureDuckLakeAttachOptions().metadataCatalog = argv[++i];
-        break;
-      case '--ducklake-meta-parameter-name':
-        ensureDuckLakeAttachOptions().metaParameterName = argv[++i];
-        break;
-      case '--help':
-      case '-h':
-        printHelp();
-        process.exit(0);
-      default:
-        if (arg.startsWith('-')) {
-          console.warn(`Unknown option ${arg}`);
-        }
-    }
-  }
-
-  return options;
-}
+import { CliUsageError, parseArgs } from './duckdb-introspect-args.ts';
 
 function printHelp(): void {
   console.log(`duckdb-introspect
@@ -162,10 +21,10 @@ Options:
   --all-databases  Introspect all attached databases (not just current)
   --schema         Comma separated schema list (defaults to all non-system schemas)
   --out            Output file (default: ./drizzle/schema.ts)
-  --json           Optional JSON metadata output (default: ./drizzle/schema.meta.json)
+  --json           Optional JSON metadata output file (e.g. ./drizzle/schema.meta.json)
   --include-views  Include views in the generated schema
   --use-pg-time    Use pg-core timestamp/date/time instead of DuckDB custom helpers
-  --import-base    Override import path for duckdb helpers (default: package name)
+  --import-base    Override import path for duckdb helpers (default: @duckdbfan/drizzle-duckdb/helpers)
   --ducklake-catalog           DuckLake catalog value after the ducklake: prefix
   --ducklake-alias             Alias for attached DuckLake database
   --ducklake-no-use            Do not run USE after attach
@@ -206,9 +65,13 @@ Examples:
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
+    return;
+  }
   if (!options.url) {
     printHelp();
-    throw new Error('Missing required --url');
+    throw new CliUsageError('Missing required --url');
   }
 
   const instanceOptions =
@@ -221,10 +84,7 @@ async function main() {
   const db = drizzle(connection);
 
   try {
-    if (options.ducklake && !options.ducklake.catalog) {
-      throw new Error('DuckLake requires --ducklake-catalog');
-    }
-    if (options.ducklake?.catalog) {
+    if (options.ducklake) {
       await configureDuckLake(connection, options.ducklake);
     }
 
@@ -264,5 +124,9 @@ main()
   })
   .catch((err) => {
     console.error(err instanceof Error ? err.message : err);
+    if (err instanceof CliUsageError) {
+      console.error('Run duckdb-introspect --help to see available options.');
+      process.exit(2);
+    }
     process.exit(1);
   });
