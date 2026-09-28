@@ -7,7 +7,7 @@ nav_order: 3
 
 # DuckLake Local Catalog Example
 
-This example attaches a local DuckLake catalog backed by a DuckDB file and writes a small table.
+This example attaches a local DuckLake catalog backed by a DuckDB file and writes a small table. The catalog file and data directory go into a fresh directory under the OS temp directory, which the script removes when it finishes.
 
 **Source**: [example/ducklake-local.ts](https://github.com/leonardovida/drizzle-duckdb/blob/main/example/ducklake-local.ts)
 
@@ -26,13 +26,14 @@ bun run example/ducklake-local.ts
 ## Key Snippet
 
 ```typescript
+const directory = await mkdtemp(join(tmpdir(), 'drizzle-ducklake-'));
 const db = await drizzle(':memory:', {
   ducklake: {
-    catalog: './ducklake.duckdb',
+    catalog: join(directory, 'ducklake.duckdb'),
     install: true,
     load: true,
     attachOptions: {
-      dataPath: './ducklake-data',
+      dataPath: join(directory, 'ducklake-data'),
       createIfNotExists: true,
     },
   },

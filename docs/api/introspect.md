@@ -56,12 +56,14 @@ interface IntrospectResult {
     // Metadata about introspected tables
     metaJson: IntrospectedTable[];
 
-    // Relations file (if applicable)
+    /** @deprecated Never populated. Will be removed in the next major version. */
     relationsTs?: string;
   };
 }
 
 interface IntrospectedTable {
+  // Database (catalog) that owns the table
+  database?: string;
   schema: string;
   name: string;
   kind: 'table' | 'view';
@@ -140,55 +142,55 @@ CREATE TABLE main.users (
 );
 ```
 
-The generated schema would be:
+The generated schema is (verbatim `duckdb-introspect` output, before any formatter runs):
 
+<!-- prettier-ignore -->
 ```typescript
-import { pgSchema, integer, varchar, unique } from 'drizzle-orm/pg-core';
-import {
-  duckDbList,
-  duckDbJson,
-  duckDbTimestamp,
-} from '@duckdbfan/drizzle-duckdb/helpers';
+import { integer, pgSchema, primaryKey, unique, varchar } from 'drizzle-orm/pg-core';
+import { duckDbJson, duckDbList, duckDbTimestamp } from '@duckdbfan/drizzle-duckdb/helpers';
 
-export const mainSchema = pgSchema('main');
+export const mainSchema = pgSchema("main");
 
-export const users = mainSchema.table(
-  'users',
-  {
-    id: integer('id').primaryKey().notNull(),
-    email: varchar('email').notNull(),
-    name: varchar('name'),
-    tags: duckDbList('tags', 'VARCHAR'),
-    metadata: duckDbJson('metadata'),
-    createdAt: duckDbTimestamp('created_at', { withTimezone: true }),
-  },
-  (t) => ({
-    emailUnique: t.email.unique('users_email_key'),
-  })
-);
+export const users = mainSchema.table("users", {
+  id: integer("id").notNull(),
+  email: varchar("email").notNull(),
+  name: varchar("name"),
+  tags: duckDbList("tags", "VARCHAR"),
+  metadata: duckDbJson("metadata"),
+  createdAt: duckDbTimestamp("created_at", { withTimezone: true }),
+}, (t) => ({
+  usersIdPkey: primaryKey({ columns: [t.id], name: "users_id_pkey" }),
+  usersEmailKey: unique("users_email_key").on(t.email),
+}));
 ```
 
 ## Type Mapping
 
-| DuckDB Type             | Generated Drizzle Type                    |
-| ----------------------- | ----------------------------------------- |
-| `INTEGER`, `INT`        | `integer()`                               |
-| `BIGINT`                | `bigint()`                                |
-| `VARCHAR`, `TEXT`       | `varchar()`, `text()`                     |
-| `BOOLEAN`               | `boolean()`                               |
-| `DOUBLE`, `FLOAT`       | `doublePrecision()`, `real()`             |
-| `TIMESTAMP`             | `duckDbTimestamp()`                       |
-| `TIMESTAMPTZ`           | `duckDbTimestamp({ withTimezone: true })` |
-| `DATE`                  | `duckDbDate()`                            |
-| `TIME`                  | `duckDbTime()`                            |
-| `JSON`                  | `duckDbJson()`                            |
-| `VARCHAR[]`             | `duckDbList('VARCHAR')`                   |
-| `INTEGER[3]`            | `duckDbArray('INTEGER', 3)`               |
-| `STRUCT(...)`           | `duckDbStruct({...})`                     |
-| `MAP(VARCHAR, INTEGER)` | `duckDbMap('INTEGER')`                    |
-| `BLOB`                  | `duckDbBlob()`                            |
-| `INET`                  | `duckDbInet()`                            |
-| `INTERVAL`              | `duckDbInterval()`                        |
+| DuckDB Type                      | Generated Drizzle Type                             |
+| -------------------------------- | -------------------------------------------------- |
+| `TINYINT`, `SMALLINT`, `INTEGER` | `integer()`                                        |
+| `BIGINT`, `UBIGINT`              | `bigint({ mode: 'number' })`                       |
+| `VARCHAR` (also `TEXT`)          | `varchar()`                                        |
+| `BOOLEAN`                        | `boolean()`                                        |
+| `DOUBLE`                         | `doublePrecision()`                                |
+| `FLOAT`, `REAL`                  | `real()`                                           |
+| `DECIMAL(p,s)`                   | `numeric({ precision: p, scale: s })`              |
+| `UUID`                           | `uuid()`                                           |
+| `TIMESTAMP`                      | `duckDbTimestamp()`                                |
+| `TIMESTAMPTZ`                    | `duckDbTimestamp({ withTimezone: true })`          |
+| `DATE`                           | `duckDbDate()`                                     |
+| `TIME`                           | `duckDbTime()`                                     |
+| `JSON`                           | `duckDbJson()`                                     |
+| `VARCHAR[]`                      | `duckDbList('VARCHAR')`                            |
+| `INTEGER[3]`                     | `duckDbArray('INTEGER', 3)`                        |
+| `STRUCT(...)`                    | `duckDbStruct({...})`                              |
+| `MAP(VARCHAR, INTEGER)`          | `duckDbMap('INTEGER')`                             |
+| `BLOB`                           | `duckDbBlob()`                                     |
+| `INET`                           | `duckDbInet()`                                     |
+| `INTERVAL`                       | `duckDbInterval()`                                 |
+| Anything else                    | `text()` with an `unsupported DuckDB type` comment |
+
+With `useCustomTimeTypes: false`, timestamp, date and time columns use the pg-core builders, and timestamp columns with a `current_timestamp` default get `.defaultNow()`. With the DuckDB helpers they get ``.default(sql`current_timestamp`)``. Defaults the introspector does not recognize become a `/* default: ... */` comment. See the [Introspection guide]({{ '/features/introspection' | relative_url }}#type-mappings) for the full mapping.
 
 ## CLI Usage
 
@@ -198,23 +200,15 @@ A CLI tool is also available for quick introspection:
 # Introspect and output to file
 bunx duckdb-introspect --url ./my-database.duckdb --out ./src/schema.ts
 
-# With options
+# With options (--schema takes a comma-separated list)
 bunx duckdb-introspect \
   --url ./my-database.duckdb \
-  --schema main \
-  --schema analytics \
+  --schema main,analytics \
   --include-views \
   --out ./src/schema.ts
 ```
 
-### CLI Options
-
-| Option            | Description                                     |
-| ----------------- | ----------------------------------------------- |
-| `--url`           | DuckDB connection URL (file path or `:memory:`) |
-| `--schema`        | Schema to introspect (can be repeated)          |
-| `--include-views` | Include views in output                         |
-| `--out`           | Output file path                                |
+See [CLI options]({{ '/features/introspection' | relative_url }}#options) for every flag and the exit codes.
 
 ## Complete Example
 
@@ -262,6 +256,6 @@ generateSchema().catch(console.error);
 
 ## See Also
 
-- [Introspection Guide]({{ '/features/introspection' | relative_url }}) - Detailed introspection workflow
-- [migrate()]({{ '/api/migrate' | relative_url }}) - Applying migrations
-- [Column Types]({{ '/api/columns' | relative_url }}) - Available column types
+- [Introspection Guide]({{ '/features/introspection' | relative_url }}): introspection workflow
+- [migrate()]({{ '/api/migrate' | relative_url }}): applying migrations
+- [Column Types]({{ '/api/columns' | relative_url }}): available column types

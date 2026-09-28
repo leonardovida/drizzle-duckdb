@@ -1,7 +1,7 @@
 /**
  * NYC Taxi Data Example - MotherDuck
  *
- * This example demonstrates drizzle-neo-duckdb with MotherDuck cloud database,
+ * This example demonstrates @duckdbfan/drizzle-duckdb with MotherDuck cloud database,
  * querying NYC taxi sample data from MotherDuck's sample_data database.
  *
  * Features demonstrated:
@@ -67,7 +67,11 @@ async function main() {
     console.log('='.repeat(60));
 
     // Create a temp view from the sample data
-    // MotherDuck provides sample_data.nyc.taxi with NYC taxi trip records
+    // MotherDuck provides sample_data.nyc.taxi with NYC taxi trip records.
+    // Temp views exist only on the connection that created them. Steps 1-5
+    // run one at a time, so they reuse the single idle pooled connection.
+    // The parallel step (6) uses several connections, so it reads the shared
+    // table directly instead of the temp view.
     console.log('\nCreating temp view from sample_data.nyc.taxi...\n');
     await db.execute(sql`
       CREATE OR REPLACE TEMP VIEW taxi_sample AS
@@ -222,20 +226,26 @@ async function main() {
     console.log(`  Max fare:        $${Number(stats.max_fare).toFixed(2)}`);
 
     // 6. Demonstrate parallel queries with connection pool
+    // Each query may run on a different pooled connection, so read the shared
+    // sample table through a LIMIT subquery instead of the per-connection
+    // temp view.
     console.log('\n6. Running parallel queries (pool advantage):');
+    const sharedSample = sql`(
+      SELECT * FROM sample_data.nyc.taxi LIMIT 100000
+    ) AS taxi_sample`;
     const parallelStart = performance.now();
     const [hourly, distance, passengers] = await Promise.all([
       db.execute(sql`
         SELECT date_part('hour', tpep_pickup_datetime) as hour, COUNT(*) as trips
-        FROM taxi_sample GROUP BY 1 ORDER BY 1 LIMIT 5
+        FROM ${sharedSample} GROUP BY 1 ORDER BY 1 LIMIT 5
       `),
       db.execute(sql`
         SELECT CASE WHEN trip_distance < 5 THEN 'short' ELSE 'long' END as type, COUNT(*) as trips
-        FROM taxi_sample GROUP BY 1
+        FROM ${sharedSample} GROUP BY 1
       `),
       db.execute(sql`
         SELECT passenger_count, AVG(total_amount) as avg_fare
-        FROM taxi_sample GROUP BY 1 ORDER BY 1 LIMIT 5
+        FROM ${sharedSample} GROUP BY 1 ORDER BY 1 LIMIT 5
       `),
     ]);
     const parallelTime = performance.now() - parallelStart;

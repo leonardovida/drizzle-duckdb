@@ -8,7 +8,7 @@ permalink: /examples/
 
 # Examples
 
-This section showcases complete, runnable examples demonstrating Drizzle DuckDB in real-world scenarios. All examples live in `/example` and run with Bun.
+This section describes runnable examples for Drizzle DuckDB. All examples live in `/example` and run with Bun.
 
 ## Available Examples
 
@@ -24,7 +24,7 @@ bun example/parquet-analytics.ts
 
 ### [Analytics Dashboard]({{ '/examples/analytics-dashboard' | relative_url }})
 
-A comprehensive example showing:
+An example showing:
 
 - Multi-table schema with foreign keys
 - DuckDB-specific types (STRUCT, LIST, MAP, JSON)
@@ -35,7 +35,7 @@ A comprehensive example showing:
 
 **Best for**: Learning DuckDB-specific features and analytical patterns.
 
-Run locally (auto-pooling in-memory):
+Run locally (single in-memory connection):
 
 ```bash
 bun example/analytics-dashboard.ts
@@ -51,10 +51,11 @@ Cloud database example featuring:
 - CTEs for multi-step transformations
 - Date/time operations
 - Percentile calculations
+- Parallel queries on a connection pool
 
 **Best for**: Getting started with MotherDuck and cloud analytics.
 
-Run with auto-pooling (default 4 connections):
+Run with a `standard` connection pool (6 connections):
 
 ```bash
 export MOTHERDUCK_TOKEN=your_token_here
@@ -118,6 +119,9 @@ All examples are located in the `/example` directory of the repository.
 # Run the analytics dashboard example
 bun run example/analytics-dashboard.ts
 
+# Run the Parquet analytics example
+bun run example/parquet-analytics.ts
+
 # Run the DuckLake local example
 bun run example/ducklake-local.ts
 ```
@@ -165,11 +169,11 @@ Use these examples as starting points for your own projects. Key patterns to fol
 
 1. **Schema Definition**: Define your tables with proper types
 2. **Connection Management**: Use singleton patterns for persistent connections
-3. **Query Patterns**: Leverage Drizzle's type-safe query builder
+3. **Query Patterns**: Use Drizzle's type-safe query builder
 4. **Error Handling**: Wrap operations in try/finally for cleanup
 
 ## See Also
 
-- [Getting Started]({{ '/getting-started/' | relative_url }}) - Basic setup guide
-- [Core Concepts]({{ '/core/queries' | relative_url }}) - Query patterns
-- [API Reference]({{ '/api/drizzle' | relative_url }}) - Complete API documentation
+- [Getting Started]({{ '/getting-started/' | relative_url }}): basic setup guide
+- [Core Concepts]({{ '/core/queries' | relative_url }}): query patterns
+- [API Reference]({{ '/api/drizzle' | relative_url }}): API documentation

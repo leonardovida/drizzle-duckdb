@@ -1,7 +1,7 @@
 /**
  * Analytics Dashboard Example
  *
- * This example demonstrates a more complex use case of drizzle-neo-duckdb
+ * This example demonstrates a more complex use case of @duckdbfan/drizzle-duckdb
  * with @duckdb/node-api, showcasing:
  *
  * - Multiple related tables with foreign key relationships
@@ -10,7 +10,6 @@
  * - Complex aggregations and window functions
  * - Loading and querying Parquet files directly
  * - Array operations with DuckDB helpers
- * - Connection pooling for production use
  *
  * Note: This example uses a single connection for simplicity.
  * For production use with concurrent queries, use connection pooling:
@@ -23,6 +22,8 @@
 
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   drizzle,
   duckDbList,
@@ -476,7 +477,8 @@ async function main() {
     // 7. Demonstrate loading data from a Parquet file (simulated)
     console.log('\n7. Creating and querying a Parquet file:');
 
-    // Create a temp table and export to parquet
+    // Export to a Parquet file in the OS temp directory, then read it back
+    const parquetPath = join(tmpdir(), 'orders_export.parquet');
     await db.execute(sql`
       COPY (
         SELECT
@@ -486,12 +488,12 @@ async function main() {
           o.ordered_at
         FROM orders o
         JOIN users u ON o.user_id = u.id
-      ) TO '/tmp/orders_export.parquet' (FORMAT PARQUET)
+      ) TO ${parquetPath} (FORMAT PARQUET)
     `);
 
     // Query the parquet file directly
     const parquetData = await db.execute(sql`
-      SELECT * FROM read_parquet('/tmp/orders_export.parquet')
+      SELECT * FROM read_parquet(${parquetPath})
       ORDER BY total_amount DESC
     `);
 

@@ -39,11 +39,11 @@ const db = await drizzle(':memory:', {
 });
 ```
 
-This creates a connection pool automatically, which is critical for MotherDuck performance (see [Connection Pooling](#connection-pooling)).
+This creates a connection pool, which matters for MotherDuck throughput (see [Connection Pooling](#connection-pooling)).
 
 ## In-Memory Database
 
-Perfect for testing and temporary data processing:
+Use an in-memory database for tests and temporary data processing:
 
 ```typescript
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
@@ -51,7 +51,7 @@ import { drizzle } from '@duckdbfan/drizzle-duckdb';
 const db = await drizzle(':memory:');
 ```
 
-Data is lost when the connection closes.
+Data is lost when the database closes.
 
 ## Local File
 
@@ -84,7 +84,7 @@ const db = await drizzle({
 });
 ```
 
-See the [MotherDuck guide](/integrations/motherduck) for the auto pooling example and `db.close()` cleanup.
+See the [MotherDuck guide]({{ '/integrations/motherduck' | relative_url }}) for the auto pooling example and `db.close()` cleanup.
 
 ## DuckLake
 
@@ -116,39 +116,7 @@ const db = await drizzle({
 });
 ```
 
-See the [DuckLake guide](/integrations/ducklake) for details.
-
-## DuckLake
-
-Attach a DuckLake catalog during connection setup:
-
-```typescript
-const db = await drizzle(':memory:', {
-  ducklake: {
-    catalog: './ducklake.duckdb',
-    attachOptions: {
-      dataPath: './ducklake-data',
-      createIfNotExists: true,
-    },
-  },
-});
-```
-
-For MotherDuck, use the DuckLake metadata catalog created by `CREATE DATABASE ... TYPE DUCKLAKE`:
-
-```typescript
-const db = await drizzle({
-  connection: {
-    path: 'md:',
-    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
-  },
-  ducklake: {
-    catalog: 'md:__ducklake_metadata_my_lake',
-  },
-});
-```
-
-See the [DuckLake guide](/integrations/ducklake) for details.
+A local catalog file uses a pool of size 1 unless you set `pool`. See the [DuckLake guide]({{ '/integrations/ducklake' | relative_url }}) for pooling and the generated `ATTACH` SQL.
 
 ## With Logging
 
@@ -233,7 +201,7 @@ const users = await withDb(async (db) => {
 
 ## Connection Pooling
 
-DuckDB/MotherDuck runs **one query per connection**. Without pooling, concurrent requests serialize and cause slow response times. The async `drizzle()` entrypoints automatically create a pool (default size: 4) when given a connection string.
+DuckDB/MotherDuck runs **one query per connection**. Without pooling, concurrent requests serialize and cause slow response times. The async `drizzle()` entrypoints create a pool (default size: 4) when given a connection string. `pool` applies only to the connection-string and `{ connection }` forms. It is ignored when you pass a connection or pool instance.
 
 ### Pool Size Configuration
 
@@ -252,7 +220,7 @@ const db = await drizzle('md:', { pool: 'giga' }); // 16 connections
 const db = await drizzle('md:', { pool: false });
 ```
 
-> The `pool` option on `drizzle()` covers size/presets. For timeouts or recycling behavior, create the pool manually (see below).
+> The `pool` option on `drizzle()` accepts a preset name or an object with `size` plus the timeout and recycling options listed under [Advanced Pool Options](#advanced-pool-options). Create the pool manually when you need a `setup` hook or want to share one pool across several `drizzle()` instances.
 
 ### Pool Presets for MotherDuck
 
@@ -284,7 +252,7 @@ const db = drizzle(pool);
 Auto-created pools support the same tuning options through `drizzle('path', { pool: { ... } })`, and `createDuckDBConnectionPool` exposes the same controls for manual pools:
 
 - `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time
-- `maxWaitingRequests` (default 100): cap queued acquires; throws when full
+- `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full
 - `maxLifetimeMs`: recycle connections after this age
 - `idleTimeoutMs`: recycle idle connections after this idle period
 
@@ -298,7 +266,7 @@ const pool = createDuckDBConnectionPool(instance, {
 });
 ```
 
-Transactions automatically pin a single pooled connection for the entire callback; other queries continue to use the pool.
+Transactions pin a single pooled connection for the entire callback. Other queries continue to use the pool.
 
 ### Multiple Connections Without Pooling
 
@@ -318,11 +286,8 @@ const db2 = drizzle({ client: conn2 });
 
 ```typescript
 const db = await drizzle(':memory:', {
-  // Enable query logging
+  // Enable query logging (or pass a custom logger such as new DefaultLogger())
   logger: true,
-
-  // Or use custom logger
-  logger: new DefaultLogger(),
 
   // Schema for relational queries
   schema: mySchema,
@@ -335,9 +300,9 @@ const db = await drizzle(':memory:', {
 });
 ```
 
-Note: Postgres array operators (`@>`, `<@`, `&&`) are automatically rewritten to DuckDB functions via AST transformation.
+Note: Postgres array operators (`@>`, `<@`, `&&`) run natively in DuckDB and are sent unchanged.
 
-See [Configuration](/reference/configuration) for all options.
+See [Configuration]({{ '/reference/configuration' | relative_url }}) for all options.
 
 ## Closing Connections
 
@@ -390,6 +355,6 @@ try {
 
 ## See Also
 
-- [drizzle()]({{ '/api/drizzle' | relative_url }}) - API reference
-- [Configuration]({{ '/reference/configuration' | relative_url }}) - All options
-- [MotherDuck]({{ '/integrations/motherduck' | relative_url }}) - Cloud connection
+- [drizzle()]({{ '/api/drizzle' | relative_url }}): API reference
+- [Configuration]({{ '/reference/configuration' | relative_url }}): all options
+- [MotherDuck]({{ '/integrations/motherduck' | relative_url }}): cloud connection

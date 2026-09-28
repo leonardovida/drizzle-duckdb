@@ -299,18 +299,20 @@ const revenueByCity = await db.execute(sql`
 Export to and query from Parquet:
 
 ```typescript
-// Export query results to Parquet
+// Export query results to Parquet in the OS temp directory
+const parquetPath = join(tmpdir(), 'orders_export.parquet');
+
 await db.execute(sql`
   COPY (
     SELECT u.name as customer_name, o.total_amount, o.status, o.ordered_at
     FROM orders o
     JOIN users u ON o.user_id = u.id
-  ) TO '/tmp/orders_export.parquet' (FORMAT PARQUET)
+  ) TO ${parquetPath} (FORMAT PARQUET)
 `);
 
 // Query Parquet file directly
 const parquetData = await db.execute(sql`
-  SELECT * FROM read_parquet('/tmp/orders_export.parquet')
+  SELECT * FROM read_parquet(${parquetPath})
   ORDER BY total_amount DESC
 `);
 ```
@@ -358,6 +360,6 @@ bun run example/analytics-dashboard.ts
 
 ## See Also
 
-- [Column Types]({{ '/api/columns' | relative_url }}) - All available column types
-- [Array Helpers]({{ '/api/array-helpers' | relative_url }}) - Array query functions
-- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}) - DuckDB-specific type guide
+- [Column Types]({{ '/api/columns' | relative_url }}): all available column types
+- [Array Helpers]({{ '/api/array-helpers' | relative_url }}): array query functions
+- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}): duckDB-specific type guide

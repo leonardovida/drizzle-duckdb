@@ -79,14 +79,14 @@ For browser use, consider:
 
 ### What Postgres features don't work?
 
-| Feature                    | Status                        | Alternative                                             |
-| -------------------------- | ----------------------------- | ------------------------------------------------------- |
-| `json()` / `jsonb()`       | Not supported                 | Use `duckDbJson()`                                      |
-| `SAVEPOINT`                | Not supported                 | Avoid nested transactions                               |
-| Prepared statement caching | Available with `prepareCache` | Cache is per connection                                 |
-| Result streaming           | Chunked reads                 | Use `executeBatches()` / `executeArrow()` or pagination |
-| Concurrent queries         | One/query/conn                | Use connection pooling for parallelism                  |
-| `SERIAL` type              | Not available                 | Use sequences with `nextval()`                          |
+| Feature                    | Status                        | Alternative                            |
+| -------------------------- | ----------------------------- | -------------------------------------- |
+| `json()` / `jsonb()`       | Not supported                 | Use `duckDbJson()`                     |
+| `SAVEPOINT`                | Not supported                 | Avoid nested transactions              |
+| Prepared statement caching | Available with `prepareCache` | Cache is per connection                |
+| Result streaming           | Chunked reads                 | Use `executeBatches()` or pagination   |
+| Concurrent queries         | One/query/conn                | Use connection pooling for parallelism |
+| `SERIAL` type              | Not available                 | Use sequences with `nextval()`         |
 
 See [Limitations]({{ '/reference/limitations' | relative_url }}) for the complete list.
 
@@ -201,7 +201,8 @@ while (true) {
 
 - Connection strings auto-create a pool (default size: 4). Set size or MotherDuck presets with `pool: { size: 8 }` or `pool: 'jumbo'`.
 - Disable pooling with `pool: false` if you truly want a single connection.
-- For timeouts/queue limits/recycling, build the pool manually:
+- Pass timeouts, queue limits, and recycling in the same object: `pool: { size: 8, acquireTimeout: 20_000, idleTimeoutMs: 60_000 }`.
+- `pool` applies only to the connection-string and `{ connection }` forms. Build the pool manually when you need the `setup` hook or want to share it:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
@@ -217,7 +218,7 @@ const pool = createDuckDBConnectionPool(instance, {
 });
 ```
 
-Transactions automatically pin one pooled connection; other queries keep using the pool.
+Transactions automatically pin one pooled connection. Other queries keep using the pool.
 
 ### Can I use indexes?
 
@@ -301,6 +302,6 @@ const result = await introspect(db, {
 
 ## See Also
 
-- [Troubleshooting]({{ '/reference/troubleshooting' | relative_url }}) - Detailed error solutions
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Known limitations
-- [Configuration]({{ '/reference/configuration' | relative_url }}) - All options
+- [Troubleshooting]({{ '/reference/troubleshooting' | relative_url }}): detailed error solutions
+- [Limitations]({{ '/reference/limitations' | relative_url }}): known limitations
+- [Configuration]({{ '/reference/configuration' | relative_url }}): all options

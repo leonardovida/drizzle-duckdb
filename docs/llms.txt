@@ -1,10 +1,10 @@
 # Drizzle DuckDB
 
-> DuckDB dialect for Drizzle ORM - Type-safe DuckDB for TypeScript
+> DuckDB dialect for Drizzle ORM. Type-safe DuckDB for TypeScript.
 
 ## Overview
 
-Drizzle DuckDB is a DuckDB dialect adapter for Drizzle ORM. It provides type-safe queries, DuckDB-native types (STRUCT, MAP, LIST, JSON), Postgres compatibility, and analytical query support.
+Drizzle DuckDB (`@duckdbfan/drizzle-duckdb`) is a DuckDB dialect adapter for Drizzle ORM. It builds on Drizzle's Postgres driver (`drizzle-orm/pg-core` schemas) and runs queries through `@duckdb/node-api`. It adds DuckDB-native column types (STRUCT, MAP, LIST, ARRAY, JSON), connection pooling, chunked result streaming, migrations, schema introspection, OLAP helpers, and MotherDuck and DuckLake support.
 
 ## Installation
 
@@ -12,12 +12,13 @@ Drizzle DuckDB is a DuckDB dialect adapter for Drizzle ORM. It provides type-saf
 npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
-Package note: use `@duckdbfan/drizzle-duckdb`.
+- Peer `drizzle-orm`: 0.40.1 or newer, below 0.46.0.
+- Peer `@duckdb/node-api` (required): 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as 1.4.4-r.1 and 1.5.5-r.5. The repository develops against 1.5.5-r.5.
+- Node.js 18.17 or newer (22 or 24 recommended). Bun also works.
 
 ## Quick Start
 
 ```typescript
-import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
 
@@ -26,60 +27,86 @@ const users = pgTable('users', {
   name: text('name').notNull(),
 });
 
-const instance = await DuckDBInstance.create(':memory:');
-const connection = await instance.connect();
-const db = drizzle(connection);
+// Connection string: async, creates a pool of 4 connections by default
+const db = await drizzle(':memory:');
 
 const allUsers = await db.select().from(users);
+
+// Closes the pool and the DuckDB instance
+await db.close();
 ```
 
-## Key Features
+## drizzle() Forms
 
-- Type-safe queries with full TypeScript inference
-- DuckDB-specific types: duckDbList, duckDbArray, duckDbStruct, duckDbMap, duckDbJson
-- Array query helpers: duckDbArrayContains, duckDbArrayContained, duckDbArrayOverlaps
-- Migrations and schema introspection
-- MotherDuck cloud support
-- DuckLake catalog attach support
-- MotherDuck metadata and Dives table function helpers: mdAccessTokens(), mdAccessTokens({ activeOnly: true }), mdListDives(), mdGetDive(), mdCreateDive(), mdUpdateDiveMetadata(), mdUpdateDiveContent(), mdDeleteDive(), mdListDiveVersions(), mdGetDiveVersion(). Dive listing and version rows may include required_resources.
-- MotherDuck Flight table function helpers: mdListFlights(), mdCreateFlight(), mdGetFlight(), mdUpdateFlight(), mdDeleteFlight(), mdRunFlight(), mdCancelFlightRun(), mdListFlightRuns(), mdGetFlightRun(), mdGetFlightLogs(), mdListFlightVersions(), mdGetFlightVersion(). mdGetFlightLogs() accepts limit, offset, and asc or desc order for line pagination. mdCreateFlight() and mdUpdateFlight() accept maxRuntimeSec to cap each run in seconds. Deprecated aliases mdFlights(), mdFlightRuns(), mdFlightLogs(), and mdFlightVersions() emit the same supported SQL names. Deprecated mdJobs() helpers call the supported Flight table functions and preserve older job_* result column names where Flight returns flight_* columns.
-- Flight helper optional fields use undefined to omit a parameter and null to emit SQL NULL. Config keys must not be empty, cannot contain = or NULL bytes, and cannot use reserved names MOTHERDUCK_TOKEN or MOTHERDUCK_FLIGHTS_RUN. Flight secret params are exposed as <SECRET_NAME>_<KEY> environment variables.
+- `await drizzle(path)` and `await drizzle(path, config)`: path is ':memory:', './file.duckdb', 'md:' or 'md:database'. Returns a Promise and creates a pool.
+- `await drizzle({ connection: { path, options }, ...config })`: same, with DuckDB instance options such as `motherduck_token`.
+- `drizzle({ client, ...config })` and `drizzle(client, config?)`: synchronous. `client` is a `DuckDBConnection`, a pool from `createDuckDBConnectionPool()`, or a pg_duckdb client. You close the client yourself.
 
-## Important Notes
+## Configuration
 
-- Do NOT use Postgres json or jsonb columns - use duckDbJson() instead
-- Current DuckDB 1.4.x and 1.5.x builds do not support `SAVEPOINT`. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
-- DuckDB 1.5 adds `VARIANT` and built-in `GEOMETRY`. With `@duckdb/node-api@1.5.4-r.1`, `VARIANT` values materialize into JavaScript values. Project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output.
-- Array operators are automatically rewritten to DuckDB functions
+- `logger`: `true` or a Drizzle `Logger`.
+- `schema`: tables and relations for `db.query`. Relational queries work: `findMany` returns an array, `findFirst` returns an object or undefined, and `with:` loads relations.
+- `pool`: preset name ('pulse' 4, 'standard' 6, 'jumbo' 8, 'mega' 12, 'giga' 16, 'local' 8, 'memory' 4), an object `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`, or `false` for one connection. Default size 4. Applies only to the connection-string and `{ connection }` forms.
+- `prepareCache`: `true` (32 statements), a number, or `{ size }`. Per-connection LRU cache of prepared statements. Disabled by default.
+- `ducklake`: `{ catalog, alias?, use?, install?, load?, attachOptions? }`. Attaches a DuckLake catalog on every connection. A local catalog (`.duckdb`, `.ddb`, `.ducklake`, `:memory:` or a file path) defaults to a pool of size 1 when `pool` is not set. Larger pools work in one process and log a warning for local catalogs.
+- `rejectStringArrayLiterals`: throw when a parameter without column information (plain sql template value, sql.param, bare sql.placeholder) looks like a Postgres array literal such as '{1,2,3}'. Default false: such a parameter is converted to a list when it parses as one, and a warning goes to the logger once per session. Strings bound to a column are always stored as written.
+- `arrayLiteralWarning`: callback that receives that warning instead of the logger.
 
-## Documentation
+## DuckDBDatabase Methods
 
-- Getting Started: /drizzle-duckdb/getting-started/
-- Core Concepts: /drizzle-duckdb/core/
-- API Reference: /drizzle-duckdb/api/
-- Examples: /drizzle-duckdb/examples/
+Everything from Drizzle's PgDatabase, plus:
+
+- `db.executeBatches(sql, { rowsPerChunk })`: async generator of row-object chunks (default 100,000 rows per chunk).
+- `db.executeBatchesRaw(sql, { rowsPerChunk })`: chunks of `{ columns, rows }` with array rows.
+- `db.executeArrow(sql)`: column-major result such as `{ a: [1], b: ['x'] }`. Returns an Arrow table only if the client exposes an Arrow API, which `@duckdb/node-api` does not.
+- `db.close()`: closes the pool or connection and the instance created by the connection-string forms.
+- `db.$client` (connection or pool) and `db.$instance` (DuckDBInstance for connection-string forms).
+- `db.transaction(fn)`: pins one pooled connection for the whole transaction. The second argument (transaction config) is deprecated and ignored with a one-time warning. It will throw in the next major version.
 
 ## DuckDB-Specific Column Types
 
-Import from '@duckdbfan/drizzle-duckdb':
+Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/drizzle-duckdb/helpers'). These are column builders. Pass plain arrays and objects as values.
 
-- duckDbList - Variable length arrays (LIST)
-- duckDbArray - Fixed length arrays (ARRAY)
-- duckDbStruct - Named field structures (STRUCT)
-- duckDbMap - Key-value pairs (MAP)
-- duckDbJson - JSON data (use instead of pg json/jsonb)
-- duckDbTimestamp - Timestamps with proper DuckDB handling
-- duckDbDate - Date values
-- duckDbTime - Time values
-- duckDbBlob - Binary data
-- duckDbInet - IP addresses
-- duckDbInterval - Time intervals
+- duckDbList: variable length arrays (LIST)
+- duckDbArray: fixed length arrays (ARRAY)
+- duckDbStruct: named field structures (STRUCT)
+- duckDbMap: key-value pairs (MAP). Reads return `[{ key, value }]` entries at runtime even though the TypeScript type is a Record. Use `Object.fromEntries` to convert.
+- duckDbJson: JSON data (use instead of pg json/jsonb)
+- duckDbTimestamp: timestamps. Binds natively on Node.js. Uses SQL literals on Bun, when DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS is set, or with `bindMode: 'literal'`.
+- duckDbDate, duckDbTime, duckDbBlob, duckDbInet, duckDbInterval
 
 ## Array Query Helpers
 
-- duckDbArrayContains(column, values) - Check if array contains ALL values
-- duckDbArrayContained(column, values) - Check if array is contained by values
-- duckDbArrayOverlaps(column, values) - Check if arrays have ANY common elements
+- duckDbArrayContains(column, values) (alias arrayHasAll): array contains ALL values
+- duckDbArrayContained(column, values) (alias arrayContainedBy): array is contained by values
+- duckDbArrayOverlaps(column, values) (alias arrayHasAny): arrays share ANY element
+- Drizzle's `arrayContains`, `arrayContained` and `arrayOverlaps` (imported from 'drizzle-orm') also work. DuckDB supports `@>`, `<@` and `&&` on LIST and ARRAY values natively, so the driver sends them unchanged. Only array_lower(a, 1) and array_upper(a, 1) are rewritten.
+
+## OLAP Helpers
+
+- Numeric aggregates: sumN, avgN, countN, sumDistinctN (return numbers instead of DECIMAL strings)
+- percentileCont, median, anyValue
+- Window helpers: rowNumber, rank, denseRank, lag, lead
+- `olap(db).from(table).groupBy([...]).measures({...}).run()` builder
+- Lance search: lanceVectorSearch, lanceFts, lanceHybridSearch
+
+## MotherDuck Helpers
+
+- Metadata and Dives table functions: mdAccessTokens(), mdListDives(), mdGetDive(), mdCreateDive(), mdUpdateDiveMetadata(), mdUpdateDiveContent(), mdDeleteDive(), mdListDiveVersions(), mdGetDiveVersion(). Dive listing and version rows may include required_resources.
+- Flight table functions: mdListFlights(), mdCreateFlight(), mdGetFlight(), mdUpdateFlight(), mdDeleteFlight(), mdRunFlight(), mdCancelFlightRun(), mdListFlightRuns(), mdGetFlightRun(), mdGetFlightLogs(), mdListFlightVersions(), mdGetFlightVersion(). mdGetFlightLogs() accepts limit, offset, and asc or desc order. mdCreateFlight() and mdUpdateFlight() accept maxRuntimeSec. Deprecated aliases mdFlights(), mdFlightRuns(), mdFlightLogs(), mdFlightVersions() and the mdJobs() family remain exported.
+- Flight helper optional fields use undefined to omit a parameter and null to emit SQL NULL. Config keys must not be empty, cannot contain = or NULL bytes, and cannot use reserved names MOTHERDUCK_TOKEN or MOTHERDUCK_FLIGHTS_RUN. Flight secret params are exposed as <SECRET_NAME>_<KEY> environment variables.
+- File scans with run placement: motherDuckReadParquet, motherDuckReadCsvAuto, motherDuckReadJsonAuto, motherDuckTableFunction.
+- mdPromptJev(input, options): builds a prompt_jev call with the question settings as SQL constants. Needs a @duckdb/node-api 1.5.5 client.
+
+## Important Notes
+
+- Do NOT use Postgres json or jsonb columns. Use duckDbJson() instead.
+- DuckDB 1.4.x and 1.5.x do not support SAVEPOINT. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
+- DuckDB aborts the whole transaction when a statement fails at execution time. If the callback catches that error and continues, `db.transaction` rejects with "DuckDB aborted the transaction because a statement inside it failed..." and the statement error as `cause`. No changes are committed. Parser and catalog errors do not abort the transaction.
+- DECIMAL values are returned as JavaScript numbers and can lose precision. Cast to VARCHAR in SQL for exact values.
+- A column type that @duckdb/node-api cannot convert to JavaScript throws an error naming the column. Cast it in SQL.
+- DuckDB runs one query per connection. Use the pool for parallel queries. Temp views and other session state exist only on the connection that created them.
+- DuckDB 1.5 adds VARIANT and built-in GEOMETRY. With @duckdb/node-api 1.5.4-r.1 and newer, VARIANT values materialize into JavaScript values. Project geometry with ST_AsText(...) or ST_AsWKB(...).
 
 ## Migrations
 
@@ -87,10 +114,12 @@ Import from '@duckdbfan/drizzle-duckdb':
 import { migrate } from '@duckdbfan/drizzle-duckdb';
 
 await migrate(db, {
-  migrationsFolder: './drizzle',
+  migrationsFolder: './drizzle', // drizzle-kit output: SQL files plus meta/_journal.json
   migrationsSchema: 'drizzle',
 });
 ```
+
+All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default.
 
 ## Schema Introspection
 
@@ -105,15 +134,31 @@ const result = await introspect(db, {
 // result.files.schemaTs contains generated TypeScript schema
 ```
 
+CLI: `bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts`
+
 ## MotherDuck Connection
 
 ```typescript
-const instance = await DuckDBInstance.create('md:', {
-  motherduck_token: process.env.MOTHERDUCK_TOKEN,
+const db = await drizzle({
+  connection: {
+    path: 'md:',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+  pool: 'standard',
 });
-const connection = await instance.connect();
-const db = drizzle(connection);
 ```
+
+## Documentation
+
+- Getting Started: https://leonardovida.github.io/drizzle-duckdb/getting-started/
+- Installation: https://leonardovida.github.io/drizzle-duckdb/getting-started/installation
+- Coming from Postgres: https://leonardovida.github.io/drizzle-duckdb/getting-started/coming-from-postgres
+- Core Concepts (connection, schema, queries, transactions, arrays): https://leonardovida.github.io/drizzle-duckdb/core/
+- Features (DuckDB types, migrations, introspection): https://leonardovida.github.io/drizzle-duckdb/features/
+- Integrations (MotherDuck, DuckLake, Bun, Next.js): https://leonardovida.github.io/drizzle-duckdb/integrations/
+- Examples: https://leonardovida.github.io/drizzle-duckdb/examples/
+- Reference (configuration, limitations, FAQ, troubleshooting, performance, architecture): https://leonardovida.github.io/drizzle-duckdb/reference/
+- API Reference (drizzle(), DuckDBDatabase, columns, array helpers, OLAP helpers, migrate(), introspect()): https://leonardovida.github.io/drizzle-duckdb/api/
 
 ## Links
 

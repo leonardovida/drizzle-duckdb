@@ -28,9 +28,9 @@ await db.transaction(async (tx) => {
 
 If any operation fails, all changes are rolled back.
 
-## Pooling & Transactions
+## Pooling and Transactions
 
-When you create a database with connection pooling (`drizzle(':memory:', { pool: { size: 4 } })` or the async connection-string form), transactions automatically **pin a single pooled connection** for their entire lifetime. `BEGIN`, all queries in the callback, and `COMMIT`/`ROLLBACK` run on that one connection to keep the transaction atomic. No extra configuration is required; pooling is still used for non-transactional queries.
+When you create a database with connection pooling (`drizzle(':memory:', { pool: { size: 4 } })` or the async connection-string form), transactions **pin a single pooled connection** for their entire lifetime. `BEGIN`, all queries in the callback, and `COMMIT`/`ROLLBACK` run on that one connection to keep the transaction atomic. No extra configuration is required. Non-transactional queries still use the pool.
 
 ## With Return Value
 
@@ -88,15 +88,56 @@ try {
 }
 ```
 
+### A Failed Statement Aborts the Transaction
+
+DuckDB aborts the whole transaction when any statement fails. Catching the error does not keep earlier writes. Validate before writing, or run the risky write in its own `db.transaction()`.
+
+If you catch the statement error inside the callback and let the callback finish, `db.transaction()` still rejects. It rolls back and throws this error, with the statement error as `cause`:
+
+```
+DuckDB aborted the transaction because a statement inside it failed. No changes were committed. Rethrow the statement error, or catch it outside db.transaction(), instead of continuing the transaction.
+```
+
+```typescript
+try {
+  await db.transaction(async (tx) => {
+    await tx.insert(users).values({ id: 1, name: 'Alice' });
+    try {
+      await tx.insert(users).values({ id: 1, name: 'Alice again' }); // duplicate key
+    } catch {
+      // Catching here does not save the first insert
+    }
+  });
+} catch (error) {
+  console.error(error.message); // DuckDB aborted the transaction ...
+  console.error(error.cause); // the constraint error
+}
+```
+
+Parser errors and catalog errors, such as a typo in SQL or a missing table, do not abort a DuckDB transaction. The transaction can continue after you catch them.
+
+If `COMMIT` itself fails, `db.transaction()` rejects with the commit error.
+
+## Transaction Config (Deprecated)
+
+{: .warning }
+
+> **Deprecated**
+>
+> DuckDB has no `SET TRANSACTION` statement. The `config` argument of `db.transaction(fn, config)`, with options such as `isolationLevel`, `accessMode` and `deferrable`, is ignored. The first call that passes it prints a one-time `console.warn`: `Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.` `DuckDBTransaction.setTransaction()` and `getTransactionConfigSQL()` are deprecated as well. Remove the config argument.
+
 ## Important Limitation: No Savepoints
 
 {: .warning }
 
 > **DuckDB Limitation**
 >
-> DuckDB 1.4.x and 1.5.x currently do **not** support `SAVEPOINT`. The driver will try once per dialect instance. After the syntax error, it marks savepoints unsupported and nested calls reuse the outer transaction.
+> DuckDB 1.4.x and 1.5.x do **not** support `SAVEPOINT`. The first nested `tx.transaction()` call tries a savepoint once per dialect instance. DuckDB rejects it with a parser error, which does not abort the outer transaction. From then on, nested calls run inside the outer transaction.
 
 ### What Happens with Nested Transactions
+
+- The nested callback's writes belong to the outer transaction. They commit or roll back with it.
+- If the nested callback throws, including through `innerTx.rollback()`, the outer transaction is marked for rollback. Catching the error in the outer callback does not help: `db.transaction()` rolls back and rejects with Drizzle's `TransactionRollbackError`.
 
 ```typescript
 await db.transaction(async (tx) => {
@@ -132,23 +173,9 @@ await db.transaction(async (tx) => {
 });
 ```
 
-**Option 2: Handle errors without rolling back**
+**Option 2: Use separate transactions**
 
-```typescript
-await db.transaction(async (tx) => {
-  await tx.insert(users).values({ name: 'Alice' });
-
-  try {
-    // This might fail
-    await tx.insert(users).values({ name: 'Bob', email: duplicateEmail });
-  } catch (error) {
-    // Log but don't rollback - Alice is still inserted
-    console.error('Failed to insert Bob:', error.message);
-  }
-});
-```
-
-**Option 3: Use separate transactions**
+Run the risky write in its own top-level `db.transaction()`:
 
 ```typescript
 // First transaction
@@ -271,6 +298,6 @@ async function createOrderWithItems(
 
 ## See Also
 
-- [DuckDBDatabase]({{ '/api/database' | relative_url }}) - Transaction API
-- [Limitations]({{ '/reference/limitations' | relative_url }}) - Savepoint limitation details
-- [Queries]({{ '/core/queries' | relative_url }}) - Query patterns
+- [DuckDBDatabase]({{ '/api/database' | relative_url }}): transaction API
+- [Limitations]({{ '/reference/limitations' | relative_url }}): savepoint limitation details
+- [Queries]({{ '/core/queries' | relative_url }}): query patterns

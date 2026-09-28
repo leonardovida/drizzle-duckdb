@@ -196,7 +196,15 @@ const usersWithPosts = await db.query.users.findMany({
     posts: true,
   },
 });
+// [{ id: 1, name: 'Alice', posts: [{ id: 1, userId: 1, title: '...' }] }, ...]
+
+const firstPost = await db.query.posts.findFirst({
+  with: { author: true },
+});
+// { id: 1, userId: 1, title: '...', author: { id: 1, name: 'Alice' } }
 ```
+
+`findMany()` returns an array and `findFirst()` returns one object or `undefined`. Result keys use the property names from your schema, such as `userId`, not the column names. Nested `with:` relations work. The driver rewrites Drizzle's Postgres JSON functions to DuckDB's `json_array` and `to_json(list(...))` for them.
 
 ## Schema Organization
 
@@ -315,6 +323,6 @@ export const ordersRelations = relations(orders, ({ one }) => ({
 
 ## See Also
 
-- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}) - DuckDB-specific types
-- [Column Types]({{ '/api/columns' | relative_url }}) - Complete column reference
-- [Queries]({{ '/core/queries' | relative_url }}) - Using your schema
+- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}): duckDB-specific types
+- [Column Types]({{ '/api/columns' | relative_url }}): complete column reference
+- [Queries]({{ '/core/queries' | relative_url }}): using your schema

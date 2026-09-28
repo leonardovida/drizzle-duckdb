@@ -7,12 +7,12 @@ nav_order: 3
 
 # Bun
 
-Bun is the recommended runtime for Drizzle DuckDB. It provides excellent performance and native TypeScript support.
+Drizzle DuckDB runs on Bun as well as Node.js. Bun runs TypeScript directly, which suits scripts and local tooling. For production services, Node.js 22 or 24 is the recommended runtime.
 
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
 ## Basic Usage
@@ -47,7 +47,7 @@ bun run src/index.ts
 
 ### Fast Startup
 
-Bun's fast startup makes it ideal for scripts and serverless:
+Bun starts quickly, which suits scripts and serverless:
 
 ```bash
 # Run migrations
@@ -59,7 +59,7 @@ bun run scripts/introspect.ts
 
 ### Native Module Support
 
-`@duckdb/node-api` is a native Node.js addon. Bun handles it seamlessly.
+`@duckdb/node-api` is a native Node.js addon, and Bun loads it. One difference: under Bun, `duckDbTimestamp` columns send values as SQL literals instead of native timestamp bindings, because Bun and Node.js handle bigint values differently in the DuckDB bindings. See [Limitations]({{ '/reference/limitations' | relative_url }}#timestamps).
 
 ## Project Setup
 
@@ -76,15 +76,18 @@ bun run scripts/introspect.ts
     "db:introspect": "bun run scripts/introspect.ts"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.0.0",
-    "@duckdbfan/drizzle-duckdb": "^1.0.0",
-    "drizzle-orm": "^0.30.0"
+    "@duckdb/node-api": "1.5.5-r.5",
+    "@duckdbfan/drizzle-duckdb": "^1.5.4-15",
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.20.0"
+    "@types/bun": "^1.4.2",
+    "drizzle-kit": "^0.31.11"
   }
 }
 ```
+
+`bun add` writes the current versions for you. Keep `drizzle-orm` at 0.40.1 or newer and below 0.46.0, and `@duckdb/node-api` at 1.4.4 or newer and below 1.6.0. See [Installation]({{ '/getting-started/installation' | relative_url }}#peer-dependencies).
 
 ### tsconfig.json
 
@@ -97,7 +100,7 @@ bun run scripts/introspect.ts
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["bun-types"]
+    "types": ["bun"]
   }
 }
 ```
@@ -236,6 +239,6 @@ NODE_ENV=production bun run src/index.ts
 
 ## See Also
 
-- [Installation]({{ '/getting-started/installation' | relative_url }}) - Package setup
-- [Quick Start]({{ '/getting-started/quick-start' | relative_url }}) - First application
-- [Examples]({{ '/examples/' | relative_url }}) - Complete examples
+- [Installation]({{ '/getting-started/installation' | relative_url }}): package setup
+- [Quick Start]({{ '/getting-started/quick-start' | relative_url }}): first application
+- [Examples]({{ '/examples/' | relative_url }}): complete examples

@@ -236,21 +236,6 @@ const topRegions = await db
   .orderBy(desc(regionalSales.totalSales));
 ```
 
-## Working with large result sets
-
-Results are still materialized by default, but you can stream them in chunks to avoid loading everything into JS memory:
-
-```typescript
-for await (const chunk of db.executeBatches(
-  sql`select * from ${orders} order by ${orders.id}`,
-  { rowsPerChunk: 50_000 } // default: 100_000
-)) {
-  // handle each chunk of rows here
-}
-```
-
-If your runtime exposes an Arrow/columnar interface, `db.executeArrow(sql\`...\`)` will return it; otherwise it falls back to column-major arrays.
-
 ### Multiple CTEs
 
 ```typescript
@@ -272,6 +257,21 @@ const cte2 = db.$with('product_details').as(
 
 const result = await db.with(cte1, cte2).select().from(cte2);
 ```
+
+## Working with large result sets
+
+Results are still materialized by default, but you can stream them in chunks to avoid loading everything into JS memory:
+
+```typescript
+for await (const chunk of db.executeBatches(
+  sql`select * from ${orders} order by ${orders.id}`,
+  { rowsPerChunk: 50_000 } // default: 100_000
+)) {
+  // handle each chunk of rows here
+}
+```
+
+`db.executeArrow(query)` returns an Arrow table only when the DuckDB client exposes an Arrow API. `@duckdb/node-api` does not, so with it you get column-major JavaScript arrays such as `{ id: [1, 2], name: ['a', 'b'] }`.
 
 ## Subqueries
 
@@ -434,6 +434,6 @@ console.log(explain);
 
 ## See Also
 
-- [DuckDBDatabase]({{ '/api/database' | relative_url }}) - All database methods
-- [Transactions]({{ '/core/transactions' | relative_url }}) - Transaction handling
-- [Array Operations]({{ '/core/arrays' | relative_url }}) - Array queries
+- [DuckDBDatabase]({{ '/api/database' | relative_url }}): database methods
+- [Transactions]({{ '/core/transactions' | relative_url }}): transaction handling
+- [Array Operations]({{ '/core/arrays' | relative_url }}): array queries

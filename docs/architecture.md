@@ -1,31 +1,46 @@
+---
+layout: default
+title: Architecture
+parent: Reference
+nav_order: 6
+---
+
 # Architecture Map
+
+A short map of the source tree for contributors.
 
 ## Entry Points and Runtime Modes
 
-- `src/driver.ts`: `drizzle(...)` factory (5 overloads) chooses single connection (`DuckDBInstance.create(path).connect()`) or pooled (`createDuckDBConnectionPool(instance, { size })`). Builds `DuckDBDatabase` which exposes `executeBatches`, `executeBatchesRaw`, `executeArrow`, `transaction`, and surface `$client` plus `$instance` for visibility.
-- `src/pool.ts`: FIFO pool that wraps `DuckDBConnection.create(instance)` with acquire/release and recycling via `maxLifetimeMs`/`idleTimeoutMs`.
+- `src/driver.ts`: `drizzle(...)` factory with five overloads. The connection-string and `{ connection }` forms create a `DuckDBInstance` and either one connection (`pool: false`) or a pool from `createDuckDBConnectionPool()`. The client forms wrap an existing connection or pool. Builds `DuckDBDatabase`, which adds `executeBatches`, `executeBatchesRaw`, `executeArrow`, `close()`, `$client` and `$instance`.
+- `src/pool.ts`: connection pool that opens connections with `DuckDBConnection.create(instance)` and hands them out with `acquire()` and `release()`, an acquire timeout, a cap on waiting requests, and recycling via `maxLifetimeMs` and `idleTimeoutMs`. Idle connections are reused newest first. Waiting requests are served in arrival order. Also defines the MotherDuck size presets.
+- `src/pgduck.ts`: adapter types and `createPgDuckConnectionPool()` for Postgres wire clients connected to pg_duckdb.
 
 ## Drizzle Integration Points
 
-- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`, overrides `prepareTyping()` and `migrate()`, rejects `PgJson/PgJsonb`, caches savepoint support per instance.
-- `src/session.ts`: `DuckDBSession` extends `PgSession`; rewrites array operators when enabled; resets JSON flag per query; pins pooled connections for transactions; nested transactions use savepoints with capability probe. Adds streaming (`executeBatches`, `executeBatchesRaw`), Arrow fetch, and prepared query wiring.
-- `DuckDBPreparedQuery.execute()`: builds params, optional array rewrite, uses client helpers (`executeArraysOnClient` for projections, `executeOnClient` otherwise), then maps rows through `mapResultRow` or custom mapper.
+- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Overrides `prepareTyping()` and `migrate()`, rejects `PgJson` and `PgJsonb`, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`.
+- `src/session.ts`: `DuckDBSession` extends `PgSession`. Pins one pooled connection per transaction, probes savepoint support for nested transactions, checks string parameters for Postgres array literals, and wires streaming, columnar fetch and the prepared statement cache into `DuckDBPreparedQuery`.
+- `src/select-builder.ts`: DuckDB select builder used by `db.select()`.
 
 ## Client and Value Conversion
 
-- `src/client.ts`: parameter prep (`prepareParams`), value conversion (`toNodeApiValue`), materialized execution (`executeOnClient`, `executeArraysOnClient`), streaming (`executeInBatches`, `executeInBatchesRaw`), Arrow path, prepared statement cache (optional, per connection), column name deduplication guard, and connection cleanup.
-- `src/value-wrappers*.ts`: wrappers for list/array/struct/map/json/blob/timestamp with fast conversion to DuckDB Node API values.
+- `src/client.ts`: parameter preparation, value conversion to `@duckdb/node-api` values, materialized execution, streaming (`executeInBatches`, `executeInBatchesRaw`), the columnar path behind `executeArrow`, column name deduplication, and connection cleanup.
+- `src/prepared-statement-cache.ts`: optional per-connection LRU cache for prepared statements.
+- `src/value-wrappers*.ts`: wrappers for list, array, struct, map, JSON, blob and timestamp values.
 
 ## DuckDB Types, Helpers, and Rewriting
 
-- `src/columns.ts`: DuckDB-specific column helpers (`duckDbList/Array/Map/Struct/Json/Blob/Timestamp` etc.), literal builders, array helper predicates (`duckDbArrayContains/Contained/Overlaps`). Timestamp binding defaults to parameter binding on Node with literal fallback for Bun or explicit override.
-- `src/sql/ast-transformer.ts`: AST-based SQL transformer using `node-sql-parser`. Rewrites Postgres array operators (`@>`, `<@`, `&&`) to DuckDB `array_has_*` functions, and qualifies ambiguous column references in JOINs. Visitors in `src/sql/visitors/` handle specific transformations.
-- `src/sql/result-mapper.ts`: normalizes inet/time/timestamp/date/interval and maps nested selection objects with nullable join nullification.
+- `src/columns.ts`: DuckDB column helpers (`duckDbList`, `duckDbArray`, `duckDbMap`, `duckDbStruct`, `duckDbJson`, `duckDbTimestamp` and others), literal builders, and the array predicate helpers. `src/operators.ts` re-exports those predicates as `arrayHasAll`, `arrayHasAny` and `arrayContainedBy`.
+- `src/olap.ts`: numeric aggregates, window helpers, Lance search helpers and the `olap()` builder.
+- `src/motherduck.ts` and `src/jev.ts`: MotherDuck table function helpers.
+- `src/ducklake.ts`: DuckLake attach and pool setup.
+- `src/sql/ast-transformer.ts`: AST-based SQL transformer using `node-sql-parser`. It parses only queries that match a rewrite pattern and keeps the original SQL when the printed result would drop string literals, parameters or quoted identifiers. Visitors in `src/sql/visitors/` rewrite `array_lower`/`array_upper` (`array-bounds.ts`), qualify ambiguous join columns (`column-qualifier.ts`), alias `generate_series` (`generate-series-alias.ts`) and hoist `WITH` clauses out of set operation arms (`union-with-hoister.ts`). Postgres array operators pass through unchanged.
+- `src/sql/result-mapper.ts`: maps result rows into Drizzle's nested selection shape.
 
 ## Introspection and CLI
 
-- `src/introspect.ts` and `src/bin/duckdb-introspect.ts`: read `information_schema` and `duckdb_*` tables to emit `schema.ts` plus JSON metadata for tooling.
+- `src/introspect.ts` and `src/bin/duckdb-introspect.ts`: read `information_schema` and `duckdb_*` tables to emit `schema.ts` plus JSON metadata.
 
 ## Examples and Perf Harness
 
-- `examples/`, `test/perf/`, `scripts/run-perf.ts`, `scripts/compare-perf.ts`: tinybench-based micro-benchmarks covering builder paths, streaming (object and raw array), Arrow, prepared reuse, and pooled mode. Perf scripts emit JSON with ops/s, latency percentiles, and memory snapshots for regression checks.
+- `example/`: runnable examples.
+- `test/perf/`, `scripts/run-perf.ts`, `scripts/compare-perf.ts`: Vitest bench suites covering builder paths, streaming, columnar fetch, prepared reuse and pooled mode, plus scripts that record and compare results.

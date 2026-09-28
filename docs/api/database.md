@@ -23,8 +23,26 @@ class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
   update<TTable>(table: TTable): UpdateBuilder<TTable>;
   delete<TTable>(table: TTable): DeleteBuilder<TTable>;
   execute<T>(query: SQL): Promise<T[]>;
-  transaction<T>(fn: (tx: DuckDBTransaction) => Promise<T>): Promise<T>;
+  transaction<T>(
+    fn: (tx: DuckDBTransaction) => Promise<T>,
+    config?: PgTransactionConfig // deprecated, ignored
+  ): Promise<T>;
   $with(alias: string): WithBuilder;
+
+  // DuckDB additions
+  executeBatches<T>(
+    query: SQL,
+    options?: { rowsPerChunk?: number }
+  ): AsyncGenerator<T[]>;
+  executeBatchesRaw(
+    query: SQL,
+    options?: { rowsPerChunk?: number }
+  ): AsyncGenerator<{ columns: string[]; rows: unknown[][] }>;
+  executeArrow(query: SQL): Promise<unknown>;
+  close(): Promise<void>;
+
+  readonly $client: DuckDBClientLike; // connection or pool
+  readonly $instance?: DuckDBInstance; // set by the connection-string forms
 }
 ```
 
@@ -57,6 +75,8 @@ const usersWithOrders = await db
   .from(usersTable)
   .leftJoin(ordersTable, eq(usersTable.id, ordersTable.userId));
 ```
+
+Selected columns that share a name, such as `id` from two joined tables, would collide in the result. The driver gives selected columns unique aliases so each field maps back correctly. This applies to `select()`, `selectDistinct()`, `selectDistinctOn()`, `with()` and `$with()`, on both `db` and the transaction object `tx`.
 
 ### insert()
 
@@ -163,7 +183,11 @@ await db.transaction(async (tx) => {
 
 > **Savepoint Limitation**
 >
-> DuckDB does not support `SAVEPOINT`. Nested transactions reuse the outer transaction, and a rollback in a nested transaction aborts the entire transaction.
+> DuckDB 1.4.x and 1.5.x do not support `SAVEPOINT`. Nested transactions reuse the outer transaction, and a rollback in a nested transaction aborts the entire transaction.
+
+A statement that fails inside the callback aborts the DuckDB transaction. If you catch it and continue, `db.transaction()` rolls back and rejects with `DuckDB aborted the transaction because a statement inside it failed. ...`, with the statement error as `cause`.
+
+The optional `config` argument (`isolationLevel`, `accessMode`, `deferrable`) is deprecated. DuckDB has no `SET TRANSACTION`, so the driver ignores it and prints a one-time warning. See [Transactions]({{ '/core/transactions' | relative_url }}).
 
 ```typescript
 // This behaves differently than Postgres!
@@ -178,6 +202,69 @@ await db.transaction(async (tx) => {
   });
 });
 // Neither Alice nor Bob are inserted
+```
+
+The transaction object `tx` also has `executeBatches()`, `executeBatchesRaw()` and `executeArrow()`. On a pool, all of them run on the connection pinned for the transaction.
+
+### executeBatches()
+
+Stream a query in chunks of row objects instead of materializing the whole result. `rowsPerChunk` defaults to 100,000. On a pool, one connection is held until the generator finishes.
+
+```typescript
+for await (const chunk of db.executeBatches<{ id: number }>(
+  sql`select id from ${ordersTable} order by id`,
+  { rowsPerChunk: 50_000 }
+)) {
+  console.log(chunk.length);
+}
+```
+
+### executeBatchesRaw()
+
+Same as `executeBatches()`, but each chunk is `{ columns, rows }` with rows as arrays. This skips building one object per row.
+
+```typescript
+for await (const { columns, rows } of db.executeBatchesRaw(
+  sql`select * from ${ordersTable}`
+)) {
+  console.log(columns, rows.length);
+}
+```
+
+### executeArrow()
+
+Run a query and return columnar data. If the client result exposes an Arrow API (`toArrow()` or `getArrowTable()`), that result is returned. `@duckdb/node-api` does not expose one, so with it you get column-major JavaScript arrays:
+
+```typescript
+const columns = await db.executeArrow(sql`select 1 as a, 'x' as b`);
+// { a: [1], b: ['x'] }
+```
+
+The return type is `unknown`. Cast it to the shape you expect.
+
+### close()
+
+Close the pool or connection in `$client`, then the DuckDB instance in `$instance` when one exists. Call it when you created the database with a connection string or `{ connection }`:
+
+```typescript
+const db = await drizzle('./app.duckdb');
+try {
+  // ...
+} finally {
+  await db.close();
+}
+```
+
+If you passed your own client, `close()` closes that client too, but not the `DuckDBInstance` it came from.
+
+### $client and $instance
+
+`$client` is the connection or pool that queries run on. `$instance` is the `DuckDBInstance` the driver created for the connection-string forms. It is `undefined` when you passed your own client.
+
+```typescript
+const db = await drizzle(':memory:');
+const pool = db.$client; // DuckDBConnectionPool
+const instance = db.$instance; // DuckDBInstance
 ```
 
 ### $with()
@@ -247,6 +334,6 @@ const stats = await db
 
 ## See Also
 
-- [drizzle()]({{ '/api/drizzle' | relative_url }}) - Creating a database instance
-- [Queries]({{ '/core/queries' | relative_url }}) - Query patterns guide
-- [Transactions]({{ '/core/transactions' | relative_url }}) - Transaction handling
+- [drizzle()]({{ '/api/drizzle' | relative_url }}): creating a database instance
+- [Queries]({{ '/core/queries' | relative_url }}): query patterns guide
+- [Transactions]({{ '/core/transactions' | relative_url }}): transaction handling

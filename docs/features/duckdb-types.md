@@ -41,7 +41,7 @@ const users = pgTable('users', {
 });
 ```
 
-**Supported element types:**
+**Element types** (these autocomplete, and other DuckDB type strings work too):
 
 - Integers: `'SMALLINT'`, `'INTEGER'`, `'BIGINT'`, `'HUGEINT'`
 - Unsigned: `'USMALLINT'`, `'UINTEGER'`, `'UBIGINT'`
@@ -50,6 +50,8 @@ const users = pgTable('users', {
 - Boolean: `'BOOLEAN'`, `'BOOL'`
 - Binary: `'BLOB'`, `'BYTEA'`
 - Date/time: `'DATE'`, `'TIME'`, `'TIMESTAMP'`, `'TIMESTAMPTZ'`
+
+For example, `'UUID'` or `'DECIMAL(10, 2)'` also work. Empty lists can be inserted.
 
 **Usage:**
 
@@ -154,7 +156,7 @@ const results = await db.execute(sql`
 
 ## MAP (Key-Value Pairs)
 
-Maps store key-value pairs with string keys.
+Maps store key-value pairs. Keys are `STRING` by default. Pass `{ keyType }` as the third argument to use another key type, for example `duckDbMap<Record<string, number>>('totals', 'INTEGER', { keyType: 'VARCHAR' })`.
 
 ```typescript
 const products = pgTable('products', {
@@ -184,9 +186,27 @@ await db.insert(products).values({
   },
 });
 
-const product = await db.select().from(products);
-console.log(product[0].inventory.warehouse_a); // 150
+const [product] = await db.select().from(products);
+console.log(product.inventory);
+// [
+//   { key: 'warehouse_a', value: 150 },
+//   { key: 'warehouse_b', value: 75 },
+//   { key: 'warehouse_c', value: 200 },
+// ]
 ```
+
+{: .warning }
+
+> The TypeScript type of a `duckDbMap` column is the `Record` you pass as the type parameter, but reads return an array of `{ key, value }` entries at runtime. Convert the entries when you need an object:
+>
+> ```typescript
+> const inventory = Object.fromEntries(
+>   (product.inventory as unknown as { key: string; value: number }[]).map(
+>     ({ key, value }) => [key, value]
+>   )
+> );
+> console.log(inventory.warehouse_a); // 150
+> ```
 
 ## JSON
 
@@ -250,8 +270,8 @@ const events = pgTable('events', {
 
 **Modes:**
 
-- `mode: 'date'` (default) - Returns JavaScript `Date` objects
-- `mode: 'string'` - Returns ISO-formatted strings
+- `mode: 'date'` (default): returns JavaScript `Date` objects
+- `mode: 'string'`: returns ISO-formatted strings
 
 **Usage:**
 
@@ -282,6 +302,8 @@ await db.insert(events).values({
   startTime: '10:30:00',
 });
 ```
+
+TIME values read back as strings with three fractional digits, such as `'10:30:00.000'`, or six when the value has microseconds, such as `'10:30:00.123456'`.
 
 ## Blob (Binary Data)
 
@@ -369,6 +391,6 @@ user[0].settings.theme; // 'light' | 'dark'
 
 ## See Also
 
-- [Column Types API]({{ '/api/columns' | relative_url }}) - Complete reference
-- [Array Helpers]({{ '/api/array-helpers' | relative_url }}) - Array query functions
-- [Schema Definition]({{ '/core/schema' | relative_url }}) - Using types in schemas
+- [Column Types API]({{ '/api/columns' | relative_url }}): complete reference
+- [Array Helpers]({{ '/api/array-helpers' | relative_url }}): array query functions
+- [Schema Definition]({{ '/core/schema' | relative_url }}): using types in schemas

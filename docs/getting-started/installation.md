@@ -7,7 +7,7 @@ nav_order: 1
 
 # Installation
 
-Install Drizzle DuckDB and its peer dependency.
+Install Drizzle DuckDB and its peer dependencies, `drizzle-orm` and `@duckdb/node-api`.
 
 {: .warning }
 
@@ -18,33 +18,37 @@ Install Drizzle DuckDB and its peer dependency.
 **Using bun:**
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
 **Using npm:**
 
 ```bash
-npm install @duckdbfan/drizzle-duckdb @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
 **Using pnpm:**
 
 ```bash
-pnpm add @duckdbfan/drizzle-duckdb @duckdb/node-api
+pnpm add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
 **Using yarn:**
 
 ```bash
-yarn add @duckdbfan/drizzle-duckdb @duckdb/node-api
+yarn add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
-Supported client versions include `@duckdb/node-api@1.4.4-r.1` and `@duckdb/node-api@1.5.5-r.4`. The repo now develops against `1.5.5-r.4`, and `1.4.4-r.1` remains supported.
+## Peer Dependencies
+
+- **`drizzle-orm`**: version 0.40.1 or newer, below 0.46.0.
+- **`@duckdb/node-api`**: version 1.4.4 or newer, below 1.6.0. The `-r.N` release builds in that range, such as `1.4.4-r.1` and `1.5.5-r.5`, also match. The repository develops and tests against `1.5.5-r.5`.
 
 ## Requirements
 
-- **Node.js** 18+ or **Bun** 1.0+
-- Native module support (not available in browser/edge environments)
+- **Node.js** 18.17 or newer. Node.js 22 or 24 is recommended.
+- **Bun** 1.0 or newer also works.
+- Native module support. The DuckDB client does not run in browser or edge environments.
 
 ## TypeScript Configuration
 
@@ -105,5 +109,5 @@ See [Migrations]({{ '/features/migrations' | relative_url }}) for setup details.
 
 ## Next Steps
 
-- [Quick Start]({{ '/getting-started/quick-start' | relative_url }}) - Create your first schema and queries
-- [Database Connection]({{ '/core/connection' | relative_url }}) - Connection patterns and options
+- [Quick Start]({{ '/getting-started/quick-start' | relative_url }}): create your first schema and queries
+- [Database Connection]({{ '/core/connection' | relative_url }}): connection patterns and options
