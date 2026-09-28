@@ -225,7 +225,7 @@ main().catch(console.error);
 
 ## Next Steps
 
-- [Database Connection]({{ '/core/connection' | relative_url }}) - Connection patterns
-- [Schema Definition]({{ '/core/schema' | relative_url }}) - Advanced schema features
-- [Queries]({{ '/core/queries' | relative_url }}) - CTEs, aggregations, and more
-- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}) - STRUCT, LIST, MAP, JSON
+- [Database Connection]({{ '/core/connection' | relative_url }}): connection patterns
+- [Schema Definition]({{ '/core/schema' | relative_url }}): advanced schema features
+- [Queries]({{ '/core/queries' | relative_url }}): CTEs, aggregations, and more
+- [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}): STRUCT, LIST, MAP, JSON

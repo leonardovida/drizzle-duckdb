@@ -100,11 +100,27 @@ const usersWithPosts = await db.query.users.findMany({
 });
 ```
 
+### casing
+
+Map TypeScript keys to column names, as in other Drizzle drivers.
+
+| Type                          | Default     | Description                                 |
+| ----------------------------- | ----------- | ------------------------------------------- |
+| `'snake_case' \| 'camelCase'` | `undefined` | Derive column names from the TypeScript key |
+
+```typescript
+const users = pgTable('users', { id: integer(), userName: text() });
+const db = drizzle(connection, { casing: 'snake_case' });
+// db.select().from(users) reads "user_name" into userName
+```
+
+`DrizzleConfig` also has a `cache` option. The DuckDB driver does not apply it.
+
 ### Array SQL Handling
 
 Postgres array operators (`@>`, `<@`, `&&`) are sent unchanged. DuckDB supports them on `LIST` and fixed-size `ARRAY` values with the same results as `array_has_all` and `array_has_any`.
 
-Postgres first-dimension array bounds calls are rewritten via AST transformation. This is always enabled and cannot be disabled:
+Postgres first-dimension array bounds calls are rewritten via AST transformation anywhere in a statement, including casts, `ORDER BY`, `GROUP BY` and `UPDATE`. This is always enabled and cannot be disabled:
 
 | Postgres Function   | Rewritten To                                                       |
 | ------------------- | ------------------------------------------------------------------ |
@@ -140,7 +156,7 @@ const db = drizzle(connection, { prepareCache: true });
 const db = drizzle(connection, { prepareCache: { size: 16 } });
 ```
 
-SQL with several statements, or with only comments, cannot be prepared. It runs without the cache, the same as with `prepareCache` off.
+SQL with several statements, or with only comments, cannot be prepared. It runs without the cache, the same as with `prepareCache` off. This covers migration files without `--> statement-breakpoint` markers.
 
 ### rejectStringArrayLiterals
 
@@ -223,6 +239,16 @@ const db = await drizzle('md:', {
 });
 ```
 
+Pool object options:
+
+| Option               | Default  | Values                                                                                                          |
+| -------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `size`               | `4`      | Number of connections                                                                                           |
+| `acquireTimeout`     | `30_000` | Milliseconds to wait for a free connection. `0` or `Infinity` waits without a timeout. Negative and `NaN` throw |
+| `maxWaitingRequests` | `100`    | Queued acquires before new ones throw. A non-negative integer or `Infinity`. `0` allows no waiting              |
+| `maxLifetimeMs`      | none     | Recycle connections after this age                                                                              |
+| `idleTimeoutMs`      | none     | Recycle connections after this idle period                                                                      |
+
 Build the pool manually when you need the `setup` hook or want to share one pool across several `drizzle()` instances:
 
 ```typescript
@@ -267,7 +293,7 @@ Options:
 - `load` boolean. Optional. Defaults to `false`.
 - `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. The deprecated `metaParameterName` field throws, because DuckLake has no `META_PARAMETER_NAME` option.
 
-The driver throws after the attach when the alias already names a different database, such as a main database file named `ducklake.duckdb` or another DuckLake catalog. Set `alias` to a different name in that case.
+Connection setup throws after the attach when the alias already names a different database, such as a main database file named `ducklake.duckdb` or another DuckLake catalog. Set `alias` to a different name in that case. Pooled connections are set up on first use, so with a pool these errors, and invalid `attachOptions`, come from the first query.
 
 When the DuckLake catalog is local and `pool` is not set, `drizzle()` uses a pool of size 1. A catalog counts as local when it is `:memory:`, starts with `duckdb:` or `file:`, or has no scheme and looks like a file path, such as `meta.db` or `./lake/meta`. Catalogs with another scheme, such as `md:`, `s3:`, `postgres:` or `sqlite:`, do not. A bare name such as `my_lake` does not either, because DuckLake reads it as a secret name. A larger `pool` works in one process because all connections share the attached catalog and the driver sets up one connection at a time. With a local catalog and a pool size above 1, `drizzle()` logs a `[ducklake]` warning. See [DuckLake pooling]({{ '/integrations/ducklake#pooling-guidance' | relative_url }}).
 
@@ -310,6 +336,8 @@ Schema where the migrations tracking table is created.
 | Type     | Default     | Description                 |
 | -------- | ----------- | --------------------------- |
 | `string` | `'drizzle'` | Schema for migrations table |
+
+`migrationsTable` and `migrationsSchema` cannot contain a double quote (`"`). `migrate()` throws an error such as `Invalid migrationsTable "...": migration journal names cannot contain double quotes (").` before it creates anything.
 
 ## introspect() Options
 
@@ -410,6 +438,14 @@ MOTHERDUCK_TOKEN=your_token_here
 const instance = await DuckDBInstance.create('md:', {
   motherduck_token: process.env.MOTHERDUCK_TOKEN,
 });
+```
+
+### DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS
+
+Any non-empty value other than `0` makes `duckDbTimestamp` columns in `bindMode: 'auto'` send SQL literals instead of native timestamp parameters, as they do on Bun. Both paths store the same value. See [Native Value Binding]({{ '/reference/limitations' | relative_url }}#native-value-binding).
+
+```bash
+DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS=1
 ```
 
 ## TypeScript Configuration

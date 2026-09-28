@@ -152,7 +152,7 @@ const tipByPassengers = await db
     passengers: taxiSample.passengerCount,
     avgFare: sql<number>`avg(${taxiSample.totalAmount})`,
     avgTip: sql<number>`avg(${taxiSample.tipAmount})`,
-    tripCount: sql<number>`count(*)`,
+    tripCount: sql<number>`count(*)`.mapWith(Number),
   })
   .from(taxiSample)
   .groupBy(taxiSample.passengerCount)

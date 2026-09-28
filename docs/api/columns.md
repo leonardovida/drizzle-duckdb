@@ -50,6 +50,10 @@ const table = pgTable('example', {
 });
 ```
 
+`numeric()` columns return the exact DECIMAL value as a string, such as `'19.90'`, as node-postgres does for NUMERIC. `numeric({ mode: 'number' })` returns a number. See [DECIMAL Precision]({{ '/reference/limitations' | relative_url }}#decimal-precision) for raw SQL and relational queries.
+
+JavaScript integers outside the 32-bit range bind as `BIGINT`, so a `bigint('big', { mode: 'number' })` column stores `3000000000` as written. See [Plain JavaScript Values]({{ '/reference/limitations' | relative_url }}#plain-javascript-values).
+
 ### String Types
 
 ```typescript
@@ -130,6 +134,8 @@ The element type is a DuckDB type string. These names autocomplete in your edito
 Any other DuckDB type string is accepted too, for example `'UUID'` or `'DECIMAL(10, 2)'`. Empty lists and arrays can be inserted.
 
 Values that DuckDB cannot infer an element type for are sent as SQL literals typed from the element type. This covers empty lists, lists of structs such as `duckDbList('items', 'STRUCT (a INTEGER)')`, lists of `Buffer` values and lists whose inner lists are all empty such as `[[]]`. Other lists bind as native parameters.
+
+Native list parameters use the element type when the items fit it, and otherwise a type worked out from every item. A list that starts with `null`, such as `[null, 7, 8]`, keeps its values, and mixed numbers such as `[1, 2.5]` bind.
 
 **Usage:**
 
@@ -215,9 +221,9 @@ const config = pgTable('config', {
   // Map with list values
   tags: duckDbMap<Record<string, string[]>>('tags', 'TEXT[]'),
 
-  // Map with VARCHAR keys: MAP (VARCHAR, INTEGER)
-  totals: duckDbMap<Record<string, number>>('totals', 'INTEGER', {
-    keyType: 'VARCHAR',
+  // Map with INTEGER keys: MAP (INTEGER, VARCHAR)
+  labels: duckDbMap<Record<string, string>>('labels', 'VARCHAR', {
+    keyType: 'INTEGER',
   }),
 });
 ```
@@ -309,7 +315,7 @@ const events = pgTable('events', {
 
 `bindMode` controls how inserted values reach DuckDB:
 
-- `'auto'`: bind a native timestamp parameter on Node.js. Use a SQL literal on Bun or when `DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS` is set to a value other than `0`.
+- `'auto'`: bind a native timestamp parameter on Node.js. Use a SQL literal on Bun or when `DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS` is set to a non-empty value other than `0`.
 - `'bind'`: always bind a native timestamp parameter.
 - `'literal'`: always inline a SQL literal such as `TIMESTAMP '2024-01-15 10:30:00.000+00'`.
 

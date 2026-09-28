@@ -90,6 +90,8 @@ export async function getDb() {
 
 This creates a connection pool, so concurrent API requests to MotherDuck run in parallel instead of one at a time.
 
+In development, Next.js can load `lib/db.ts` more than once. For a local file, `drizzle('./app.duckdb')` shares one DuckDB instance per path in the process, so each copy of the module sees the same data. Pass the same options each time, or the second call throws.
+
 ### Custom Pool Size
 
 For larger MotherDuck instances, increase the pool size:

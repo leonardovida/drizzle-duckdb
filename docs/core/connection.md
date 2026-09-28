@@ -63,7 +63,7 @@ const db = await drizzle('./my-database.duckdb');
 
 The file is created if it doesn't exist.
 
-Calls on the same path share one DuckDB instance in a process, so a migration script, the app and tests all see the same data. Opening the path again with different instance options throws. `:memory:` is never shared. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
+Calls on the same path share one DuckDB instance in a process, so a migration script, the app and tests all see the same data. Opening the path again with different instance options throws. `:memory:` is never shared. If you also open the file yourself, use `DuckDBInstance.fromCache(path)` so your connection joins the same instance. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
 
 ## MotherDuck Cloud
 
@@ -119,6 +119,20 @@ const db = await drizzle({
 ```
 
 A local catalog file uses a pool of size 1 unless you set `pool`. See the [DuckLake guide]({{ '/integrations/ducklake' | relative_url }}) for pooling and the generated `ATTACH` SQL.
+
+## pg_duckdb
+
+For a Postgres server with the [`pg_duckdb`](https://github.com/duckdb/pg_duckdb) extension, pass a `pg` client or pool:
+
+```typescript
+import pg from 'pg';
+import { drizzle } from '@duckdbfan/drizzle-duckdb';
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle(pool);
+```
+
+The driver wraps a `pg.Pool` with `createPgDuckConnectionPool()`, so each transaction runs on one pooled client, and `await db.close()` ends the pool. A connected `pg.Client` works too. The `ducklake` option cannot be used with pg_duckdb clients.
 
 ## With Logging
 
@@ -253,8 +267,8 @@ const db = drizzle(pool);
 
 Auto-created pools support the same tuning options through `drizzle('path', { pool: { ... } })`, and `createDuckDBConnectionPool` exposes the same controls for manual pools:
 
-- `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time. `0` or `Infinity` waits without a timeout. Negative values and `NaN` throw
-- `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full. `0` allows no waiting and `Infinity` removes the cap
+- `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time. `0` or `Infinity` waits without a timeout. Values above the `setTimeout` limit of about 24.8 days are capped to it. Negative values and `NaN` throw
+- `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full. It must be a non-negative integer or `Infinity`. `0` allows no waiting and `Infinity` removes the cap
 - `maxLifetimeMs`: recycle connections after this age
 - `idleTimeoutMs`: recycle idle connections after this idle period
 
@@ -299,6 +313,9 @@ const db = await drizzle(':memory:', {
 
   // Throw on Postgres-style array literals (default: false)
   rejectStringArrayLiterals: false,
+
+  // Map camelCase keys to snake_case column names
+  casing: 'snake_case',
 });
 ```
 
@@ -319,6 +336,8 @@ try {
   await db.close();
 }
 ```
+
+`close()` interrupts queries that are still running, so they reject instead of staying pending. See [close()]({{ '/api/database' | relative_url }}#close).
 
 For manual connections, close them explicitly:
 

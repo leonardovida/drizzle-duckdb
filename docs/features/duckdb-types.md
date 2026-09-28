@@ -51,7 +51,7 @@ const users = pgTable('users', {
 - Binary: `'BLOB'`, `'BYTEA'`
 - Date/time: `'DATE'`, `'TIME'`, `'TIMESTAMP'`, `'TIMESTAMPTZ'`
 
-For example, `'UUID'` or `'DECIMAL(10, 2)'` also work. Empty lists can be inserted.
+For example, `'UUID'` or `'DECIMAL(10, 2)'` also work. Empty lists, lists of structs such as `duckDbList('items', 'STRUCT(a INTEGER)')`, lists of `Buffer` values and `[[]]` can be inserted. Lists that start with `null` and lists of mixed numbers such as `[1, 2.5]` bind with the right item type.
 
 **Usage:**
 
@@ -143,6 +143,8 @@ const user = await db.select().from(users);
 console.log(user[0].address.city); // 'Portland'
 ```
 
+A `Date` field is sent as a timestamp or date literal typed from the field type, and a `Buffer` field as a BLOB literal. See [Struct]({{ '/api/columns' | relative_url }}#struct) for the exact rules.
+
 **Accessing struct fields in raw SQL:**
 
 ```typescript
@@ -156,7 +158,7 @@ const results = await db.execute(sql`
 
 ## MAP (Key-Value Pairs)
 
-Maps store key-value pairs. Keys are `STRING` by default. Pass `{ keyType }` as the third argument to use another key type, for example `duckDbMap<Record<string, number>>('totals', 'INTEGER', { keyType: 'VARCHAR' })`.
+Maps store key-value pairs. Keys are `STRING` by default. Pass `{ keyType }` as the third argument to use another key type, for example `duckDbMap<Record<string, string>>('labels', 'VARCHAR', { keyType: 'INTEGER' })` for `MAP(INTEGER, VARCHAR)`.
 
 ```typescript
 const products = pgTable('products', {
@@ -248,6 +250,8 @@ const results = await db.execute(sql`
 `);
 ```
 
+A JavaScript string value is sent as raw JSON text. `'{"a": 1}'` stores an object and `'hello'` fails as invalid JSON. Pass `JSON.stringify('hello')` to store a JSON string.
+
 ## Timestamps
 
 DuckDB handles timestamps slightly differently than Postgres. Use `duckDbTimestamp` for best results.
@@ -322,6 +326,8 @@ await db.insert(files).values({
   thumbnail: Buffer.from(imageBytes),
 });
 ```
+
+Reads return a `Buffer`.
 
 ## INET (IP Addresses)
 

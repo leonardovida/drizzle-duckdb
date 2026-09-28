@@ -70,6 +70,8 @@ Opening a path that is already open with different instance options throws `Can'
 
 `:memory:` is not shared. Every `drizzle(':memory:')` call gets its own database.
 
+The sync forms use the instance you created. If the same process also calls `drizzle(path)` on that file, create your instance with `DuckDBInstance.fromCache(path)` instead of `DuckDBInstance.create(path)`, so both share one instance.
+
 ## Parameters
 
 ### connectionString / connection
@@ -112,6 +114,8 @@ const instance = await DuckDBInstance.create(':memory:');
 const connection = await instance.connect();
 ```
 
+For SQL with several statements, node-postgres returns one result per statement. The driver uses the last one, as it does for DuckDB connections. A custom `PgDuckClient` that returns array rows, as with `rowMode: 'array'`, must also return `fields`. Otherwise the query throws `pg_duckdb client returned array rows without field metadata`.
+
 ### config (optional)
 
 ```typescript
@@ -138,6 +142,9 @@ interface DuckDBDrizzleConfig<TSchema> {
 
   // Receive the Postgres-style array literal warning instead of the logger
   arrayLiteralWarning?: (query: string) => void;
+
+  // Map TypeScript keys to column names (from Drizzle's DrizzleConfig)
+  casing?: 'snake_case' | 'camelCase';
 }
 
 interface DuckDBPoolConfig {
@@ -160,7 +167,7 @@ type PoolPreset =
 
 `pool` applies only to the connection-string and `{ connection }` forms. It is ignored when you pass a connection or pool instance.
 
-`ducklake` works with the async forms and with an explicit pool. Passing it with a single connection throws. Use `configureDuckLake(connection, config)` in that case. With a local catalog (`:memory:`, a `.duckdb`, `.ddb` or `.ducklake` file, or a file path) and no `pool` setting, the driver uses a pool of size 1. A larger `pool` also works, and the driver logs a warning for local catalogs. See [DuckLake]({{ '/integrations/ducklake' | relative_url }}).
+`ducklake` works with the async forms and with an explicit pool. Passing it with a single connection throws. Use `configureDuckLake(connection, config)` in that case. With a local catalog (`:memory:`, a `duckdb:` or `file:` catalog, or a path without a scheme such as `meta.db`) and no `pool` setting, the driver uses a pool of size 1. A larger `pool` also works, and the driver logs a warning for local catalogs. See [DuckLake]({{ '/integrations/ducklake' | relative_url }}).
 
 The config type extends Drizzle's `DrizzleConfig`, so it also accepts `casing` and `cache`. `casing: 'snake_case'` or `casing: 'camelCase'` maps TypeScript keys to column names as in other Drizzle drivers. The DuckDB driver does not apply `cache`.
 

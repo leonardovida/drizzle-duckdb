@@ -36,7 +36,6 @@ CREATE DATABASE my_lake TYPE DUCKLAKE;
 ```
 
 ```typescript
-import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
 
 const db = await drizzle({
@@ -65,7 +64,9 @@ ATTACH IF NOT EXISTS 'ducklake:./ducklake.duckdb' AS "ducklake" (CREATE_IF_NOT_E
 USE "ducklake";
 ```
 
-`ATTACH IF NOT EXISTS` does nothing when the alias already names a database. After the attach, the driver checks `duckdb_databases()` and throws if the alias is not a DuckLake database, or if a local catalog under that alias is a different file. This happens when the main database file is named `ducklake.duckdb`, or when two configs with different catalogs share one pool and keep the default alias. Set `alias` to a different name in those cases. Secret, MotherDuck and other remote catalogs only get the type check, because DuckDB reports their resolved metadata path.
+`ATTACH IF NOT EXISTS` does nothing when the alias already names a database. After the attach, the driver checks `duckdb_databases()` and throws if the alias is not a DuckLake database, or if a local catalog under that alias is a different file. This happens when the main database file is named `ducklake.duckdb`, or when two configs with different catalogs share one pool and keep the default alias. Set `alias` to a different name in those cases. Secret, MotherDuck and other remote catalogs only get the type check, because DuckDB reports their resolved metadata path. The error reads, for example, `DuckLake alias "ducklake" is already used by a duckdb database at '...', so catalog '...' was not attached. Set ducklake.alias to a different name.`
+
+Pooled connections are set up when they are first used. With a pool, attach errors and invalid `attachOptions` therefore surface on the first query, not in the `drizzle()` call. With `pool: false` or `configureDuckLake()`, they surface right away.
 
 ## Attach Options
 
@@ -116,6 +117,8 @@ DuckLake only supports `NOT NULL` constraints. Primary keys, foreign keys, uniqu
 `migrate()` works with DuckLake as the default catalog. The driver creates its tracking table without a sequence, primary key or unique index, which DuckLake does not support. The migrations themselves must avoid primary keys, unique constraints, foreign keys and `serial` columns for the same reason.
 
 ```typescript
+import { drizzle, migrate } from '@duckdbfan/drizzle-duckdb';
+
 const db = await drizzle(':memory:', {
   ducklake: {
     catalog: './meta.ducklake',

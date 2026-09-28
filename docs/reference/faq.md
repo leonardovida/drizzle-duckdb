@@ -63,7 +63,11 @@ const db = await drizzle(':memory:', {
 });
 ```
 
-DuckLake supports `NOT NULL` constraints only. Primary keys, foreign keys, unique constraints, check constraints, and indexes are not supported.
+DuckLake supports `NOT NULL` constraints only. Primary keys, foreign keys, unique constraints, check constraints, and indexes are not supported. `migrate()` works with DuckLake as the default catalog, as long as the migrations avoid those features.
+
+### Can two parts of my app open the same DuckDB file?
+
+Yes. `drizzle('./app.duckdb')` shares one DuckDB instance per file in a process, so a migration script, the app and tests that open the same file see each other's writes. Pass the same instance options each time, or the second call throws. See [One instance per file per process]({{ '/api/drizzle' | relative_url }}#one-instance-per-file-per-process).
 
 ### What about DuckDB WASM (browser)?
 
@@ -97,7 +101,9 @@ For most schemas, yes. Key changes needed:
 1. Replace `json`/`jsonb` with `duckDbJson`
 2. Handle timestamp differences (DuckDB uses space separator, not `T`)
 3. Replace `SERIAL` with sequence + `nextval()`
-4. Adjust array operator usage
+4. Pass JavaScript arrays instead of Postgres array literal strings such as `'{a,b}'`
+
+Array operators such as `@>` work unchanged. See [Coming from Postgres]({{ '/getting-started/coming-from-postgres' | relative_url }}).
 
 ### Is DuckDB faster than Postgres?
 
@@ -179,7 +185,18 @@ for (const name of ['Alice', 'Bob', 'Carol']) {
 
 ### How do I handle large result sets?
 
-Use pagination to avoid loading everything into memory:
+Stream the result in chunks with `db.executeBatches()`:
+
+```typescript
+for await (const chunk of db.executeBatches(
+  sql`select * from ${users} order by ${users.id}`,
+  { rowsPerChunk: 10_000 }
+)) {
+  await processBatch(chunk);
+}
+```
+
+Or paginate:
 
 ```typescript
 const pageSize = 1000;
@@ -248,10 +265,10 @@ See the [Next.js guide]({{ '/integrations/nextjs' | relative_url }}) for full se
 
 ### Does it work with Bun?
 
-Yes! Bun is the recommended runtime:
+Yes. Bun loads `@duckdb/node-api`, and suits scripts and local tooling. For production services, Node.js 22 or 24 is the recommended runtime:
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ```
 
 See the [Bun guide]({{ '/integrations/bun' | relative_url }}) for details.
@@ -290,15 +307,17 @@ DuckDB doesn't support `SAVEPOINT`. Nested transactions share the outer transact
 
 See [Transactions]({{ '/core/transactions' | relative_url }}) for patterns.
 
-### Why is introspection returning tables from other databases?
+### How do I introspect a database other than the current one?
 
-When connected to MotherDuck, you may have multiple databases attached. Use the `database` option:
+By default, introspection reads only the current database, even when MotherDuck attaches several. Use the `database` option to pick another one:
 
 ```typescript
 const result = await introspect(db, {
   database: 'my_database', // Only introspect this database
 });
 ```
+
+The generated schema does not name the database, so the app's current database must be that one, for example through `md:my_database` or `USE my_database`. See [Tables Outside the Current Database]({{ '/features/introspection' | relative_url }}#tables-outside-the-current-database).
 
 ## See Also
 

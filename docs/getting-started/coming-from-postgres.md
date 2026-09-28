@@ -20,6 +20,8 @@ If you already use Drizzle with Postgres, this page covers what changes when you
 | Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                                               |
 | Result streaming         | Supported             | Chunked reads via `executeBatches()`, no cursor API                                                  |
 | Prepared statement cache | Yes                   | Opt-in per-connection cache via `prepareCache`                                                       |
+| `numeric()` columns      | Exact strings         | Exact strings. Raw SQL results return DECIMAL as numbers                                             |
+| Raw `COUNT(*)`           | String                | `bigint`. Use `countN()` or Drizzle's `count()` for a number                                         |
 
 ## Required Changes
 
@@ -195,6 +197,8 @@ const instance = await DuckDBInstance.create('./my-database.duckdb');
 const connection = await instance.connect();
 const db = drizzle(connection);
 ```
+
+If your Postgres server runs the `pg_duckdb` extension, you can keep the `pg.Pool` and switch only the import. `drizzle(pool)` from this package wraps the pool so each transaction runs on one client. See [pg_duckdb]({{ '/core/connection' | relative_url }}#pg_duckdb).
 
 ## Drizzle Kit Configuration
 

@@ -238,6 +238,23 @@ export * from './users';
 export * from './posts';
 ```
 
+## Column Name Casing
+
+Pass Drizzle's `casing` option to derive column names from the TypeScript keys, so you can leave out the name argument:
+
+```typescript
+const users = pgTable('users', {
+  id: integer().primaryKey(),
+  userName: text(),
+});
+
+const db = drizzle(connection, { casing: 'snake_case', schema: { users } });
+await db.insert(users).values({ id: 1, userName: 'ada' });
+// insert into "users" ("id", "user_name") values ($1, $2)
+```
+
+`casing` accepts `'snake_case'` and `'camelCase'`. Result keys still use the TypeScript names, such as `userName`.
+
 ## Custom Schemas
 
 DuckDB's default schema is `main` (not `public` like Postgres):

@@ -11,7 +11,7 @@ Utilities to keep aggregates and window logic inside DuckDB while returning JS-f
 
 ## Numeric aggregates as numbers
 
-DuckDB returns DECIMAL aggregates as strings. Use the numeric helpers to coerce to `number` when that's acceptable:
+Drizzle's `sum()` and `avg()` return strings. A raw ``sql`count(*)` `` or integer ``sql`sum(...)` `` returns a `bigint`, because DuckDB computes it as `BIGINT` or `HUGEINT`. The numeric helpers map the result to a JavaScript `number` when that's acceptable:
 
 ```typescript
 import { sumN, avgN, countN, sumDistinctN } from '@duckdbfan/drizzle-duckdb';
@@ -286,7 +286,10 @@ and `order: 'asc' | 'desc'` for pagination from either end of the log.
 For optional Flight fields, `undefined` omits the named parameter and `null`
 emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
-and `flightSecretNames`.
+and `flightSecretNames`. An empty `config: {}` is sent as a typed empty map and
+an empty `flightSecretNames: []` as a typed empty `VARCHAR[]` list.
+The deprecated `mdFlightLogs()` and `mdJobRunLogs()` blobs join lines in
+`line_number` order, descending when `order` is `'desc'`.
 Use `maxRuntimeSec` on `mdCreateFlight()` or `mdUpdateFlight()` to cap each run
 in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
 

@@ -40,15 +40,17 @@ await db.close();
 
 - `await drizzle(path)` and `await drizzle(path, config)`: path is ':memory:', './file.duckdb', 'md:' or 'md:database'. Returns a Promise and creates a pool.
 - `await drizzle({ connection: { path, options }, ...config })`: same, with DuckDB instance options such as `motherduck_token`.
-- `drizzle({ client, ...config })` and `drizzle(client, config?)`: synchronous. `client` is a `DuckDBConnection`, a pool from `createDuckDBConnectionPool()`, a pg_duckdb client, or a `pg.Pool` (wrapped automatically so transactions stay on one client). You close the client yourself.
+- The async forms share one DuckDB instance per path in a process (`DuckDBInstance.fromCache`), so two `drizzle('./app.duckdb')` calls see each other's writes and closing one leaves the other usable. Opening a path again with different instance options throws "Can't open a connection to same database file with a different configuration". ':memory:' is never shared.
+- `drizzle({ client, ...config })` and `drizzle(client, config?)`: synchronous. `client` is a `DuckDBConnection`, a pool from `createDuckDBConnectionPool()`, a pg_duckdb client, or a `pg.Pool` (wrapped automatically so transactions stay on one client, and `db.close()` ends the pool). You close other clients yourself. For multi-statement SQL, pg_duckdb results come from the last statement.
 
 ## Configuration
 
 - `logger`: `true` or a Drizzle `Logger`.
 - `schema`: tables and relations for `db.query`. Relational queries work: `findMany` returns an array, `findFirst` returns an object or undefined, and `with:` loads relations.
-- `pool`: preset name ('pulse' 4, 'standard' 6, 'jumbo' 8, 'mega' 12, 'giga' 16, 'local' 8, 'memory' 4), an object `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`, or `false` for one connection. Default size 4. Applies only to the connection-string and `{ connection }` forms.
-- `prepareCache`: `true` (32 statements), a number, or `{ size }`. Per-connection LRU cache of prepared statements. Disabled by default.
-- `ducklake`: `{ catalog, alias?, use?, install?, load?, attachOptions? }`. Attaches a DuckLake catalog on every connection. A local catalog (`:memory:`, a `duckdb:` or `file:` catalog, or a file path without a scheme such as `meta.db`) defaults to a pool of size 1 when `pool` is not set. Larger pools work in one process and log a warning for local catalogs. The driver throws when the alias already names a different database, for example a main file named `ducklake.duckdb`. `attachOptions.metaParameters` (`Record<string, string>`) emits `META_<KEY>` options. The deprecated `metaParameterName` throws. Numeric attach options must be non-negative integers.
+- `pool`: preset name ('pulse' 4, 'standard' 6, 'jumbo' 8, 'mega' 12, 'giga' 16, 'local' 8, 'memory' 4), an object `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`, or `false` for one connection. Default size 4. `acquireTimeout` defaults to 30000 ms, and 0 or Infinity means no timeout. `maxWaitingRequests` defaults to 100 and must be a non-negative integer or Infinity. Negative or NaN values throw. Applies only to the connection-string and `{ connection }` forms.
+- `prepareCache`: `true` (32 statements), a number, or `{ size }`. Per-connection LRU cache of prepared statements. Disabled by default. Multi-statement and comment-only SQL runs without the cache.
+- `casing`: 'snake_case' or 'camelCase' maps TypeScript keys to column names, as in other Drizzle drivers. Drizzle's `cache` option is not applied.
+- `ducklake`: `{ catalog, alias?, use?, install?, load?, attachOptions? }`. Attaches a DuckLake catalog on every connection. A local catalog (`:memory:`, a `duckdb:` or `file:` catalog, or a file path without a scheme such as `meta.db`) defaults to a pool of size 1 when `pool` is not set. A bare name such as `my_lake` is a secret name, not local. Larger pools work in one process and log a warning for local catalogs. Connection setup throws when the alias already names a different database, for example a main file named `ducklake.duckdb`. Pooled connections are set up on first use, so attach errors surface on the first query. `attachOptions.metaParameters` (`Record<string, string>`) emits `META_<KEY>` options. The deprecated `metaParameterName` throws. Numeric attach options must be non-negative integers.
 - `rejectStringArrayLiterals`: throw when a parameter without column information (plain sql template value, sql.param, bare sql.placeholder) looks like a Postgres array literal such as '{1,2,3}'. Default false: such a parameter is converted to a list when it parses as one, and a warning goes to the logger once per session. Strings bound to a column are always stored as written.
 - `arrayLiteralWarning`: callback that receives that warning instead of the logger.
 
@@ -56,10 +58,10 @@ await db.close();
 
 Everything from Drizzle's PgDatabase, plus:
 
-- `db.executeBatches(sql, { rowsPerChunk })`: async generator of row-object chunks (default 100,000 rows per chunk).
+- `db.executeBatches(sql, { rowsPerChunk })`: async generator of row-object chunks (default 100,000 rows per chunk). While the loop is open, other queries on the same connection (a single connection, or `tx` in a transaction) throw "This connection is streaming a result from executeBatches()". Pools outside a transaction use other connections.
 - `db.executeBatchesRaw(sql, { rowsPerChunk })`: chunks of `{ columns, rows }` with array rows.
-- `db.executeArrow(sql)`: column-major result such as `{ a: [1], b: ['x'] }`. Returns an Arrow table only if the client exposes an Arrow API, which `@duckdb/node-api` does not.
-- `db.close()`: closes the pool or connection and the instance created by the connection-string forms.
+- `db.executeArrow(sql)`: column-major result such as `{ a: [1], b: ['x'] }`. Duplicate column names get suffixes like execute() (`a`, `a_1`). Returns an Arrow table only if the client exposes an Arrow API, which `@duckdb/node-api` does not.
+- `db.close()`: closes the pool or connection and the instance created by the connection-string forms. It interrupts running queries, waits up to 5 seconds for them to settle, then disconnects. Interrupted and later queries reject with "DuckDB connection is closed..." or "DuckDB connection pool is closed".
 - `db.$client` (connection or pool) and `db.$instance` (DuckDBInstance for connection-string forms).
 - `db.transaction(fn)`: pins one pooled connection for the whole transaction. The second argument (transaction config) is deprecated and ignored with a one-time warning. It will throw in the next major version.
 
@@ -71,9 +73,31 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - duckDbArray: fixed length arrays (ARRAY)
 - duckDbStruct: named field structures (STRUCT)
 - duckDbMap: key-value pairs (MAP). Reads return `[{ key, value }]` entries at runtime even though the TypeScript type is a Record. Use `Object.fromEntries` to convert.
-- duckDbJson: JSON data (use instead of pg json/jsonb)
-- duckDbTimestamp: timestamps. Binds natively on Node.js. Uses SQL literals on Bun, when DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS is set, or with `bindMode: 'literal'`.
-- duckDbDate, duckDbTime, duckDbBlob, duckDbInet, duckDbInterval
+- duckDbJson: JSON data (use instead of pg json/jsonb). A JS string is sent as raw JSON text, so pass `JSON.stringify('hello')` to store a JSON string.
+- duckDbTimestamp: timestamps. Binds natively on Node.js. Uses SQL literals on Bun, when DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS is set, or with `bindMode: 'literal'`. Both paths store the same value: strings without an offset are UTC, and a naive TIMESTAMP string with an offset is converted to UTC. `mode: 'string'` returns DuckDB text, '2024-01-15 10:30:00' for TIMESTAMP (no offset) and '2024-01-15 10:30:00+00' for TIMESTAMPTZ (UTC).
+- duckDbInterval: reads return DuckDB interval text such as '02:30:00', not an object.
+- duckDbBlob: reads return a Buffer.
+- duckDbDate, duckDbTime, duckDbInet
+- Lists, arrays and maps of structs, Buffers or `[[]]` are sent as typed SQL literals. A Date or Buffer inside a struct, list or map literal becomes a typed timestamp or BLOB literal.
+- numeric() columns return exact DECIMAL strings, such as '19.90'.
+
+## Parameter Binding
+
+- Integers in the 32-bit range bind as INTEGER, larger integers as BIGINT, integers beyond Number.MAX_SAFE_INTEGER as DOUBLE, other numbers as DOUBLE, and JS bigint as HUGEINT.
+- A Date binds as a TIMESTAMP holding its UTC time. An invalid Date throws "Invalid Date parameter: cannot bind an invalid Date".
+- Buffer and Uint8Array bind as BLOB.
+- Lists (for example `sql.param([null, 7, 8])`) get their item type from every item: [null, 7, 8] is INTEGER[], [1, 2.5] is DOUBLE[], [1, 3e9] is BIGINT[]. duckDbList, duckDbArray and duckDbMap use the declared element type when the items fit it. A Date inside a TIMESTAMPTZ list or map binds as TIMESTAMPTZ.
+- A JS array written directly into a sql template is expanded by Drizzle into separate parameters. Wrap it in sql.param() to bind one list.
+- Strings bound to a scalar column (text, uuid, date and others) are never parsed as Postgres array literals, so a braced UUID such as '{a0eebc99-...}' in a uuid column binds as that UUID.
+
+## Results
+
+- Each column is converted on its own. TIMESTAMP_NS, TIMETZ and TIME_NS columns come back as DuckDB text, other columns keep their JS values (BLOB as Buffer, BIGINT and HUGEINT as bigint, DATE as Date).
+- Raw db.execute() results have no column decoders. COUNT(*) and integer SUM return bigint, INTERVAL returns { months, days, micros }.
+- A SQL field uses its own .mapWith() decoder even when it mentions a DuckDB column. Only a bare ``sql`${column}` `` without mapWith uses the column decoder.
+- Subquery (.as()), CTE ($with) and view fields render qualified by their alias, such as "sq"."id", so joins on shared column names are not ambiguous.
+- For hand-written SQL, bare columns in JOIN ON clauses are qualified when the source is clear. Ambiguous cases are left unchanged, and USING columns are never qualified.
+- array_lower(a, 1) and array_upper(a, 1) are rewritten anywhere in a statement. generate_series aliases used as columns are rewritten, and WITH clauses inside UNION arms are hoisted (keeping RECURSIVE).
 
 ## Array Query Helpers
 
@@ -84,9 +108,9 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 
 ## OLAP Helpers
 
-- Numeric aggregates: sumN, avgN, countN, sumDistinctN (return numbers instead of DECIMAL strings)
+- Numeric aggregates: sumN, avgN, countN, sumDistinctN return numbers. Drizzle's sum() and avg() return strings, and raw count(*) or integer sum return bigint.
 - percentileCont, median, anyValue
-- Window helpers: rowNumber, rank, denseRank, lag, lead
+- Window helpers: rowNumber, rank, denseRank, lag, lead. Options take partitionBy and orderBy. Without options they emit `over ()`.
 - `olap(db).from(table).groupBy([...]).measures({...}).run()` builder
 - Lance search: lanceVectorSearch, lanceFts, lanceHybridSearch
 
@@ -94,7 +118,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 
 - Metadata and Dives table functions: mdAccessTokens(), mdListDives(), mdGetDive(), mdCreateDive(), mdUpdateDiveMetadata(), mdUpdateDiveContent(), mdDeleteDive(), mdListDiveVersions(), mdGetDiveVersion(). Dive listing and version rows may include required_resources.
 - Flight table functions: mdListFlights(), mdCreateFlight(), mdGetFlight(), mdUpdateFlight(), mdDeleteFlight(), mdRunFlight(), mdCancelFlightRun(), mdListFlightRuns(), mdGetFlightRun(), mdGetFlightLogs(), mdListFlightVersions(), mdGetFlightVersion(). mdGetFlightLogs() accepts limit, offset, and asc or desc order. mdCreateFlight() and mdUpdateFlight() accept maxRuntimeSec. Deprecated aliases mdFlights(), mdFlightRuns(), mdFlightLogs(), mdFlightVersions() and the mdJobs() family remain exported.
-- Flight helper optional fields use undefined to omit a parameter and null to emit SQL NULL. Config keys must not be empty, cannot contain = or NULL bytes, and cannot use reserved names MOTHERDUCK_TOKEN or MOTHERDUCK_FLIGHTS_RUN. An empty config object emits a typed empty MAP and an empty flightSecretNames array emits a typed empty VARCHAR[] list, which clears the secrets. The deprecated mdFlightLogs() and mdJobRunLogs() blobs join lines in line_number order, descending when order is desc. Flight secret params are exposed as <SECRET_NAME>_<KEY> environment variables.
+- Flight helper optional fields use undefined to omit a parameter and null to emit SQL NULL. Config keys must not be empty, cannot contain = or NULL bytes, and cannot use reserved names MOTHERDUCK_TOKEN or MOTHERDUCK_FLIGHTS_RUN. An empty config object emits a typed empty MAP and an empty flightSecretNames array emits a typed empty VARCHAR[] list. The deprecated mdFlightLogs() and mdJobRunLogs() blobs join lines in line_number order, descending when order is desc. Flight secret params are exposed as <SECRET_NAME>_<KEY> environment variables.
 - File scans with run placement: motherDuckReadParquet, motherDuckReadCsvAuto, motherDuckReadJsonAuto, motherDuckTableFunction.
 - mdPromptJev(input, options): builds a prompt_jev call with the question settings as SQL constants. Needs a @duckdb/node-api 1.5.5 client. It throws on missing or empty instructions, an empty questions record, empty criteria lists, and choice or score questions without criteria.
 
@@ -103,7 +127,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - Do NOT use Postgres json or jsonb columns. Use duckDbJson() instead.
 - DuckDB 1.4.x and 1.5.x do not support SAVEPOINT. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
 - DuckDB aborts the whole transaction when a statement fails at execution time. If the callback catches that error and continues, `db.transaction` rejects with "DuckDB aborted the transaction because a statement inside it failed..." and the statement error as `cause`. No changes are committed. Parser and catalog errors do not abort the transaction.
-- DECIMAL values selected through numeric() columns are exact strings. Raw db.execute() results and SQL expressions return DECIMAL as JavaScript numbers, which can lose precision. Cast to VARCHAR in SQL for exact values there.
+- DECIMAL values selected through numeric() columns with db.select() are exact strings. Raw db.execute() results, SQL expressions, relational queries, streams and executeArrow() read DECIMAL as JavaScript numbers, which can lose precision. Cast to VARCHAR in SQL for exact values there.
 - A column type that @duckdb/node-api cannot convert to JavaScript throws an error naming the column. Cast it in SQL.
 - DuckDB runs one query per connection. Use the pool for parallel queries. Temp views and other session state exist only on the connection that created them.
 - DuckDB 1.5 adds VARIANT and built-in GEOMETRY. With @duckdb/node-api 1.5.4-r.1 and newer, VARIANT values materialize into JavaScript values. Project geometry with ST_AsText(...) or ST_AsWKB(...).
@@ -119,7 +143,7 @@ await migrate(db, {
 });
 ```
 
-All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls on one database in a process are queued, and calls from separate connections retry on DuckDB write-write conflicts. With DuckLake as the default catalog, the journal is a plain table (DuckLake has no sequences, primary keys or indexes), and migration SQL must avoid primary keys, unique constraints and serial columns. Journal names cannot contain a double quote.
+All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls on the same db (or the same connection or pool) are queued, and other calls retry on DuckDB write-write conflicts up to 10 times. With DuckLake as the default catalog, the journal is a plain table (DuckLake has no sequences, primary keys or indexes), and migration SQL must avoid primary keys, unique constraints and serial columns. Journal names cannot contain a double quote.
 
 ## Schema Introspection
 
@@ -135,6 +159,17 @@ const result = await introspect(db, {
 ```
 
 CLI: `bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts`
+
+- Generated columns become ``.generatedAlwaysAs(sql`...`)``. Non-literal defaults such as gen_random_uuid() become ``.default(sql`...`)``.
+- Views (includeViews) become `schema.view(name, {...}).existing()`.
+- UTINYINT, USMALLINT and UINTEGER map to integer(). UBIGINT, HUGEINT and UHUGEINT map to bigint({ mode: 'bigint' }). BIGINT maps to bigint({ mode: 'number' }).
+- CHECK constraints and CREATE INDEX indexes are listed as comments, not emitted.
+- The generated schema does not encode the database. Tables from another database (database or allDatabases) work only after `USE <database>`, and the file flags them with comments.
+- The CLI exits with code 1, without writing, when --database or a --schema does not exist.
+
+## Other Exports
+
+- DuckDBDialect (the dialect class), DuckDBSelectBuilder (the type db.select() returns), DuckDbMigrationConfig (the migrate() config type), createDuckDBConnectionPool, createPgDuckConnectionPool, configureDuckLake.
 
 ## MotherDuck Connection
 
