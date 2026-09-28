@@ -117,6 +117,38 @@ describe('duckdb-introspect parseArgs', () => {
     }
   });
 
+  test('collects repeated --ducklake-meta-parameter values', () => {
+    const options = parseArgs([
+      '--ducklake-catalog',
+      'x',
+      '--ducklake-meta-parameter',
+      'type=duckdb',
+      '--ducklake-meta-parameter',
+      'note=a=b',
+    ]);
+    expect(options.ducklake?.attachOptions).toEqual({
+      metaParameters: { type: 'duckdb', note: 'a=b' },
+    });
+    expect(() =>
+      parseArgs(['--ducklake-catalog', 'x', '--ducklake-meta-parameter', '=v'])
+    ).toThrow('expected KEY=VALUE');
+  });
+
+  test('rejects the removed --ducklake-meta-parameter-name flag', () => {
+    expect(() =>
+      parseArgs([
+        '--ducklake-catalog',
+        'x',
+        '--ducklake-meta-parameter-name',
+        'y',
+      ])
+    ).toThrow(
+      new CliUsageError(
+        "--ducklake-meta-parameter-name is no longer supported. Use --ducklake-meta-parameter KEY=VALUE, which emits META_<KEY> 'VALUE'."
+      )
+    );
+  });
+
   test('rejects DuckLake options without a catalog', () => {
     expect(() => parseArgs(['--url', ':memory:', '--ducklake-load'])).toThrow(
       'DuckLake requires --ducklake-catalog'

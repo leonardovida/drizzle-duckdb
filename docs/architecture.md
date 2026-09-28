@@ -18,7 +18,8 @@ A short map of the source tree for contributors.
 ## Drizzle Integration Points
 
 - `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Overrides `prepareTyping()` and `migrate()`, rejects `PgJson` and `PgJsonb`, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`. `migrate()` retries on write-write conflicts and uses a plain journal table when DuckLake is the current catalog.
-- `src/migrator.ts`: `migrate()`, which queues calls that share an instance or client before calling the dialect.
+- `src/migrator.ts`: `migrate()`, which queues calls on the same database file or client before calling the dialect.
+- `src/instance-keys.ts`: records which database path each shared DuckDB instance points at, so `migrate()` can queue per database.
 - `src/session.ts`: `DuckDBSession` extends `PgSession`. Pins one pooled connection per transaction, probes savepoint support for nested transactions, checks string parameters for Postgres array literals, keeps `numeric()` columns as exact DECIMAL strings, and wires streaming, columnar fetch and the prepared statement cache into `DuckDBPreparedQuery`.
 - `src/select-builder.ts`: DuckDB select builder used by `db.select()`. Aliases duplicate column names and exposes subquery, CTE and view fields qualified by their alias.
 

@@ -147,9 +147,26 @@ export function parseArgs(argv: string[]): CliOptions {
       case '--ducklake-metadata-catalog':
         ensureDuckLakeAttachOptions().metadataCatalog = requireValue();
         break;
-      case '--ducklake-meta-parameter-name':
-        ensureDuckLakeAttachOptions().metaParameterName = requireValue();
+      case '--ducklake-meta-parameter': {
+        const value = requireValue();
+        const separator = value.indexOf('=');
+        if (separator <= 0) {
+          throw new CliUsageError(
+            `Invalid value for ${arg}: expected KEY=VALUE, got ${JSON.stringify(value)}`
+          );
+        }
+        const attachOptions = ensureDuckLakeAttachOptions();
+        attachOptions.metaParameters = {
+          ...attachOptions.metaParameters,
+          [value.slice(0, separator)]: value.slice(separator + 1),
+        };
         break;
+      }
+      case '--ducklake-meta-parameter-name':
+        // DuckLake has no META_PARAMETER_NAME option, so this never worked.
+        throw new CliUsageError(
+          `${arg} is no longer supported. Use --ducklake-meta-parameter KEY=VALUE, which emits META_<KEY> 'VALUE'.`
+        );
       case '--help':
       case '-h':
         options.help = true;

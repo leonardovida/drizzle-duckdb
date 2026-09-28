@@ -143,7 +143,7 @@ await migrate(db, {
 });
 ```
 
-All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls on the same db (or the same connection or pool) are queued, and other calls retry on DuckDB write-write conflicts up to 10 times. With DuckLake as the default catalog, the journal is a plain table (DuckLake has no sequences, primary keys or indexes), and migration SQL must avoid primary keys, unique constraints and serial columns. Journal names cannot contain a double quote.
+All pending migrations run in one transaction. Applied migrations are tracked in drizzle.__drizzle_migrations by default. Concurrent migrate() calls apply each migration once: calls in one process on the same database (the same db, drizzle(path) databases on one file, or the same connection or pool) are queued, and other calls retry on DuckDB write-write conflicts up to 10 times. With DuckLake as the default catalog, the journal is a plain table (DuckLake has no sequences, primary keys or indexes), and migration SQL must avoid primary keys, unique constraints and serial columns. Journal names cannot contain a double quote.
 
 ## Schema Introspection
 

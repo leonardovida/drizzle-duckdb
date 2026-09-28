@@ -121,8 +121,8 @@ await migrate(db, {
 
 Concurrent `migrate()` calls apply each migration once:
 
-- Calls in one process that pass the same `db`, or databases built on the same connection or pool object, run one after another.
-- Other calls can still race, for example two `drizzle(path)` databases on one file, or two processes that share a MotherDuck database. DuckDB then fails one of them with a `TransactionContext Error` such as `Catalog write-write conflict`. `migrate()` retries the setup and the migration transaction up to 10 times with a short backoff (a few seconds in total). Each attempt reads the tracking table again, so migrations that the other call committed are skipped.
+- Calls in one process on the same database run one after another. That covers the same `db`, separate `drizzle(path)` databases on one file (in any spelling of the path, such as `./app.duckdb` and an absolute path), and databases built on the same connection or pool object.
+- Other calls can still race, for example two processes that share a database file or a MotherDuck database, or databases built on separate connections that you opened yourself. DuckDB then fails one of them with a `TransactionContext Error` such as `Catalog write-write conflict`. `migrate()` retries the setup and the migration transaction up to 10 times with a short backoff (a few seconds in total). Each attempt reads the tracking table again, so migrations that the other call committed are skipped.
 - The unique index on `created_at` keeps two migrators from recording the same migration twice. If a run fails and the latest migration is already recorded, `migrate()` returns without error.
 
 A retry does not wait for a long migration in another connection to finish. If the other migration runs longer than the retry window, the call fails with the conflict error and you can run it again. Other errors, such as a failing statement in a migration, are not retried.
@@ -133,7 +133,7 @@ A retry does not wait for a long migration in another connection to finish. If t
 
 Two points follow from that:
 
-- Migrations run in one transaction, as with a regular database. Calls on the same `db` are still queued. Two processes that migrate one DuckLake catalog at the same time rely on DuckLake's own conflict detection and the retry described above, without the unique index as a backstop. Run migrations from a single process when you can.
+- Migrations run in one transaction, as with a regular database. Calls in one process on the same database are still queued. Two processes that migrate one DuckLake catalog at the same time rely on DuckLake's own conflict detection and the retry described above, without the unique index as a backstop. Run migrations from a single process when you can.
 - The migration SQL must itself be valid on DuckLake. Tables with primary keys, unique constraints, foreign keys or `serial` columns fail. Generate those migrations from a schema without them, or write them by hand.
 
 ## Migration Tracking
