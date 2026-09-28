@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    ignore:
+      # Peer ranges for these packages are maintained by hand, so major
+      # updates of the dev copies need a deliberate change. drizzle-orm is
+      # still 0.x, where a minor bump is the breaking one.
+      - dependency-name: drizzle-orm
+        update-types:
+          - 'version-update:semver-major'
+          - 'version-update:semver-minor'
+      - dependency-name: '@duckdb/node-api'
+        update-types: ['version-update:semver-major']
+    groups:
+      npm-development:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      npm-production:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch

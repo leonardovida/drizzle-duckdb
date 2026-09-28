@@ -11,6 +11,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   perf:
     runs-on: ubuntu-latest
@@ -29,7 +33,7 @@ jobs:
 
       - name: Restore benchmark history
         id: bench-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .bench-cache/benchmark-data.json
           key: bench-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'main' }}-${{ github.run_id }}
@@ -49,7 +53,7 @@ jobs:
         run: bun run perf:run -- --gha-output action-bench.json
 
       - name: Upload raw perf artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-results
           path: |
@@ -86,7 +90,7 @@ jobs:
 
       - name: Save benchmark history (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .bench-cache/benchmark-data.json
           key: bench-${{ runner.os }}-main-${{ github.run_id }}

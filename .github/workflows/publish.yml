@@ -4,37 +4,100 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish, for example v1.5.5. Must match the package.json version on main.'
+        required: true
+        type: string
+      npm_tag:
+        description: 'npm dist-tag to publish under.'
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
 
 permissions:
   id-token: write # Required for OIDC
   contents: read
 
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
   publish:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    # Manual runs publish only from main. Release runs publish the release tag.
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false # never use caching in release builds
 
+      - name: Check tag, version and registry state
+        id: guard
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          # GitHub prereleases go to `next`. Versions such as 1.5.4-15 have
+          # shipped as regular releases, so the version string is not used.
+          DIST_TAG: ${{ github.event_name == 'release' && (github.event.release.prerelease && 'next' || 'latest') || inputs.npm_tag }}
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+
+          if [ "$RELEASE_TAG" != "v${version}" ]; then
+            echo "::error::Tag '${RELEASE_TAG}' does not match package.json version 'v${version}'."
+            exit 1
+          fi
+
+          dist_tag="$DIST_TAG"
+          echo "dist-tag=${dist_tag}" >> "$GITHUB_OUTPUT"
+
+          # Same lookup as `npm view <name>@<version>`, but anonymous and able
+          # to tell "not published" (404) apart from registry errors.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${name}/${version}")
+          case "$status" in
+            200)
+              echo "::notice::${name}@${version} is already on npm. Skipping publish."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "Publishing ${name}@${version} with dist-tag '${dist_tag}'."
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::npm registry lookup for ${name}@${version} returned HTTP ${status}."
+              exit 1
+              ;;
+          esac
+
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        if: steps.guard.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
         run: bun install --frozen-lockfile
 
       - name: Run tests
+        if: steps.guard.outputs.skip != 'true'
         run: CI=1 bun run test
 
       - name: Build package
+        if: steps.guard.outputs.skip != 'true'
         run: bun run build
 
       - name: Publish to npm (@duckdbfan/drizzle-duckdb)
-        run: npm publish --access public --tag latest
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          DIST_TAG: ${{ steps.guard.outputs.dist-tag }}
+        run: npm publish --access public --tag "$DIST_TAG"

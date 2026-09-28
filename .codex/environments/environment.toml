@@ -13,7 +13,7 @@ command = "bun run build"
 [[actions]]
 name = "Test"
 icon = "test"
-command = "bun test"
+command = "bun run test"
 
 [[actions]]
 name = "Test UI"
