@@ -15,7 +15,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | ------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Select queries                       | Full    | All standard select operations work                                                                                                                |
 | Insert/Update/Delete                 | Full    | Including `.returning()`                                                                                                                           |
-| Joins                                | Full    | All join types supported. Bare columns in raw SQL ON clauses are qualified when the source is clear                                                |
+| Joins                                | Full    | Builder fields are qualified. Raw SQL retains DuckDB's column ownership rules                                                                      |
 | Subqueries                           | Full    | Fields are qualified by the subquery alias                                                                                                         |
 | CTEs (WITH clauses)                  | Full    | Fields are qualified by the CTE name                                                                                                               |
 | Aggregations                         | Full    |                                                                                                                                                    |
@@ -80,13 +80,19 @@ If a result column has a type the installed `@duckdb/node-api` cannot convert, t
 
 A `numeric()` column returns the exact DECIMAL value as a string, as node-postgres does for NUMERIC. `numeric('amount', { precision: 38, scale: 10 })` keeps all 38 digits.
 
-Everywhere else DECIMAL values come back as JavaScript numbers, so values with more than about 15 significant digits lose precision. That covers raw `db.execute()` results, SQL expressions such as ``sql<number>`sum(${t.amount})` ``, `executeBatches()` and `executeArrow()` results. Relational queries (`db.query`) also read the rounded number, and a `numeric()` column turns it into a string such as `'1.2345678901234569e+27'`. Cast to `VARCHAR` in SQL when you need the exact value there:
+By default, other DECIMAL results use JavaScript numbers, which lose precision beyond about 15 significant digits. Set `decimalMode: 'string'` when creating the driver to preserve DECIMAL values in raw queries, nested lists, structs and maps, streaming and columnar reads. Relational results preserve numeric columns and decimal leaves in these nested column types before JSON serialization. SQL expressions returning DECIMAL use strings too, so their TypeScript annotations should reflect that policy. Explicit `mapWith(Number)`, numeric-mode columns and Number-based aggregate helpers still convert to a number. Relational SQL extras with unknown result types and numbers embedded in JSON require explicit casts, since their serialization cannot recover precision. Third-party Arrow providers control their own output conversion.
+
+For a single expression, cast to `VARCHAR` in SQL:
 
 ```typescript
 const rows = await db.execute(sql`
   select cast(amount as varchar) as amount_text from payments
 `);
 ```
+
+## Join compatibility
+
+Raw SQL join expressions pass through without guessing which table owns an unqualified column. Builder selections retain qualified fields. Existing applications that relied on the old heuristic can opt in with `qualifyRawJoinColumns: true`, but explicitly qualifying ambiguous references is more reliable. For nullable joined objects, select a non-null key alongside nullable fields so a matched row whose selected values are all null can be distinguished from an unmatched row.
 
 ## JSON Columns
 

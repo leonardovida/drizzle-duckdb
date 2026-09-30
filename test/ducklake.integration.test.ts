@@ -29,6 +29,11 @@ async function canLoadDuckLake(): Promise<boolean> {
 }
 
 const ducklakeAvailable = await canLoadDuckLake();
+if (!ducklakeAvailable && process.env.REQUIRE_DUCKLAKE === '1') {
+  throw new Error(
+    'DuckLake extension is required for this integration run but could not be installed or loaded'
+  );
+}
 
 describe.skipIf(!ducklakeAvailable)('DuckLake attach integration', () => {
   let directory: string;

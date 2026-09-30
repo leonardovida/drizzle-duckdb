@@ -122,10 +122,12 @@ Postgres array operators (`@>`, `<@`, `&&`) are sent unchanged. DuckDB supports 
 
 Postgres first-dimension array bounds calls are rewritten via AST transformation anywhere in a statement, including casts, `ORDER BY`, `GROUP BY` and `UPDATE`. This is always enabled and cannot be disabled:
 
-| Postgres Function   | Rewritten To                                                       |
-| ------------------- | ------------------------------------------------------------------ |
-| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
-| `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
+| Postgres Function   | Rewritten To                                         |
+| ------------------- | ---------------------------------------------------- |
+| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END` |
+| `array_upper(a, 1)` | `NULLIF(array_length(a), 0)`                         |
+
+Expressions containing function calls bind the length in a one-element list before `NULLIF`, because DuckDB can evaluate a `NULLIF` argument twice. This preserves one evaluation per row for volatile functions and keeps each literal and parameter once in the rewritten SQL.
 
 **Example**:
 
@@ -157,6 +159,20 @@ const db = drizzle(connection, { prepareCache: { size: 16 } });
 ```
 
 SQL with several statements, or with only comments, cannot be prepared. It runs without the cache, the same as with `prepareCache` off. This covers migration files without `--> statement-breakpoint` markers.
+
+Use `getPreparedStatementCacheStats(connection)` to inspect hit, miss and eviction counters on a node-api connection without creating a cache.
+
+### decimalMode
+
+`'number'` is the default for raw DECIMAL results. Set `'string'` to preserve exact values in raw results, nested native values, streaming and columnar reads, and numeric columns inside relational results. `numeric()` builder columns keep exact strings in either mode. Explicit Number decoders still produce numbers.
+
+```typescript
+const db = drizzle(connection, { decimalMode: 'string' });
+```
+
+### qualifyRawJoinColumns
+
+Defaults to `false`. Builder fields retain qualified names, and raw SQL follows DuckDB's ownership rules. Set `true` only to restore the previous heuristic for unqualified join references. Explicit qualifiers avoid assumptions about which source owns a column.
 
 ### rejectStringArrayLiterals
 
@@ -241,13 +257,13 @@ const db = await drizzle('md:', {
 
 Pool object options:
 
-| Option               | Default  | Values                                                                                                          |
-| -------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
-| `size`               | `4`      | Number of connections                                                                                           |
-| `acquireTimeout`     | `30_000` | Milliseconds to wait for a free connection. `0` or `Infinity` waits without a timeout. Negative and `NaN` throw |
-| `maxWaitingRequests` | `100`    | Queued acquires before new ones throw. A non-negative integer or `Infinity`. `0` allows no waiting              |
-| `maxLifetimeMs`      | none     | Recycle connections after this age                                                                              |
-| `idleTimeoutMs`      | none     | Recycle connections after this idle period                                                                      |
+| Option               | Default  | Values                                                                                                                                       |
+| -------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `size`               | `4`      | Number of connections                                                                                                                        |
+| `acquireTimeout`     | `30_000` | Queue wait in milliseconds, excluding connection creation and setup. `0` or `Infinity` disables the queue deadline. Negative and `NaN` throw |
+| `maxWaitingRequests` | `100`    | Queued acquires before new ones throw. A non-negative integer or `Infinity`. `0` allows no waiting                                           |
+| `maxLifetimeMs`      | none     | Recycle connections after this age                                                                                                           |
+| `idleTimeoutMs`      | none     | Recycle connections after this idle period                                                                                                   |
 
 Build the pool manually when you need the `setup` hook or want to share one pool across several `drizzle()` instances:
 

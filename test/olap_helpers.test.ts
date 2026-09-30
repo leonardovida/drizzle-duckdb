@@ -150,8 +150,12 @@ test('olap builder injects any_value for non-aggregated selections', async () =>
 
   expect(rows).toHaveLength(2);
 
-  const west = rows.find((r) => r['olap_sales.region'] === 'west');
-  const east = rows.find((r) => r['olap_sales.region'] === 'east');
+  const west = rows.find(
+    (r: Record<string, unknown>) => r['olap_sales.region'] === 'west'
+  );
+  const east = rows.find(
+    (r: Record<string, unknown>) => r['olap_sales.region'] === 'east'
+  );
 
   expect(west?.totalQty).toBe(5);
   expect(east?.totalQty).toBe(1);

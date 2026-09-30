@@ -171,6 +171,7 @@ test('concurrent migrators apply each migration once', async () => {
   const migrations = [
     {
       hash: 'concurrent-migration',
+      bps: false,
       folderMillis: 1000,
       sql: ['insert into migration_effects values (1)'],
     },

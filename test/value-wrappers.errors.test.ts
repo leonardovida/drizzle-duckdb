@@ -172,7 +172,10 @@ describe('Value Wrapper Edge Cases', () => {
 
   describe('wrapperToNodeApiValue', () => {
     // Mock converter for testing
-    const mockConverter = (val: unknown) => val;
+    const mockConverter = (
+      val: unknown
+    ): import('@duckdb/node-api').DuckDBValue =>
+      val as import('@duckdb/node-api').DuckDBValue;
 
     test('handles list wrapper', () => {
       const wrapper = wrapList([1, 2, 3], 'INTEGER');

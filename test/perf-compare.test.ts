@@ -9,6 +9,7 @@ import {
   normalizePerfFile,
   parseArgs,
   renderComparison,
+  regressionFailures,
 } from '../scripts/compare-perf.ts';
 import {
   buildVitestArgs,
@@ -128,7 +129,54 @@ describe('compare-perf', () => {
       previousPath: 'old.json',
       nextPath: 'new.json',
       threshold: 7.5,
+      failOnRegression: false,
+      allowNew: false,
     });
+  });
+
+  test('rejects invalid measurements, units and duplicate names', () => {
+    for (const value of [0, -1, NaN, Infinity])
+      expect(() => normalizePerfFile([{ name: 'scan', value }])).toThrow();
+    expect(() =>
+      normalizePerfFile([{ name: 'scan', value: 1, unit: 'ms' }])
+    ).toThrow();
+    expect(() =>
+      normalizePerfFile([
+        { name: 'scan', value: 1 },
+        { name: 'scan', value: 2 },
+      ])
+    ).toThrow();
+    expect(() => normalizePerfFile([])).toThrow();
+    expect(() => parseArgs(['--threshold', '5oops', 'old', 'new'])).toThrow();
+  });
+
+  test('gates confirmed drops and missing measurements, accounting for uncertainty', () => {
+    const old = [{ name: 'scan', opsPerSecond: 100, relativeMargin: 1 }];
+    expect(
+      regressionFailures(
+        compareBenchmarks(old, [{ ...old[0]!, opsPerSecond: 50 }], 5),
+        5
+      )
+    ).toEqual(['scan']);
+    expect(
+      regressionFailures(
+        compareBenchmarks(
+          old,
+          [{ ...old[0]!, opsPerSecond: 94, relativeMargin: 10 }],
+          5
+        ),
+        5
+      )
+    ).toEqual([]);
+    expect(regressionFailures(compareBenchmarks(old, [], 5), 5)).toEqual([
+      'scan',
+    ]);
+    expect(regressionFailures(compareBenchmarks([], old, 5), 5)).toEqual([
+      'scan',
+    ]);
+    expect(regressionFailures(compareBenchmarks([], old, 5), 5, true)).toEqual(
+      []
+    );
   });
 });
 

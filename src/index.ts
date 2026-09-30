@@ -5,6 +5,7 @@ export * from './migrator.ts';
 export * from './introspect.ts';
 export * from './client.ts';
 export * from './pool.ts';
+export { getPreparedStatementCacheStats } from './prepared-statement-cache.ts';
 export * from './olap.ts';
 // Explicit list keeps the node-api binding helpers in value-wrappers.ts internal.
 export {

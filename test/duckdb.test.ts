@@ -3198,7 +3198,7 @@ test('all date and time columns without timezone first case mode string', async 
   // 3. Select as raw query and check that values are the same
   const result2 = await db.execute<{
     id: number;
-    timestamp_string: string;
+    timestamp_string: string | Date;
   }>(sql`select * from ${table}`);
 
   const ts2 = result2[0]?.timestamp_string;
@@ -3239,7 +3239,7 @@ test('all date and time columns without timezone second case mode string', async
   // 2, Select as raw query and check that values are the same
   const result = await db.execute<{
     id: number;
-    timestamp_string: string;
+    timestamp_string: string | Date;
   }>(sql`select * from ${table}`);
 
   const normalized = result[0]?.timestamp_string;
@@ -3327,7 +3327,7 @@ test('test mode string for timestamp with timezone', async () => {
   // 3. Select as raw query and checke that values are the same
   const result2 = await db.execute<{
     id: number;
-    timestamp_string: string;
+    timestamp_string: string | Date;
   }>(sql`select * from ${table}`);
 
   // 3.1 Notice that postgres will return the date in UTC, but it is exactlt the same
@@ -3377,7 +3377,7 @@ test('test mode date for timestamp with timezone', async () => {
   // 3. Select as raw query and checke that values are the same
   const result2 = await db.execute<{
     id: number;
-    timestamp_string: string;
+    timestamp_string: string | Date;
   }>(sql`select * from ${table}`);
 
   // 3.1 Notice that postgres will return the date in UTC, but it is exactlt the same

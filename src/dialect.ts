@@ -8,7 +8,6 @@ import {
   PgJson,
   PgJsonb,
   PgNumeric,
-  PgSession,
   PgTime,
   PgTimestamp,
   PgTimestampString,
@@ -107,7 +106,17 @@ function assertMigrationJournalName(option: string, name: string): void {
  * DuckLake catalog is a plain table. pg_duckdb and other clients without
  * duckdb_databases() use the regular journal.
  */
-async function isDuckLakeCurrentCatalog(session: PgSession): Promise<boolean> {
+type MigrationSession = {
+  execute(query: SQL): PromiseLike<unknown>;
+  all<T>(query: SQL): PromiseLike<T[]>;
+  transaction<T>(
+    callback: (tx: { execute(query: SQL): PromiseLike<unknown> }) => Promise<T>
+  ): Promise<T>;
+};
+
+async function isDuckLakeCurrentCatalog(
+  session: MigrationSession
+): Promise<boolean> {
   try {
     const [row] = await session.all<{ type: string }>(
       sql`select type from duckdb_databases() where database_name = current_database()`
@@ -131,7 +140,10 @@ const RELATIONAL_JSON_CHUNKS = new Map([
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
-function rewriteRelationalJsonChunks(chunks: SQLChunk[]): void {
+function rewriteRelationalJsonChunks(
+  chunks: SQLChunk[],
+  exactDecimals = false
+): void {
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
     if (is(chunk, StringChunk)) {
@@ -140,6 +152,17 @@ function rewriteRelationalJsonChunks(chunks: SQLChunk[]): void {
         value === undefined ? undefined : RELATIONAL_JSON_CHUNKS.get(value);
       const next = chunks[index + 1] as unknown;
       if (replacement) {
+        if (exactDecimals && value === 'json_build_array(' && is(next, SQL)) {
+          const fields = next.queryChunks.map((item) => {
+            if (!is(item, Column)) return item;
+            const originalType = item.getSQLType();
+            const exactType = decimalStringType(originalType);
+            return exactType === originalType
+              ? item
+              : sql`cast(${item} as ${sql.raw(exactType)})`;
+          });
+          next.queryChunks.splice(0, next.queryChunks.length, ...fields);
+        }
         chunks[index] = new StringChunk(replacement);
       } else if (
         value !== undefined &&
@@ -149,15 +172,29 @@ function rewriteRelationalJsonChunks(chunks: SQLChunk[]): void {
         chunks[index + 1] = new StringChunk(String(next));
       }
     } else if (Array.isArray(chunk)) {
-      rewriteRelationalJsonChunks(chunk);
+      rewriteRelationalJsonChunks(chunk, exactDecimals);
     } else if (is(chunk, SQL)) {
-      rewriteRelationalJsonChunks(chunk.queryChunks);
+      rewriteRelationalJsonChunks(chunk.queryChunks, exactDecimals);
     } else if (is(chunk, SQL.Aliased)) {
-      rewriteRelationalJsonChunks(chunk.sql.queryChunks);
+      rewriteRelationalJsonChunks(chunk.sql.queryChunks, exactDecimals);
     } else if (is(chunk, Subquery)) {
-      rewriteRelationalJsonChunks((chunk._.sql as SQL).queryChunks);
+      rewriteRelationalJsonChunks(
+        (chunk._.sql as SQL).queryChunks,
+        exactDecimals
+      );
     }
   }
+}
+
+// Cast DECIMAL leaves before relational JSON serialization. Native nested
+// casts retain list/struct/map shape while preserving decimal digits as text.
+// Quoted field names and ENUM labels must remain literal catalog text.
+function decimalStringType(type: string): string {
+  return type.replace(
+    /"(?:""|[^"])*"|'(?:''|[^'])*'|\b(?:DECIMAL|NUMERIC)\b(?:\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\))?/gi,
+    (token) =>
+      token.startsWith('"') || token.startsWith("'") ? token : 'VARCHAR'
+  );
 }
 
 export class DuckDBDialect extends PgDialect {
@@ -165,6 +202,15 @@ export class DuckDBDialect extends PgDialect {
   // Track savepoint support per-dialect instance to avoid cross-contamination
   // when multiple database connections with different capabilities exist.
   private savepointsSupported: SavepointSupport = SavepointSupport.Unknown;
+
+  constructor(
+    private options: ConstructorParameters<typeof PgDialect>[0] & {
+      qualifyRawJoinColumns?: boolean;
+      decimalMode?: 'number' | 'string';
+    } = {}
+  ) {
+    super(options);
+  }
 
   /**
    * @deprecated Pg JSON/JSONB params now throw while the query is built. This
@@ -213,7 +259,7 @@ export class DuckDBDialect extends PgDialect {
 
   override async migrate(
     migrations: MigrationMeta[],
-    session: PgSession,
+    session: MigrationSession,
     config: MigrationConfig | string
   ): Promise<void> {
     const migrationConfig = normalizeMigrationConfig(config);
@@ -387,7 +433,10 @@ export class DuckDBDialect extends PgDialect {
     const result = super.buildRelationalQueryWithoutPK(config);
     // Nested relations recurse through this method; rewrite once at the root.
     if (!config.nestedQueryRelation && is(result.sql, SQL)) {
-      rewriteRelationalJsonChunks(result.sql.queryChunks);
+      rewriteRelationalJsonChunks(
+        result.sql.queryChunks,
+        this.options.decimalMode === 'string'
+      );
     }
     return result;
   }
@@ -400,7 +449,9 @@ export class DuckDBDialect extends PgDialect {
     const result = super.sqlToQuery(sqlObj, invokeSource);
 
     // Apply AST-based transformations for DuckDB compatibility
-    const transformed = transformSQL(result.sql);
+    const transformed = transformSQL(result.sql, {
+      qualifyJoinColumns: this.options.qualifyRawJoinColumns === true,
+    });
 
     return {
       ...result,

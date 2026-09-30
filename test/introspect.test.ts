@@ -79,10 +79,14 @@ test('introspects duckdb catalog and maps duckdb-specific types', async () => {
   const schemaTs = result.files.schemaTs;
 
   expect(schemaTs).toContain(`duckDbJson("json_col")`);
-  expect(schemaTs).toContain(`duckDbStruct("payload"`);
-  expect(schemaTs).toContain(`duckDbMap("extras"`);
-  expect(schemaTs).toContain(`duckDbList("tags"`);
-  expect(schemaTs).toContain(`duckDbArray("fixed"`);
+  expect(schemaTs).toContain(
+    `duckDbStruct<{ "name": string | null; "values": Array<number | null> | null }>("payload"`
+  );
+  expect(schemaTs).toContain(
+    `duckDbMap<Record<string, Array<number | null> | null>>("extras"`
+  );
+  expect(schemaTs).toContain(`duckDbList<number | null>("tags"`);
+  expect(schemaTs).toContain(`duckDbArray<number | null>("fixed"`);
   expect(schemaTs).toContain(`duckDbInterval("duration"`);
   expect(schemaTs).toContain(`numeric("price", { precision: 18, scale: 3 })`);
   expect(schemaTs).toContain(
@@ -90,7 +94,7 @@ test('introspects duckdb catalog and maps duckdb-specific types', async () => {
   );
   expect(schemaTs).toContain(`duckDbTime("wake_at", { withTimezone: true })`);
   expect(schemaTs).toContain(`/* ENUM ('pending', 'done') */`);
-  expect(schemaTs).toContain(`bigint("visits", { mode: 'number' })`);
+  expect(schemaTs).toContain(`bigint("visits", { mode: 'bigint' })`);
   expect(schemaTs).toContain(
     `duckDbTimestamp("happened_ns", { duckDbType: "TIMESTAMP_NS" })`
   );
@@ -126,6 +130,6 @@ test('preserves quoted STRUCT fields in generated schema', async () => {
   });
 
   expect(result.files.schemaTs).toContain(
-    'duckDbStruct("payload", { "a,b": "INTEGER", "say\\"hi": "VARCHAR", "ordinary": "INTEGER" })'
+    'duckDbStruct<{ "a,b": number | null; "say\\"hi": string | null; "ordinary": number | null }>("payload", { "a,b": "INTEGER", "say\\"hi": "VARCHAR", "ordinary": "INTEGER" })'
   );
 });

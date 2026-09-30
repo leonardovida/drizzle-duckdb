@@ -194,6 +194,13 @@ describe('duckdb-introspect binary targets', () => {
     expect(result.schemaTs).toBe(handWritten);
   }, 30_000);
 
+  test('validates an explicit database even with all-databases', () => {
+    const result = run('--database', 'app_typo', '--all-databases');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Database "app_typo" not found');
+    expect(result.schemaTs).toBe(handWritten);
+  }, 30_000);
+
   test('fails without writing when a schema does not exist', () => {
     const result = run('--schema', 'main,mian');
     expect(result.status).toBe(1);

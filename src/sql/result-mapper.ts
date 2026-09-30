@@ -133,42 +133,11 @@ function trackNullifyTarget(
     return;
   }
 
-  if (nullifyMap[objectName] && nullifyMap[objectName] !== tableName) {
+  if (
+    nullifyMap[objectName] &&
+    (nullifyMap[objectName] !== tableName || value !== null)
+  ) {
     nullifyMap[objectName] = false;
-  }
-}
-
-function trackJoinedObjectNullability(
-  nullifyMap: NullifyMap,
-  field: unknown,
-  path: string[],
-  value: unknown
-): void {
-  if (path.length !== 2) {
-    return;
-  }
-
-  const objectName = path[0] as string;
-
-  if (is(field, Column)) {
-    trackNullifyTarget(
-      nullifyMap,
-      objectName,
-      getTableName(field.table),
-      value
-    );
-    return;
-  }
-
-  if (!is(field, SQL.Aliased)) {
-    return;
-  }
-
-  const column = findColumnInSql(getFieldSql(field as SQLCarrier));
-  const tableName = column?.table && getTableName(column.table);
-
-  if (tableName) {
-    trackNullifyTarget(nullifyMap, objectName, tableName, value);
   }
 }
 
@@ -359,38 +328,39 @@ export function normalizeInterval(value: unknown): string | unknown {
   return value;
 }
 
-function mapDriverValue(
-  decoder: DriverValueDecoder<unknown, unknown>,
-  rawValue: unknown
-): unknown {
-  let normalized = rawValue;
-
+function compileValueMapper(
+  decoder: DriverValueDecoder<unknown, unknown>
+): (value: unknown) => unknown {
+  let normalize: (value: unknown) => unknown = (value) => value;
   if (is(decoder, PgTimestampString)) {
-    normalized = normalizeTimestampString(rawValue, decoder.withTimezone);
+    normalize = (value) =>
+      normalizeTimestampString(value, decoder.withTimezone);
   } else if (is(decoder, PgTimestamp)) {
-    normalized = normalizeTimestamp(rawValue, decoder.withTimezone);
-    if (normalized instanceof Date) {
-      return normalized;
-    }
+    return (value) => {
+      if (value === null) return null;
+      const normalized = normalizeTimestamp(
+        normalizeInet(value),
+        decoder.withTimezone
+      );
+      return normalized instanceof Date
+        ? normalized
+        : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+    };
   } else if (is(decoder, PgDateString)) {
-    normalized = normalizeDateString(rawValue);
+    normalize = normalizeDateString;
   } else if (is(decoder, PgDate)) {
-    normalized = normalizeDateValue(rawValue);
+    normalize = normalizeDateValue;
   } else if (is(decoder, PgTime)) {
-    normalized = normalizeTime(rawValue);
+    normalize = normalizeTime;
   } else if (is(decoder, PgInterval)) {
-    normalized = normalizeInterval(rawValue);
+    normalize = normalizeInterval;
   }
-
-  return decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
-}
-
-function mapFieldValue(
-  decoder: DriverValueDecoder<unknown, unknown>,
-  rawValue: unknown
-): unknown {
-  const normalized = normalizeInet(rawValue);
-  return normalized === null ? null : mapDriverValue(decoder, normalized);
+  return (value) =>
+    value === null
+      ? null
+      : decoder.mapFromDriverValue(
+          toDecoderInput(decoder, normalize(normalizeInet(value)))
+        );
 }
 
 function assignResultPath(
@@ -425,27 +395,56 @@ export function mapResultRow<TResult>(
   row: unknown[],
   joinsNotNullableMap: Record<string, boolean> | undefined
 ): TResult {
-  const nullifyMap = Object.create(null) as NullifyMap;
-  const result: ResultRow = {};
+  return compileResultMapper<TResult>(columns, joinsNotNullableMap)(row);
+}
 
-  for (const [columnIndex, { path, field }] of columns.entries()) {
-    const decoder = resolveFieldDecoder(field);
-    const value = mapFieldValue(decoder, row[columnIndex]!);
-
-    assignResultPath(result, path, value);
-
-    if (joinsNotNullableMap) {
-      trackJoinedObjectNullability(nullifyMap, field, path, value);
+/** Resolve stable field metadata once, before mapping any result rows. */
+export function compileResultMapper<TResult>(
+  columns: SelectedFieldsOrdered<AnyColumn>,
+  joinsNotNullableMap?: Record<string, boolean>
+): (row: unknown[]) => TResult {
+  const plan = columns.map(({ path, field }) => {
+    let tableName: string | undefined;
+    if (joinsNotNullableMap && path.length === 2) {
+      const column = is(field, Column)
+        ? field
+        : is(field, SQL.Aliased)
+          ? findColumnInSql(getFieldSql(field as SQLCarrier))
+          : undefined;
+      if (column) tableName = getTableName(column.table);
     }
-  }
+    return {
+      path: [...path],
+      map: compileValueMapper(resolveFieldDecoder(field)),
+      tableName,
+    };
+  });
+  const flat = plan.every(({ path }) => path.length === 1);
+  const hasNullifyTargets = plan.some(
+    ({ tableName }) => tableName !== undefined
+  );
 
-  if (joinsNotNullableMap && Object.keys(nullifyMap).length > 0) {
-    for (const [objectName, tableName] of Object.entries(nullifyMap)) {
-      if (typeof tableName === 'string' && !joinsNotNullableMap[tableName]) {
-        assignOwnProperty(result, objectName, null);
+  return (row) => {
+    const result: ResultRow = {};
+    const nullifyMap = hasNullifyTargets
+      ? (Object.create(null) as NullifyMap)
+      : undefined;
+    for (let index = 0; index < plan.length; index += 1) {
+      const { path, map, tableName } = plan[index]!;
+      const value = map(row[index]);
+      if (flat) assignOwnProperty(result, path[0]!, value);
+      else assignResultPath(result, path, value);
+      if (nullifyMap && tableName !== undefined) {
+        trackNullifyTarget(nullifyMap, path[0]!, tableName, value);
       }
     }
-  }
-
-  return result as TResult;
+    if (nullifyMap) {
+      for (const [name, tableName] of Object.entries(nullifyMap)) {
+        if (typeof tableName === 'string' && !joinsNotNullableMap![tableName]) {
+          assignOwnProperty(result, name, null);
+        }
+      }
+    }
+    return result as TResult;
+  };
 }

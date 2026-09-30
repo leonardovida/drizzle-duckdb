@@ -145,7 +145,10 @@ const pool = createDuckDBConnectionPool(instance, {
   idleTimeoutMs: 60_000,
 });
 const db = drizzle(pool);
+console.log(pool.stats()); // Leases, queue depth, waits, recycling and timeouts
 ```
+
+`acquireTimeout` limits time in the pool queue. Connection creation and setup run after that wait and have no deadline from this option. Check `pool.stats()` before increasing pool size, since more connections can compete with DuckDB's own query threads.
 
 ## Configuration
 
@@ -161,6 +164,12 @@ const db = await drizzle(':memory:', {
 
   // Per-connection prepared statement cache (default: disabled)
   prepareCache: { size: 32 },
+
+  // Preserve DECIMAL values as strings in raw, streaming and nested reads
+  decimalMode: 'string', // Default: 'number'
+
+  // Legacy raw SQL join qualification heuristic, opt in only if needed
+  qualifyRawJoinColumns: false,
 
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals: false,

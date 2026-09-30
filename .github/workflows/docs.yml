@@ -8,6 +8,10 @@ on:
       - 'docs/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
 
 permissions:
   contents: read
@@ -34,6 +38,7 @@ jobs:
           working-directory: docs
 
       - name: Setup Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
 
       - name: Build with Jekyll
@@ -44,11 +49,13 @@ jobs:
           JEKYLL_ENV: production
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_site
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

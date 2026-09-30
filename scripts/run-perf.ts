@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { normalizePerfFile } from './compare-perf.ts';
 
 type ActionBenchRow = {
   name: string;
@@ -22,9 +23,12 @@ export function parseArgs(argv: string[]): CliArgs {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === '--') continue;
 
     if (arg === '--gha-output' || arg === '--ghaOutput') {
       ghaOutput = argv[i + 1];
+      if (!ghaOutput || ghaOutput.startsWith('-'))
+        throw new Error('Missing value for --gha-output');
       i += 1;
       continue;
     }
@@ -131,10 +135,60 @@ async function main(): Promise<void> {
 
   const raw = await fs.readFile(tempJson, 'utf8');
   const rows = toActionRows(JSON.parse(raw));
+  normalizePerfFile(rows);
   await fs.unlink(tempJson).catch(() => {});
 
   const outPath = ghaOutput ?? 'action-bench.json';
   await writeJson(outPath, rows);
+  const packageVersion = async (name: string) => {
+    const packageJson = await fs.readFile(
+      new URL(`../node_modules/${name}/package.json`, import.meta.url),
+      'utf8'
+    );
+    return (JSON.parse(packageJson) as { version: string }).version;
+  };
+  const metadata = {
+    recordedAt: new Date().toISOString(),
+    commit: execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim(),
+    // Vitest runs in Node workers. Bun's embedded Node version describes
+    // this controller, not the process executing the measurements.
+    runtime: JSON.parse(
+      execFileSync('node', ['-p', 'JSON.stringify(process.versions)'], {
+        encoding: 'utf8',
+      })
+    ) as Record<string, string>,
+    controller: process.versions,
+    workingTreeDirty:
+      execFileSync('git', ['status', '--porcelain'], {
+        encoding: 'utf8',
+      }).trim().length > 0,
+    platform: os.platform(),
+    arch: os.arch(),
+    cpu: os.cpus()[0]?.model,
+    cpuCount: os.cpus().length,
+    versions: {
+      duckdb: await packageVersion('@duckdb/node-api'),
+      drizzle: await packageVersion('drizzle-orm'),
+      vitest: await packageVersion('vitest'),
+    },
+    dataset: {
+      factRows: 100000,
+      wideRows: 2000,
+      arrayRows: 5000,
+      streamRowsPerChunk: 10000,
+    },
+    cache: 'disabled unless benchmark name explicitly enables it',
+    uncertainty: 'range is the relative margin of error in percent',
+    filters: runFilters,
+  };
+  await fs.writeFile(
+    `${outPath}.meta.json`,
+    JSON.stringify(metadata, null, 2) + '\n'
+  );
+  await fs.mkdir('perf-results', { recursive: true });
+  await fs.writeFile(path.join('perf-results', `${Date.now()}-raw.json`), raw);
 
   console.log(`Wrote ${rows.length} benchmarks to ${outPath}`);
 }

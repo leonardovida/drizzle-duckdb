@@ -53,6 +53,54 @@ function arrayLengthExpr(arrayExpr: unknown) {
 function arrayBoundsExpr(functionName: string, arrayExpr: unknown) {
   const lengthExpr = arrayLengthExpr(arrayExpr);
 
+  // Evaluate the expression once. Duplicating it also duplicates parameters
+  // and literals, which the SQL preservation guard correctly rejects.
+  if (functionName === 'array_upper') {
+    const nullIf = (value: unknown) => ({
+      type: 'function' as const,
+      name: { name: [{ type: 'default', value: 'nullif' }] },
+      args: {
+        type: 'expr_list' as const,
+        value: [value, { type: 'number' as const, value: 0 }],
+      },
+    });
+    // DuckDB expands NULLIF as CASE and can evaluate its argument twice.
+    // Bind the length in a one-element list so a volatile expression still
+    // runs once per row. Scalar subqueries can cache it for the whole query.
+    if (hasPotentiallyVolatileExpression(arrayExpr)) {
+      const call = (name: string, args: unknown[]) => ({
+        type: 'function',
+        name: { name: [{ type: 'default', value: name }] },
+        args: { type: 'expr_list', value: args },
+      });
+      const length = {
+        type: 'column_ref',
+        table: null,
+        column: '__drizzle_array_length',
+      };
+      return call('list_extract', [
+        call('list_transform', [
+          call('list_value', [lengthExpr]),
+          {
+            type: 'binary_expr',
+            operator: '->',
+            left: length,
+            right: nullIf(length),
+          },
+        ]),
+        { type: 'number', value: 1 },
+      ]);
+    }
+    return {
+      type: 'function' as const,
+      name: { name: [{ type: 'default', value: 'nullif' }] },
+      args: {
+        type: 'expr_list' as const,
+        value: [lengthExpr, { type: 'number' as const, value: 0 }],
+      },
+    };
+  }
+
   return {
     type: 'case' as const,
     expr: null,
@@ -65,10 +113,7 @@ function arrayBoundsExpr(functionName: string, arrayExpr: unknown) {
           left: arrayLengthExpr(arrayExpr),
           right: { type: 'number' as const, value: 0 },
         },
-        result:
-          functionName === 'array_lower'
-            ? { type: 'number' as const, value: 1 }
-            : lengthExpr,
+        result: { type: 'number' as const, value: 1 },
       },
       {
         type: 'else' as const,
@@ -76,6 +121,16 @@ function arrayBoundsExpr(functionName: string, arrayExpr: unknown) {
       },
     ],
   };
+}
+
+function hasPotentiallyVolatileExpression(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const expression = value as Record<string, unknown>;
+  return (
+    expression.type === 'function' ||
+    'ast' in expression ||
+    Object.values(expression).some(hasPotentiallyVolatileExpression)
+  );
 }
 
 function transformArrayBoundsFunction(

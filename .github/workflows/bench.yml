@@ -58,6 +58,7 @@ jobs:
           name: perf-results
           path: |
             action-bench.json
+            action-bench.json.meta.json
             perf-results/*.json
           if-no-files-found: error
 
@@ -68,8 +69,9 @@ jobs:
           tool: 'customBiggerIsBetter'
           output-file-path: action-bench.json
           external-data-json-path: .bench-cache/benchmark-data.json
-          alert-threshold: '5%'
-          fail-on-alert: true
+          # A 5% throughput drop is a worsening ratio of 100 / 0.95.
+          alert-threshold: '105.2631579%'
+          fail-on-alert: false
           comment-on-alert: true
           comment-always: true
           summary-always: true
@@ -82,8 +84,8 @@ jobs:
           tool: 'customBiggerIsBetter'
           output-file-path: action-bench.json
           external-data-json-path: .bench-cache/benchmark-data.json
-          alert-threshold: '5%'
-          fail-on-alert: true
+          alert-threshold: '105.2631579%'
+          fail-on-alert: false
           comment-on-alert: false
           comment-always: false
           summary-always: true
@@ -94,3 +96,31 @@ jobs:
         with:
           path: .bench-cache/benchmark-data.json
           key: bench-${{ runner.os }}-main-${{ github.run_id }}
+
+      - name: Checkout comparison revision
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: benchmark-base
+
+      - name: Benchmark base on the same runner
+        if: github.event_name == 'pull_request'
+        working-directory: benchmark-base
+        run: |
+          bun install --frozen-lockfile
+          bun run perf:run -- --gha-output ../base-bench.json
+
+      - name: Gate regressions beyond measurement uncertainty
+        if: github.event_name == 'pull_request'
+        run: bun run perf:compare -- --threshold 5 --fail-on-regression --allow-new base-bench.json action-bench.json
+
+      - name: Upload comparison artifacts
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-base-results
+          path: |
+            base-bench.json
+            base-bench.json.meta.json
+            benchmark-base/perf-results/*.json

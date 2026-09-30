@@ -1,22 +1,24 @@
-import type { DuckDBConnection } from '@duckdb/node-api';
 import { asc, avg, sum } from 'drizzle-orm';
 import type { DuckDBDatabase } from '../../src/index.ts';
 import { afterAll, beforeAll, bench, describe } from 'vitest';
-import { closePerfHarness, createPerfHarness } from './setup.ts';
+import {
+  closePerfHarness,
+  createPerfHarness,
+  type PerfHarness,
+} from './setup.ts';
 import { factLarge, narrowWide } from './schema.ts';
 import { olap, sumN } from '../../src/olap.ts';
 
-let connection: DuckDBConnection;
+let harness: PerfHarness;
 let db: DuckDBDatabase;
 
 beforeAll(async () => {
-  const harness = await createPerfHarness();
-  connection = harness.connection;
+  harness = await createPerfHarness();
   db = harness.db;
 });
 
 afterAll(async () => {
-  await closePerfHarness({ connection, db });
+  await closePerfHarness(harness);
 });
 
 describe('table scans and aggregations', () => {

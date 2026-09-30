@@ -81,7 +81,7 @@ test('generated schema type-checks with tsc', async () => {
     'ref: uuid("ref").notNull().default(sql`gen_random_uuid()`)'
   );
   expect(result.files.schemaTs).toContain(
-    `visitsPlus: bigint("visits_plus", { mode: 'number' }).generatedAlwaysAs(sql\`(visits + 1)\`)`
+    `visitsPlus: bigint("visits_plus", { mode: 'bigint' }).generatedAlwaysAs(sql\`(visits + 1)\`)`
   );
   expect(result.files.schemaTs).toContain(
     'export const metricRefs = tcSchema.view("metric_refs", {'

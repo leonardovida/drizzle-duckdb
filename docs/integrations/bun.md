@@ -198,7 +198,7 @@ describe('database', () => {
 Run tests:
 
 ```bash
-bun test
+bun run test
 ```
 
 ## Environment Variables

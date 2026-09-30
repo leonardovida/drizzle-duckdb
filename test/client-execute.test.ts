@@ -56,7 +56,8 @@ function makeClient(options: {
     ? options.deduplicatedColumns
     : ['id'];
 
-  return {
+  // This double implements only the result-reading contract exercised here.
+  const client = {
     async run(_query: string, _values?: unknown[]) {
       return {
         toArrow: arrowValue === undefined ? undefined : async () => arrowValue,
@@ -137,6 +138,7 @@ function makeClient(options: {
       };
     },
   };
+  return client as unknown as DuckDBClientLike;
 }
 
 describe('executeArrowOnClient', () => {

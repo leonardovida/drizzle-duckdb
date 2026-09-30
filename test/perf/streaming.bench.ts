@@ -1,21 +1,23 @@
-import type { DuckDBConnection } from '@duckdb/node-api';
 import { arrayContains, sql } from 'drizzle-orm';
 import type { DuckDBDatabase } from '../../src/index.ts';
 import { afterAll, beforeAll, bench, describe } from 'vitest';
-import { closePerfHarness, createPerfHarness } from './setup.ts';
+import {
+  closePerfHarness,
+  createPerfHarness,
+  type PerfHarness,
+} from './setup.ts';
 import { arrayTable, factLarge } from './schema.ts';
 
-let connection: DuckDBConnection;
+let harness: PerfHarness;
 let db: DuckDBDatabase;
 
 beforeAll(async () => {
-  const harness = await createPerfHarness();
-  connection = harness.connection;
+  harness = await createPerfHarness();
   db = harness.db;
 });
 
 afterAll(async () => {
-  await closePerfHarness({ connection, db });
+  await closePerfHarness(harness);
 });
 
 describe('streaming paths', () => {
@@ -45,7 +47,7 @@ describe('streaming paths', () => {
   );
 
   bench(
-    'array contains (builder with array rewrite)',
+    'array contains (builder with native operators)',
     async () => {
       await db
         .select()
