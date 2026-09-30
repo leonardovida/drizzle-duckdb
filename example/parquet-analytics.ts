@@ -42,6 +42,46 @@ export function parquetRevenue(db: DuckDBDatabase, paths: string | string[]) {
     .orderBy(sales.region);
 }
 
+// Keep all scanned rows visible when an export mixes numeric text and bad data.
+export function parquetReconciliation(
+  db: DuckDBDatabase,
+  paths: string | string[]
+) {
+  const sales = db
+    .select({
+      region: sql<string>`region`.as('region'),
+      rawAmount: sql<string | null>`amount`.as('raw_amount'),
+      parsedAmount: sql<string | null>`TRY_CAST(amount AS DECIMAL(18, 2))`.as(
+        'parsed_amount'
+      ),
+    })
+    .from(
+      motherDuckReadParquet(paths, {
+        named: { union_by_name: true, hive_partitioning: true },
+      })
+    )
+    .as('sales');
+
+  return db
+    .select({
+      region: sales.region,
+      scanned: countN(),
+      accepted: countN(
+        sql`CASE WHEN ${sales.rawAmount} IS NOT NULL AND ${sales.parsedAmount} IS NOT NULL THEN 1 END`
+      ),
+      invalid: countN(
+        sql`CASE WHEN ${sales.rawAmount} IS NOT NULL AND ${sales.parsedAmount} IS NULL THEN 1 END`
+      ),
+      missing: countN(sql`CASE WHEN ${sales.rawAmount} IS NULL THEN 1 END`),
+      revenue: sql<number>`COALESCE(SUM(${sales.parsedAmount}), 0)`.mapWith(
+        Number
+      ),
+    })
+    .from(sales)
+    .groupBy(sales.region)
+    .orderBy(sales.region);
+}
+
 export const regions = pgTable('regions', {
   code: text('code').primaryKey(),
   label: text('label').notNull(),

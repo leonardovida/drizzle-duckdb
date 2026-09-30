@@ -2,11 +2,12 @@ import { expect, expectTypeOf, test } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle, motherDuckReadParquet, sumN } from '../src/index.ts';
 import { sql } from 'drizzle-orm';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   parquetRevenue,
+  parquetReconciliation,
   runParquetAnalytics,
   runParquetDimensionAnalytics,
 } from '../example/parquet-analytics.ts';
@@ -24,6 +25,81 @@ test('composes file scans, schema union, partitions and null filtering', async (
     { region: 'east', orders: 1, revenue: 7 },
     { region: 'west', orders: 2, revenue: 15 },
   ]);
+});
+
+test('reconciles accepted, invalid and missing amounts across real files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'drizzle-parquet-audit-'));
+  const instance = await DuckDBInstance.create(':memory:');
+  const connection = await instance.connect();
+  try {
+    const db = drizzle(connection);
+    const west = join(directory, 'region=west');
+    const east = join(directory, 'region=east');
+    await mkdir(west);
+    await mkdir(east);
+    const numeric = join(west, 'numeric.parquet');
+    const invalid = join(west, 'invalid.parquet');
+    const missing = join(west, 'missing.parquet');
+    const eastInvalid = join(east, 'invalid.parquet');
+    await db.execute(
+      sql`COPY (SELECT '10.50' AS amount UNION ALL SELECT '4.50') TO ${numeric} (FORMAT PARQUET)`
+    );
+    await db.execute(
+      sql`COPY (SELECT 'bad' AS amount) TO ${invalid} (FORMAT PARQUET)`
+    );
+    await db.execute(
+      sql`COPY (SELECT 'pending' AS status) TO ${missing} (FORMAT PARQUET)`
+    );
+    await db.execute(
+      sql`COPY (SELECT 'too large' AS amount) TO ${eastInvalid} (FORMAT PARQUET)`
+    );
+
+    const rows = await parquetReconciliation(db, [
+      numeric,
+      invalid,
+      missing,
+      eastInvalid,
+    ]);
+    expectTypeOf(rows).toEqualTypeOf<
+      {
+        region: string;
+        scanned: number;
+        accepted: number;
+        invalid: number;
+        missing: number;
+        revenue: number;
+      }[]
+    >();
+    expect(rows).toEqual([
+      {
+        region: 'east',
+        scanned: 1,
+        accepted: 0,
+        invalid: 1,
+        missing: 0,
+        revenue: 0,
+      },
+      {
+        region: 'west',
+        scanned: 4,
+        accepted: 2,
+        invalid: 1,
+        missing: 1,
+        revenue: 15,
+      },
+    ]);
+    expect(
+      rows.every(
+        (row) => row.accepted + row.invalid + row.missing === row.scanned
+      )
+    ).toBe(true);
+  } finally {
+    try {
+      connection.closeSync();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
 });
 
 test('joins file sales to unique region keys without losing unmatched revenue', async () => {

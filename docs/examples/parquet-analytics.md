@@ -130,11 +130,39 @@ invalid values into NULL, which `SUM` ignores, so use it only with an explicit
 rejection-count or quarantine policy. `sumN` still converts the final total to
 a JavaScript number. Use an exact result representation when required.
 
+## Reconcile mixed-quality exports
+
+Copy the example's `parquetReconciliation(db, paths)` query when an
+export contains numeric text, malformed text, and files without `amount`. It
+uses `TRY_CAST(amount AS DECIMAL(18, 2))` and reports each row in exactly one
+category before summing accepted amounts:
+
+```typescript
+const rows = await parquetReconciliation(db, paths);
+// [{ region, scanned, accepted, invalid, missing, revenue }, ...]
+```
+
+| Region | Scanned | Accepted | Invalid | Missing | Revenue |
+| ------ | ------- | -------- | ------- | ------- | ------- |
+| east   | 1       | 0        | 1       | 0       | 0       |
+| west   | 4       | 2        | 1       | 1       | 15      |
+
+For each region, `accepted + invalid + missing = scanned`. A SQL NULL is
+missing. A non-NULL value that cannot fit `DECIMAL(18, 2)` is invalid. Revenue
+is zero when a group has no accepted amounts. The example keeps rejected rows
+visible in counts, but does not store their original values or quarantine them.
+If every file lacks `amount`, DuckDB cannot bind the query: inspect the schema
+and restore the expected column. Adjust the decimal precision and scale to
+match your input contract: casting can round extra fractional digits. The
+returned revenue is a JavaScript number, so use
+an exact decimal result representation for high-precision accounting.
+
 ## Schema and value boundaries
 
 - `union_by_name` matches columns by name across files and fills missing columns
-  with SQL NULL. The example excludes rows with a missing amount before
-  aggregating. Choose a missing-data policy appropriate for your own reports.
+  with SQL NULL. `parquetRevenue()` excludes rows with a missing amount, while
+  `parquetReconciliation()` counts them. Choose a missing-data policy
+  appropriate for your own reports.
 - `hive_partitioning` reads partition values from directories such as
   `region=west/`. Keep partition names and types consistent across files.
 - TypeScript selections describe the schema you expect. They do not inspect
