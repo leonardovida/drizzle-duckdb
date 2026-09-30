@@ -31,7 +31,10 @@ import {
 import type { WithSubquery } from 'drizzle-orm/subquery';
 import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
-import { mapResultRow, resolveFieldDecoder } from './sql/result-mapper.ts';
+import {
+  compileResultMapper,
+  resolveFieldDecoder,
+} from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
 import type { DuckDBDialect } from './dialect.ts';
 import type {
@@ -227,6 +230,7 @@ export class DuckDBPreparedQuery<
   T extends PreparedQueryConfig,
 > extends PgPreparedQuery<T> {
   static readonly [entityKind]: string = 'DuckDBPreparedQuery';
+  private resultMapper?: (row: unknown[]) => T['execute'];
 
   constructor(
     private client: DuckDBClientLike,
@@ -245,7 +249,8 @@ export class DuckDBPreparedQuery<
     cacheConfig?: CacheConfig,
     private warnOnStringArrayLiteral?: (sql: string) => void,
     private scalarParamIndexes?: ReadonlySet<number>,
-    private onStatementError?: (error: unknown) => void
+    private onStatementError?: (error: unknown) => void,
+    private decimalMode: 'number' | 'string' = 'number'
   ) {
     super(
       ...([
@@ -290,7 +295,7 @@ export class DuckDBPreparedQuery<
         this.client,
         this.queryString,
         params,
-        { prepareCache: this.prepareCache }
+        { prepareCache: this.prepareCache, decimalMode: this.decimalMode }
       );
 
       return rows as T['execute'];
@@ -300,20 +305,26 @@ export class DuckDBPreparedQuery<
       this.client,
       this.queryString,
       params,
-      { prepareCache: this.prepareCache, exactDecimals: !customResultMapper }
+      {
+        prepareCache: this.prepareCache,
+        exactDecimals: !customResultMapper,
+        decimalMode: this.decimalMode,
+      }
     );
 
     if (customResultMapper) {
       return customResultMapper(rows);
     }
 
-    if (exactDecimalColumns) {
+    if (exactDecimalColumns && this.decimalMode !== 'string') {
       restoreNonNumericDecimals(rows, fields!, exactDecimalColumns);
     }
 
-    return rows.map((row) =>
-      mapResultRow<T['execute']>(fields!, row, joinsNotNullableMap)
+    this.resultMapper ??= compileResultMapper<T['execute']>(
+      fields!,
+      joinsNotNullableMap
     );
+    return rows.map(this.resultMapper);
   }
 
   all(
@@ -328,6 +339,7 @@ export class DuckDBPreparedQuery<
 }
 
 export interface DuckDBSessionOptions {
+  decimalMode?: 'number' | 'string';
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
@@ -394,7 +406,8 @@ export class DuckDBSession<
         ? undefined
         : this.warnOnStringArrayLiteral,
       getScalarParamIndexes(query.params, (query as QueryWithTypings).typings),
-      this.statementFailures ? this.recordStatementFailure : undefined
+      this.statementFailures ? this.recordStatementFailure : undefined,
+      this.options.decimalMode
     );
   }
 
@@ -551,7 +564,10 @@ export class DuckDBSession<
     const { sql: queryString, params } = this.prepareQueryExecution(query);
 
     return this.trackStreamFailures(
-      executeInBatches(this.client, queryString, params, options)
+      executeInBatches(this.client, queryString, params, {
+        decimalMode: this.options.decimalMode,
+        ...options,
+      })
     ) as AsyncGenerator<GenericRowData<T>[], void, void>;
   }
 
@@ -561,14 +577,19 @@ export class DuckDBSession<
   ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
     return this.trackStreamFailures(
-      executeInBatchesRaw(this.client, queryString, params, options)
+      executeInBatchesRaw(this.client, queryString, params, {
+        decimalMode: this.options.decimalMode,
+        ...options,
+      })
     );
   }
 
   async executeArrow(query: SQL): Promise<unknown> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
     try {
-      return await executeArrowOnClient(this.client, queryString, params);
+      return await executeArrowOnClient(this.client, queryString, params, {
+        decimalMode: this.options.decimalMode,
+      });
     } catch (error) {
       this.recordStatementFailure(error);
       throw error;

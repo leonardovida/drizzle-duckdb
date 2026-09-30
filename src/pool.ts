@@ -28,7 +28,7 @@ const DEFAULT_POOL_SIZE = 4;
 export interface DuckDBPoolConfig {
   /** Maximum concurrent connections. Defaults to 4. */
   size?: number;
-  /** Timeout in milliseconds to wait for a connection. Defaults to 30000 (30s). */
+  /** Queue wait timeout in ms, excluding connection creation/setup. Defaults to 30000. */
   acquireTimeout?: number;
   /** Maximum number of requests waiting for a connection. Defaults to 100. */
   maxWaitingRequests?: number;
@@ -66,6 +66,7 @@ type PooledConnection = ConnectionMetadata & {
 };
 
 type WaitingRequest = {
+  queuedAt: number | undefined;
   resolve: (conn: DuckDBConnection) => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -108,7 +109,11 @@ function resolveMaxWaitingRequests(value: number | undefined): number {
 export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
-): DuckDBConnectionPool & { size: number } {
+): DuckDBConnectionPool & {
+  size: number;
+  close(): Promise<void>;
+  stats(): DuckDBPoolStats;
+} {
   const size = normalizePositiveInteger(options.size, DEFAULT_POOL_SIZE);
   const acquireTimeout = resolveAcquireTimeout(options.acquireTimeout);
   const maxWaitingRequests = resolveMaxWaitingRequests(
@@ -126,6 +131,11 @@ export function createDuckDBConnectionPool(
   let closed = false;
   // Track pending acquires to handle race conditions during close
   let pendingAcquires = 0;
+  let created = 0;
+  let recycled = 0;
+  let queued = 0;
+  let queueWaitMs = 0;
+  let timedOut = 0;
 
   const decrementTotal = (): void => {
     total = Math.max(0, total - 1);
@@ -165,16 +175,25 @@ export function createDuckDBConnectionPool(
     }
   };
 
+  const finishQueueWait = (waiter: WaitingRequest): void => {
+    if (waiter.queuedAt !== undefined) {
+      queueWaitMs += Date.now() - waiter.queuedAt;
+      waiter.queuedAt = undefined;
+    }
+  };
+
   const resolveWaiter = (
     waiter: WaitingRequest,
     connection: DuckDBConnection
   ): void => {
     clearTimeout(waiter.timeoutId);
+    finishQueueWait(waiter);
     waiter.resolve(connection);
   };
 
   const rejectWaiter = (waiter: WaitingRequest, error: Error): void => {
     clearTimeout(waiter.timeoutId);
+    finishQueueWait(waiter);
     waiter.reject(error);
   };
 
@@ -182,6 +201,7 @@ export function createDuckDBConnectionPool(
     const waiter = waiting.shift();
     if (waiter) {
       clearTimeout(waiter.timeoutId);
+      finishQueueWait(waiter);
     }
     return waiter;
   };
@@ -247,6 +267,7 @@ export function createDuckDBConnectionPool(
       const pooled = idle.pop() as PooledConnection;
       const now = Date.now();
       if (shouldRecycleIdleConnection(pooled, now)) {
+        recycled += 1;
         try {
           await dropConnection(pooled.connection);
         } catch (error) {
@@ -266,6 +287,7 @@ export function createDuckDBConnectionPool(
       let slotReleased = false;
       try {
         const connection = await DuckDBConnection.create(instance);
+        created += 1;
         if (setup) {
           try {
             await setup(connection);
@@ -303,7 +325,13 @@ export function createDuckDBConnectionPool(
     }
 
     return await new Promise((resolve, reject) => {
-      const waiter: WaitingRequest = { resolve, reject, timeoutId: undefined };
+      const waiter: WaitingRequest = {
+        resolve,
+        reject,
+        timeoutId: undefined,
+        queuedAt: Date.now(),
+      };
+      queued += 1;
       if (acquireTimeout !== undefined) {
         waiter.timeoutId = setTimeout(() => {
           // Remove this waiter from the queue
@@ -311,6 +339,8 @@ export function createDuckDBConnectionPool(
           if (idx !== -1) {
             waiting.splice(idx, 1);
           }
+          timedOut += 1;
+          finishQueueWait(waiter);
           reject(
             new Error(
               `DuckDB connection pool acquire timeout after ${acquireTimeout}ms`
@@ -337,6 +367,7 @@ export function createDuckDBConnectionPool(
     }
 
     if (hasExceededMaxLifetime(meta, now)) {
+      recycled += 1;
       try {
         await dropConnection(connection);
       } catch (error) {
@@ -405,5 +436,34 @@ export function createDuckDBConnectionPool(
     release,
     close,
     size,
+    stats: () => ({
+      size,
+      total,
+      idle: idle.length,
+      leased: leased.size,
+      waiting: waiting.length,
+      pending: pendingAcquires,
+      created,
+      recycled,
+      queued,
+      queueWaitMs,
+      timedOut,
+      closed,
+    }),
   };
+}
+
+export interface DuckDBPoolStats {
+  size: number;
+  total: number;
+  idle: number;
+  leased: number;
+  waiting: number;
+  pending: number;
+  created: number;
+  recycled: number;
+  queued: number;
+  queueWaitMs: number;
+  timedOut: number;
+  closed: boolean;
 }

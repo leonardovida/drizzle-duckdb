@@ -19,6 +19,8 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
       - run: bun install --frozen-lockfile
       - name: Prepare legacy package name and generated imports
         run: bun run scripts/prepare-legacy-package.ts

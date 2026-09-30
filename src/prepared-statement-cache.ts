@@ -24,6 +24,19 @@ function destroyPreparedStatement(entry: PreparedCacheEntry | undefined): void {
 export class PreparedStatementCache {
   private entries = new Map<string, PreparedCacheEntry>();
   private executionTail: Promise<void> = Promise.resolve();
+  private hits = 0;
+  private misses = 0;
+  private evictions = 0;
+
+  stats() {
+    return {
+      size: this.entries.size,
+      capacity: this.size,
+      hits: this.hits,
+      misses: this.misses,
+      evictions: this.evictions,
+    };
+  }
 
   constructor(
     private connection: DuckDBConnection,
@@ -38,9 +51,11 @@ export class PreparedStatementCache {
   async getOrPrepare(query: string): Promise<DuckDBPreparedStatement> {
     const cached = this.entries.get(query);
     if (cached) {
+      this.hits += 1;
       return this.remember(query, cached.statement);
     }
 
+    this.misses += 1;
     const statement = await this.connection.prepare(query);
     this.remember(query, statement);
 
@@ -76,6 +91,7 @@ export class PreparedStatementCache {
 
   evict(query: string): void {
     const entry = this.entries.get(query);
+    if (entry) this.evictions += 1;
     this.entries.delete(query);
     destroyPreparedStatement(entry);
   }
@@ -128,6 +144,15 @@ export function clearPreparedStatementCache(
     PreparedStatementCache | undefined
   >;
   store[PREPARED_CACHE]?.clear();
+}
+
+/** Read cache counters without creating or resizing the native cache. */
+export function getPreparedStatementCacheStats(connection: DuckDBConnection) {
+  const store = connection as unknown as Record<
+    symbol,
+    PreparedStatementCache | undefined
+  >;
+  return store[PREPARED_CACHE]?.stats();
 }
 
 export function bindPreparedStatement(

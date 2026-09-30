@@ -52,16 +52,16 @@ test('introspection snapshot covers DuckDB-specific types', async () => {
   const schemaTs = result.files.schemaTs;
 
   const fragments = [
-    `bigint("visits", { mode: 'number' }).notNull()`,
+    `bigint("visits", { mode: 'bigint' }).notNull()`,
     `bigint("hits", { mode: 'bigint' })`,
     `numeric("price", { precision: 12, scale: 2 })`,
     `duckDbTime("precise_time", { duckDbType: 'TIME_NS' })`,
     `duckDbTime("wake_at", { withTimezone: true })`,
-    `duckDbStruct("payload", { "name": "VARCHAR", "values": "INTEGER[]" })`,
-    `duckDbMap("extras", "INTEGER[]")`,
-    `duckDbList("tags", "VARCHAR")`,
-    `duckDbList("labels", "VARCHAR")`,
-    `duckDbArray("fixed", "INTEGER", 3)`,
+    `duckDbStruct<{ "name": string | null; "values": Array<number | null> | null }>("payload", { "name": "VARCHAR", "values": "INTEGER[]" })`,
+    `duckDbMap<Record<string, Array<number | null> | null>>("extras", "INTEGER[]", { mode: 'object' })`,
+    `duckDbList<string | null>("tags", "VARCHAR")`,
+    `duckDbList<string | null>("labels", "VARCHAR")`,
+    `duckDbArray<number | null>("fixed", "INTEGER", 3)`,
     `duckDbJson("meta").notNull()`,
     `duckDbTimestamp("happened_ns", { duckDbType: "TIMESTAMP_NS" })`,
     `duckDbTimestamp("happened_ms", { duckDbType: "TIMESTAMP_MS" })`,

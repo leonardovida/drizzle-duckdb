@@ -48,10 +48,14 @@ instead. It uses `.pre-commit-config.yaml`, which adds file checks and gitleaks.
 
 1. Bump `version` in `package.json`.
 2. Run `bun run build` and `bun run test`.
-3. Commit with a message like `Release v1.3.2` and tag the commit `v1.3.2`.
-4. Create a GitHub release from the tag. This triggers the publish workflow.
+3. Commit with a message like `Release v1.3.2` and merge the release PR.
+4. Tag the merged commit as `v1.3.2` and push the tag. This triggers the publish
+   workflow, which creates a GitHub release after publication succeeds.
+
+Creating a GitHub release from an existing tag also triggers publication.
 
 The publish workflow checks that the tag equals `v` plus the `package.json`
 version and skips versions that are already on npm. Versions with a
 prerelease suffix, such as `1.6.0-1`, publish under the `next` dist-tag.
-Other versions publish under `latest`.
+Other versions publish under `latest`. For manually created GitHub releases,
+the release's prerelease flag determines the dist-tag.

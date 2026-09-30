@@ -13,6 +13,7 @@ import {
   type DuckDBType,
   type DuckDBValue,
   type DuckDBValueConverter,
+  type JS,
 } from '@duckdb/node-api';
 import {
   DUCKDB_VALUE_MARKER,
@@ -51,6 +52,8 @@ export function isPool(
 }
 
 export interface ExecuteClientOptions {
+  /** Return DECIMAL values as exact strings, including nested values. */
+  decimalMode?: 'number' | 'string';
   prepareCache?: PreparedStatementCacheConfig;
   /**
    * Read top-level DECIMAL columns as exact strings instead of doubles. The
@@ -87,6 +90,7 @@ type ResultJsonRowsLike = {
 type DataChunkLike = {
   rowCount: number;
   convertRows: <T>(converter: DuckDBValueConverter<T>) => (T | null)[][];
+  convertColumns?: <T>(converter: DuckDBValueConverter<T>) => (T | null)[][];
 };
 
 type ResultChunksLike = {
@@ -633,7 +637,7 @@ function wrapUnsupportedNodeApiTypeError(
  * so a column's shape does not depend on what else is selected. Nested values
  * use the JS converter, as they do in a result without such columns.
  */
-const PerColumnValueConverter: DuckDBValueConverter<unknown> = (value, type) =>
+const PerColumnValueConverter: DuckDBValueConverter<JS> = (value, type) =>
   JSON_RESULT_TYPE_IDS.has(type.typeId)
     ? JsonDuckDBValueConverter(value, type, JsonDuckDBValueConverter)
     : JSDuckDBValueConverter(value, type, JSDuckDBValueConverter);
@@ -643,14 +647,23 @@ const PerColumnValueConverter: DuckDBValueConverter<unknown> = (value, type) =>
  * round, for example DECIMAL(38,10). Nested values keep `converter`.
  */
 function withExactDecimals(
-  converter: DuckDBValueConverter<unknown>
-): DuckDBValueConverter<unknown> {
+  converter: DuckDBValueConverter<JS>,
+  recursive = false
+): DuckDBValueConverter<JS> {
+  const nested: DuckDBValueConverter<JS> = (value, type) =>
+    type.typeId === DuckDBTypeId.DECIMAL
+      ? value === null
+        ? null
+        : String(value)
+      : JSDuckDBValueConverter(value, type, nested);
   return (value, type) =>
     type.typeId === DuckDBTypeId.DECIMAL
       ? value === null
         ? null
         : String(value)
-      : converter(value, type, converter);
+      : recursive && !JSON_RESULT_TYPE_IDS.has(type.typeId)
+        ? nested(value, type, nested)
+        : converter(value, type, converter);
 }
 
 function findDecimalColumns(result: ResultTypeMetadataLike): number[] {
@@ -677,7 +690,8 @@ function findDecimalColumns(result: ResultTypeMetadataLike): number[] {
 function convertChunkRows(
   chunks: DataChunkLike[],
   preferJson: boolean,
-  exactDecimals = false
+  exactDecimals = false,
+  recursiveDecimals = false
 ): unknown[][] {
   const convert = <T>(converter: DuckDBValueConverter<T>) => {
     const rows: unknown[][] = [];
@@ -689,8 +703,12 @@ function convertChunkRows(
     return rows;
   };
 
-  const finish = (converter: DuckDBValueConverter<unknown>) =>
-    convert(exactDecimals ? withExactDecimals(converter) : converter);
+  const finish = (converter: DuckDBValueConverter<JS>) =>
+    convert(
+      exactDecimals || recursiveDecimals
+        ? withExactDecimals(converter, recursiveDecimals)
+        : converter
+    );
 
   if (preferJson) {
     try {
@@ -700,19 +718,21 @@ function convertChunkRows(
     }
   }
 
-  return finish(JSDuckDBValueConverter as DuckDBValueConverter<unknown>);
+  return finish(JSDuckDBValueConverter);
 }
 
 async function readResultChunkRows(
   result: ResultTypeMetadataLike &
     Required<Pick<ResultChunksLike, 'fetchAllChunks'>>,
-  exactDecimals = false
+  exactDecimals = false,
+  recursiveDecimals = false
 ): Promise<unknown[][]> {
   try {
     return convertChunkRows(
       await result.fetchAllChunks(),
       prefersJsonMaterialization(result),
-      exactDecimals
+      exactDecimals,
+      recursiveDecimals
     );
   } catch (error) {
     throw wrapUnsupportedNodeApiTypeError(result, error);
@@ -731,13 +751,16 @@ async function materializeResultRows(
   } & ResultTypeMetadataLike &
     ResultJsonRowsLike &
     ResultChunksLike,
-  exactDecimals = false
+  exactDecimals = false,
+  recursiveDecimals = false
 ): Promise<MaterializedRows> {
   if (hasFetchAllChunks(result)) {
-    const exactDecimalColumns = exactDecimals ? findDecimalColumns(result) : [];
+    const exactDecimalColumns =
+      exactDecimals || recursiveDecimals ? findDecimalColumns(result) : [];
     const rows = await readResultChunkRows(
       result,
-      exactDecimalColumns.length > 0
+      exactDecimalColumns.length > 0,
+      recursiveDecimals
     );
     return exactDecimalColumns.length > 0
       ? { columns: resolveResultColumns(result), rows, exactDecimalColumns }
@@ -779,7 +802,8 @@ async function executePreparedQuery(
   query: string,
   { values, types }: NodeApiParams,
   cacheConfig: PreparedStatementCacheConfig,
-  exactDecimals = false
+  exactDecimals = false,
+  recursiveDecimals = false
 ): Promise<MaterializedRows> {
   const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
@@ -792,14 +816,22 @@ async function executePreparedQuery(
         throw error;
       }
       const result = await connection.run(query, values, types);
-      return await materializeResultRows(result, exactDecimals);
+      return await materializeResultRows(
+        result,
+        exactDecimals,
+        recursiveDecimals
+      );
     }
 
     try {
       bindPreparedStatement(statement, values, types);
       const result = await statement.run();
       cache.remember(query, statement);
-      return await materializeResultRows(result, exactDecimals);
+      return await materializeResultRows(
+        result,
+        exactDecimals,
+        recursiveDecimals
+      );
     } catch (error) {
       cache.evict(query);
       throw error;
@@ -817,7 +849,8 @@ type StreamResultLike = ResultTypeMetadataLike &
 
 async function* yieldChunkRows(
   fetchChunk: () => Promise<DataChunkLike | null>,
-  preferJson: boolean
+  preferJson: boolean,
+  exactDecimals = false
 ): AsyncGenerator<unknown[][], void, void> {
   let useJson = preferJson;
   let yieldedRows = false;
@@ -831,7 +864,11 @@ async function* yieldChunkRows(
     let rows: unknown[][] | undefined;
     if (useJson) {
       try {
-        rows = chunk.convertRows(PerColumnValueConverter);
+        rows = chunk.convertRows(
+          exactDecimals
+            ? withExactDecimals(PerColumnValueConverter, true)
+            : PerColumnValueConverter
+        );
       } catch (error) {
         // Earlier chunks used string values. Switching now would mix formats.
         if (yieldedRows) {
@@ -841,7 +878,11 @@ async function* yieldChunkRows(
       }
     }
 
-    rows ??= chunk.convertRows(JSDuckDBValueConverter);
+    rows ??= chunk.convertRows(
+      exactDecimals
+        ? withExactDecimals(JSDuckDBValueConverter, true)
+        : JSDuckDBValueConverter
+    );
     yieldedRows = true;
     yield rows;
   }
@@ -881,7 +922,8 @@ async function materializeRows(
           query,
           nodeApiParams,
           options.prepareCache,
-          options.exactDecimals
+          options.exactDecimals,
+          options.decimalMode === 'string'
         );
       }
 
@@ -890,7 +932,11 @@ async function materializeRows(
         nodeApiParams.values,
         nodeApiParams.types
       );
-      return await materializeResultRows(result, options.exactDecimals);
+      return await materializeResultRows(
+        result,
+        options.exactDecimals,
+        options.decimalMode === 'string'
+      );
     });
   });
 }
@@ -1113,6 +1159,7 @@ export async function executeArraysOnClient(
 
 export interface ExecuteInBatchesOptions {
   rowsPerChunk?: number;
+  decimalMode?: 'number' | 'string';
 }
 
 export interface ExecuteBatchesRawChunk {
@@ -1131,27 +1178,27 @@ async function* chunkRowStream(
   columns: string[],
   rowsPerChunk: number
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-  yield* chunkRows(flattenRowChunks(rowStream), columns, rowsPerChunk);
-}
-
-async function* flattenRowChunks(
-  rowStream: AsyncIterable<unknown[][]>
-): AsyncGenerator<unknown[], void, void> {
+  let rows: unknown[][] = [];
   for await (const chunk of rowStream) {
     for (const row of chunk) {
-      yield row as unknown[];
+      rows.push(row);
+      if (rows.length >= rowsPerChunk) {
+        yield { columns, rows };
+        rows = [];
+      }
     }
   }
+  if (rows.length > 0) yield { columns, rows };
 }
 
 async function* chunkRows(
-  rowStream: AsyncIterable<unknown[]> | Iterable<unknown[]>,
+  rowStream: Iterable<unknown[]>,
   columns: string[],
   rowsPerChunk: number
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
   let rows: unknown[][] = [];
 
-  for await (const row of rowStream) {
+  for (const row of rowStream) {
     rows.push(row);
     if (rows.length >= rowsPerChunk) {
       yield { columns, rows };
@@ -1197,7 +1244,12 @@ async function* streamRawBatches(
           values,
           types
         )) as StreamResultLike;
-        yield* streamNodeApiResult(connection, result, rowsPerChunk);
+        yield* streamNodeApiResult(
+          connection,
+          result,
+          rowsPerChunk,
+          options.decimalMode === 'string'
+        );
       } finally {
         if (result) {
           await closeStreamResult(result);
@@ -1212,7 +1264,8 @@ async function* streamRawBatches(
 async function* streamNodeApiResult(
   connection: DuckDBConnection,
   result: StreamResultLike,
-  rowsPerChunk: number
+  rowsPerChunk: number,
+  exactDecimals = false
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
   const columns = resolveResultColumns(result);
   const resultFetchChunk =
@@ -1243,7 +1296,11 @@ async function* streamNodeApiResult(
   try {
     if (fetchChunk) {
       yield* chunkRowStream(
-        yieldChunkRows(fetchChunk, prefersJsonMaterialization(result)),
+        yieldChunkRows(
+          fetchChunk,
+          prefersJsonMaterialization(result),
+          exactDecimals
+        ),
         columns,
         rowsPerChunk
       );
@@ -1305,7 +1362,8 @@ export async function* executeInBatchesRaw(
 export async function executeArrowOnClient(
   client: DuckDBClientLike,
   query: string,
-  params: unknown[]
+  params: unknown[],
+  options: Pick<ExecuteClientOptions, 'decimalMode'> = {}
 ): Promise<unknown> {
   return await withConnection(client, async (connection) => {
     if (isPgDuckClient(connection)) {
@@ -1335,9 +1393,46 @@ export async function executeArrowOnClient(
       const resultMetadata = result as unknown as ResultTypeMetadataLike &
         ResultChunksLike;
       if (hasFetchAllChunks(resultMetadata)) {
-        const rows = await readResultChunkRows(resultMetadata);
-        // Name duplicate columns the same way execute() does.
-        return mapRowsToColumnData(resolveResultColumns(resultMetadata), rows);
+        const chunks = await resultMetadata.fetchAllChunks();
+        const columns = resolveResultColumns(resultMetadata);
+        const convert = (baseConverter: DuckDBValueConverter<JS>) => {
+          const converter =
+            options.decimalMode === 'string'
+              ? withExactDecimals(baseConverter, true)
+              : baseConverter;
+          const values: unknown[][] = columns.map(() => []);
+          for (const chunk of chunks) {
+            if (typeof chunk.convertColumns === 'function') {
+              const converted = chunk.convertColumns(converter);
+              for (let index = 0; index < columns.length; index += 1) {
+                for (const value of converted[index] ?? [])
+                  values[index]!.push(value);
+              }
+            } else {
+              for (const row of chunk.convertRows(converter)) {
+                for (let index = 0; index < columns.length; index += 1)
+                  values[index]!.push(row[index]);
+              }
+            }
+          }
+          const data: Record<string, unknown[]> = {};
+          columns.forEach((name, index) =>
+            assignOwnProperty(data, name, values[index])
+          );
+          return data;
+        };
+        try {
+          if (prefersJsonMaterialization(resultMetadata)) {
+            try {
+              return convert(PerColumnValueConverter);
+            } catch {
+              /* Retry fetched chunks safely. */
+            }
+          }
+          return convert(JSDuckDBValueConverter);
+        } catch (error) {
+          throw wrapUnsupportedNodeApiTypeError(resultMetadata, error);
+        }
       }
 
       const resultJsonRows = result as ResultJsonRowsLike;

@@ -6,6 +6,7 @@ export interface CliOptions {
   help: boolean;
   url?: string;
   database?: string;
+  bigintMode?: 'bigint' | 'number';
   allDatabases: boolean;
   schemas?: string[];
   outFile: string;
@@ -78,6 +79,13 @@ export function parseArgs(argv: string[]): CliOptions {
       case '--all-databases':
         options.allDatabases = true;
         break;
+      case '--bigint-mode': {
+        const mode = requireValue();
+        if (mode !== 'bigint' && mode !== 'number')
+          throw new CliUsageError('--bigint-mode must be bigint or number');
+        options.bigintMode = mode;
+        break;
+      }
       case '--schema':
       case '--schemas':
         options.schemas = requireValue()

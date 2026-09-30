@@ -25,6 +25,7 @@ Options:
   --url            DuckDB database path (e.g. :memory:, ./local.duckdb, md:)
   --database, --db Database/catalog to introspect (default: current database)
   --all-databases  Introspect all attached databases (not just current)
+  --bigint-mode   bigint (default, exact) or number (may round large values)
   --schema         Comma separated schema list (defaults to all non-system schemas)
   --out            Output file (default: ./drizzle/schema.ts)
   --json           Optional JSON metadata output file (e.g. ./drizzle/schema.meta.json)
@@ -84,7 +85,7 @@ async function checkTargetsExist(
   const databases = [...new Set(rows.map((row) => row.catalog_name))];
 
   let database: string | undefined;
-  if (!options.allDatabases) {
+  if (options.database !== undefined || !options.allDatabases) {
     if (options.database) {
       database = options.database;
     } else {
@@ -160,6 +161,7 @@ async function main() {
 
     const result = await introspect(db, {
       database: options.database,
+      bigintMode: options.bigintMode,
       allDatabases: options.allDatabases,
       schemas: options.schemas,
       includeViews: options.includeViews,

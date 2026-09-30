@@ -66,6 +66,8 @@ const SIMPLE_TYPE_NAMES = new Set([
 ]);
 
 export interface IntrospectOptions {
+  /** BIGINT output mode. Defaults to bigint to preserve all 64 bits. */
+  bigintMode?: 'bigint' | 'number';
   /**
    * Database/catalog to introspect. If not specified, uses the current database
    * (via `SELECT current_database()`). This prevents returning tables from all
@@ -195,16 +197,38 @@ export async function introspect(
   db: DuckDBDatabase,
   opts: IntrospectOptions = {}
 ): Promise<IntrospectResult> {
+  // Pin pooled clients and read one catalog snapshot for the entire operation.
+  return db.transaction((tx) => introspectCatalog(tx, opts));
+}
+
+type CatalogReader = Pick<DuckDBDatabase, 'execute'>;
+
+async function introspectCatalog(
+  db: CatalogReader,
+  opts: IntrospectOptions
+): Promise<IntrospectResult> {
   const currentDatabase = await loadCurrentDatabase(db);
-  const database = opts.allDatabases ? null : opts.database || currentDatabase;
+  const database =
+    opts.database ?? (opts.allDatabases ? null : currentDatabase);
   const schemas = await resolveSchemas(db, database, opts.schemas);
   const includeViews = opts.includeViews ?? false;
 
-  const tables = await loadTables(db, database, schemas, includeViews);
-  const columns = await loadColumns(db, database, schemas);
-  const constraints = await loadConstraints(db, database, schemas);
-  const indexes = await loadIndexes(db, database, schemas);
-  const tableSql = await loadTableSql(db, database, schemas);
+  // Aggregate ordered metadata in one round trip. These catalogs contain
+  // names, expressions and small ordinal numbers, rather than user values.
+  const asJson = (query: SQL) =>
+    sql`(select coalesce(to_json(list(catalog_row)), '[]'::json) from (${query}) catalog_row)`;
+  const [catalog] = await db.execute<Record<string, string>>(sql`select
+    ${asJson(tablesQuery(database, schemas, includeViews))} as tables,
+    ${asJson(columnsQuery(database, schemas))} as columns,
+    ${asJson(constraintsQuery(database, schemas))} as constraints,
+    ${asJson(indexesQuery(database, schemas))} as indexes,
+    ${asJson(tableSqlQuery(database, schemas))} as table_sql`);
+  if (!catalog) throw new Error('DuckDB returned no catalog metadata');
+  const tables = JSON.parse(catalog.tables!) as DuckDbTableRow[];
+  const columns = JSON.parse(catalog.columns!) as DuckDbColumnRow[];
+  const constraints = JSON.parse(catalog.constraints!) as DuckDbConstraintRow[];
+  const indexes = JSON.parse(catalog.indexes!) as DuckDbIndexRow[];
+  const tableSql = JSON.parse(catalog.table_sql!) as DuckDbTableSqlRow[];
 
   const grouped = buildTables(tables, columns, constraints, indexes, tableSql);
 
@@ -213,6 +237,7 @@ export async function introspect(
     mapJsonAsDuckDbJson: opts.mapJsonAsDuckDbJson ?? true,
     importBasePath: opts.importBasePath ?? DEFAULT_IMPORT_BASE,
     currentDatabase,
+    bigintMode: opts.bigintMode ?? 'bigint',
   });
 
   return {
@@ -223,7 +248,7 @@ export async function introspect(
   };
 }
 
-async function loadCurrentDatabase(db: DuckDBDatabase): Promise<string | null> {
+async function loadCurrentDatabase(db: CatalogReader): Promise<string | null> {
   const rows = await db.execute<{ current_database: string }>(
     sql`SELECT current_database() as current_database`
   );
@@ -231,7 +256,7 @@ async function loadCurrentDatabase(db: DuckDBDatabase): Promise<string | null> {
 }
 
 async function resolveSchemas(
-  db: DuckDBDatabase,
+  db: CatalogReader,
   database: string | null,
   targetSchemas?: string[]
 ): Promise<string[]> {
@@ -277,14 +302,12 @@ function buildSchemaFilter(columnName: string, schemas: string[]): SQL {
   )})`;
 }
 
-async function loadTables(
-  db: DuckDBDatabase,
+function tablesQuery(
   database: string | null,
   schemas: string[],
   includeViews: boolean
-): Promise<DuckDbTableRow[]> {
-  return await db.execute<DuckDbTableRow>(
-    sql`
+): SQL {
+  return sql`
       SELECT
         table_catalog as database_name,
         table_schema as schema_name,
@@ -295,17 +318,11 @@ async function loadTables(
       AND ${buildSchemaFilter('table_schema', schemas)}
       AND ${includeViews ? sql`1 = 1` : sql`table_type = 'BASE TABLE'`}
       ORDER BY table_catalog, table_schema, table_name
-    `
-  );
+    `;
 }
 
-async function loadColumns(
-  db: DuckDBDatabase,
-  database: string | null,
-  schemas: string[]
-): Promise<DuckDbColumnRow[]> {
-  return await db.execute<DuckDbColumnRow>(
-    sql`
+function columnsQuery(database: string | null, schemas: string[]): SQL {
+  return sql`
       SELECT
         database_name,
         schema_name,
@@ -323,17 +340,11 @@ async function loadColumns(
       WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, column_index
-    `
-  );
+    `;
 }
 
-async function loadConstraints(
-  db: DuckDBDatabase,
-  database: string | null,
-  schemas: string[]
-): Promise<DuckDbConstraintRow[]> {
-  return await db.execute<DuckDbConstraintRow>(
-    sql`
+function constraintsQuery(database: string | null, schemas: string[]): SQL {
+  return sql`
       SELECT
         database_name,
         schema_name,
@@ -348,17 +359,11 @@ async function loadConstraints(
       WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, constraint_index
-    `
-  );
+    `;
 }
 
-async function loadIndexes(
-  db: DuckDBDatabase,
-  database: string | null,
-  schemas: string[]
-): Promise<DuckDbIndexRow[]> {
-  return await db.execute<DuckDbIndexRow>(
-    sql`
+function indexesQuery(database: string | null, schemas: string[]): SQL {
+  return sql`
       SELECT
         database_name,
         schema_name,
@@ -371,17 +376,11 @@ async function loadIndexes(
       WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
       ORDER BY database_name, schema_name, table_name, index_name
-    `
-  );
+    `;
 }
 
-async function loadTableSql(
-  db: DuckDBDatabase,
-  database: string | null,
-  schemas: string[]
-): Promise<DuckDbTableSqlRow[]> {
-  return await db.execute<DuckDbTableSqlRow>(
-    sql`
+function tableSqlQuery(database: string | null, schemas: string[]): SQL {
+  return sql`
       SELECT
         database_name,
         schema_name,
@@ -390,8 +389,7 @@ async function loadTableSql(
       FROM duckdb_tables()
       WHERE ${buildDatabaseFilter('database_name', database)}
       AND ${buildSchemaFilter('schema_name', schemas)}
-    `
-  );
+    `;
 }
 
 function buildTables(
@@ -621,6 +619,7 @@ function readLeadingIdentifier(
 }
 
 interface EmitOptions {
+  bigintMode: 'bigint' | 'number';
   useCustomTimeTypes: boolean;
   mapJsonAsDuckDbJson: boolean;
   importBasePath: string;
@@ -1259,6 +1258,38 @@ export function normalizeTypeLiteral(raw: string): string {
   return trimmed;
 }
 
+// Nested values use native JS conversion rather than pg-core decoders.
+// DuckDB permits null list elements, struct fields and map values.
+function nestedValueType(raw: string): string {
+  const type = normalizeTypeLiteral(raw);
+  const array = /^(.*)\[\d*\]$/.exec(type);
+  if (array) return `Array<${nestedValueType(array[1]!)} | null>`;
+  if (type.startsWith('STRUCT')) {
+    const fields = parseStructFields(
+      type.replace(/^STRUCT\s*\(/i, '').replace(/\)$/, '')
+    );
+    return `{ ${fields.map(({ name, type }) => `${JSON.stringify(name)}: ${nestedValueType(type)} | null`).join('; ')} }`;
+  }
+  if (type.startsWith('MAP('))
+    return `Array<{ key: ${nestedValueType(parseMapKey(type) ?? 'VARCHAR')}; value: ${nestedValueType(parseMapValue(type))} | null }>`;
+  if (BIGINT_MODE_TYPES.has(type) || type === 'BIGINT' || type === 'INT8')
+    return 'bigint';
+  if (
+    INTEGER_TYPE_ALIASES.has(type) ||
+    /^(?:FLOAT|FLOAT4|REAL|DOUBLE|DOUBLE PRECISION)$/.test(type)
+  )
+    return 'number';
+  if (/^(?:DECIMAL|NUMERIC)/.test(type)) return 'number | string';
+  if (type === 'BOOLEAN' || type === 'BOOL') return 'boolean';
+  if (/^(?:VARCHAR|CHAR|TEXT|STRING|UUID|JSON|ENUM)/.test(type))
+    return 'string';
+  if (type === 'BLOB' || type === 'BYTEA') return 'Uint8Array';
+  if (/^(?:DATE|TIMESTAMP|TIMESTAMPTZ)/.test(type) && type !== 'TIMESTAMP_NS')
+    return 'Date';
+  if (/^(?:TIME|TIMETZ|TIMESTAMP_NS|INTERVAL)/.test(type)) return 'unknown';
+  return 'unknown';
+}
+
 function mapDuckDbType(
   column: IntrospectedColumn,
   imports: ImportBuckets,
@@ -1292,11 +1323,10 @@ function mapDuckDbType(
 
   if (upper === 'BIGINT' || upper === 'INT8') {
     imports.pgCore.add('bigint');
-    // Drizzle's bigint helper requires an explicit mode. Default to 'number'
-    // to mirror DuckDB's typical 64-bit integer behavior in JS.
     return {
-      builder: `bigint(${columnName(column.name)}, { mode: 'number' })`,
-      defaultLiterals: NUMBER_DEFAULTS,
+      builder: `bigint(${columnName(column.name)}, { mode: '${options.bigintMode}' })`,
+      defaultLiterals:
+        options.bigintMode === 'number' ? NUMBER_DEFAULTS : undefined,
     };
   }
 
@@ -1355,7 +1385,7 @@ function mapDuckDbType(
     imports.local.add('duckDbArray');
     const [, base, length] = arrayMatch;
     return {
-      builder: `duckDbArray(${columnName(
+      builder: `duckDbArray<${nestedValueType(base!)} | null>(${columnName(
         column.name
       )}, ${JSON.stringify(base)}, ${Number(length)})`,
     };
@@ -1366,7 +1396,7 @@ function mapDuckDbType(
     imports.local.add('duckDbList');
     const [, base] = listMatch;
     return {
-      builder: `duckDbList(${columnName(
+      builder: `duckDbList<${nestedValueType(base!)} | null>(${columnName(
         column.name
       )}, ${JSON.stringify(base)})`,
     };
@@ -1476,7 +1506,7 @@ function mapDuckDbType(
       ({ name, type }) => `${JSON.stringify(name)}: ${JSON.stringify(type)}`
     );
     return {
-      builder: `duckDbStruct(${columnName(
+      builder: `duckDbStruct<${nestedValueType(upper)}>(${columnName(
         column.name
       )}, { ${entries.join(', ')} })`,
     };
@@ -1487,10 +1517,10 @@ function mapDuckDbType(
     const valueType = parseMapValue(upper);
     const keyType = parseMapKey(upper);
     const mapOptions = keyType
-      ? `, { keyType: ${JSON.stringify(keyType)} }`
-      : '';
+      ? `, { mode: 'object', keyType: ${JSON.stringify(keyType)} }`
+      : `, { mode: 'object' }`;
     return {
-      builder: `duckDbMap(${columnName(
+      builder: `duckDbMap<Record<string, ${nestedValueType(valueType)} | null>>(${columnName(
         column.name
       )}, ${JSON.stringify(valueType)}${mapOptions})`,
     };

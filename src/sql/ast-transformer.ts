@@ -39,30 +39,32 @@ export type TransformResult = {
 // Key: original SQL, Value: transformed result
 const CACHE_SIZE = 500;
 const transformCache = new Map<string, TransformResult>();
+const conservativeTransformCache = new Map<string, TransformResult>();
 
 function getCachedOrTransform(
   query: string,
-  transform: () => TransformResult
+  transform: () => TransformResult,
+  cache = transformCache
 ): TransformResult {
-  const cached = transformCache.get(query);
+  const cached = cache.get(query);
   if (cached) {
     // Move to end for LRU behavior
-    transformCache.delete(query);
-    transformCache.set(query, cached);
+    cache.delete(query);
+    cache.set(query, cached);
     return cached;
   }
 
   const result = transform();
 
   // Add to cache with LRU eviction
-  if (transformCache.size >= CACHE_SIZE) {
+  if (cache.size >= CACHE_SIZE) {
     // Delete oldest entry (first key in Map iteration order)
-    const oldestKey = transformCache.keys().next().value;
+    const oldestKey = cache.keys().next().value;
     if (oldestKey) {
-      transformCache.delete(oldestKey);
+      cache.delete(oldestKey);
     }
   }
-  transformCache.set(query, result);
+  cache.set(query, result);
 
   return result;
 }
@@ -170,7 +172,11 @@ function sameItems(left: string[], right: string[]): boolean {
  * Check that the re-printed SQL kept every string literal and parameter and
  * only uses identifiers that already appear in the original query.
  */
-function preservesTokens(original: string, printed: string): boolean {
+function preservesTokens(
+  original: string,
+  printed: string,
+  arrayBoundsTransformed = false
+): boolean {
   const before = scanSqlTokens(original);
   const after = scanSqlTokens(printed);
   if (!before || !after) return false;
@@ -179,6 +185,11 @@ function preservesTokens(original: string, printed: string): boolean {
   if (!sameItems(before.params, after.params)) return false;
 
   const known = new Set([...before.identifiers, ...before.words]);
+  // Only compiler-owned aliases may be added. Literal and parameter
+  // multiplicities remain exact, including in volatile bound expressions.
+  if (arrayBoundsTransformed) {
+    known.add('__drizzle_array_length');
+  }
   return after.identifiers.every((identifier) => known.has(identifier));
 }
 
@@ -201,9 +212,14 @@ function debugLog(message: string, payload?: unknown): void {
   }
 }
 
-export function transformSQL(query: string): TransformResult {
+export function transformSQL(
+  query: string,
+  options: { qualifyJoinColumns?: boolean } = {}
+): TransformResult {
   const needsArrayTransform = ARRAY_BOUNDS_PATTERN.test(query);
-  const needsJoinTransform = JOIN_PATTERN.test(query) || hasUpdateFrom(query);
+  const needsJoinTransform =
+    options.qualifyJoinColumns !== false &&
+    (JOIN_PATTERN.test(query) || hasUpdateFrom(query));
   const needsUnionTransform =
     UNION_PATTERN.test(query) ||
     INTERSECT_PATTERN.test(query) ||
@@ -225,54 +241,62 @@ export function transformSQL(query: string): TransformResult {
   }
 
   // Use cache for repeated queries
-  return getCachedOrTransform(query, () => {
-    try {
-      const ast = parser.astify(query, { database: 'PostgreSQL' });
+  return getCachedOrTransform(
+    query,
+    () => {
+      try {
+        const ast = parser.astify(query, { database: 'PostgreSQL' });
 
-      let transformed = false;
+        let transformed = false;
+        let arrayBoundsTransformed = false;
 
-      if (needsArrayTransform) {
-        transformed = transformArrayBounds(ast) || transformed;
-      }
+        if (needsArrayTransform) {
+          arrayBoundsTransformed = transformArrayBounds(ast);
+          transformed = arrayBoundsTransformed || transformed;
+        }
 
-      // Before join qualification, so `ON e.n = gs` is already gs.generate_series
-      // and is not qualified as a column of another source.
-      if (needsGenerateSeriesTransform) {
-        transformed = rewriteGenerateSeriesAliases(ast) || transformed;
-      }
+        // Before join qualification, so `ON e.n = gs` is already gs.generate_series
+        // and is not qualified as a column of another source.
+        if (needsGenerateSeriesTransform) {
+          transformed = rewriteGenerateSeriesAliases(ast) || transformed;
+        }
 
-      if (needsJoinTransform) {
-        transformed = qualifyJoinColumns(ast) || transformed;
-      }
+        if (needsJoinTransform) {
+          transformed = qualifyJoinColumns(ast) || transformed;
+        }
 
-      if (needsUnionTransform) {
-        transformed = hoistUnionWith(ast) || transformed;
-      }
+        if (needsUnionTransform) {
+          transformed = hoistUnionWith(ast) || transformed;
+        }
 
-      if (!transformed) {
-        debugLog('AST parsed but no transformation applied', {
-          join: needsJoinTransform,
+        if (!transformed) {
+          debugLog('AST parsed but no transformation applied', {
+            join: needsJoinTransform,
+          });
+          return { sql: query, transformed: false };
+        }
+
+        const transformedSql = parser.sqlify(ast, { database: 'PostgreSQL' });
+
+        if (!preservesTokens(query, transformedSql, arrayBoundsTransformed)) {
+          debugLog('Re-printed SQL changed literals or identifiers; skipping', {
+            sql: transformedSql,
+          });
+          return { sql: query, transformed: false };
+        }
+
+        return { sql: transformedSql, transformed: true };
+      } catch (err) {
+        debugLog('AST transform failed; returning original SQL', {
+          error: (err as Error).message,
         });
         return { sql: query, transformed: false };
       }
-
-      const transformedSql = parser.sqlify(ast, { database: 'PostgreSQL' });
-
-      if (!preservesTokens(query, transformedSql)) {
-        debugLog('Re-printed SQL changed literals or identifiers; skipping', {
-          sql: transformedSql,
-        });
-        return { sql: query, transformed: false };
-      }
-
-      return { sql: transformedSql, transformed: true };
-    } catch (err) {
-      debugLog('AST transform failed; returning original SQL', {
-        error: (err as Error).message,
-      });
-      return { sql: query, transformed: false };
-    }
-  });
+    },
+    options.qualifyJoinColumns === false
+      ? conservativeTransformCache
+      : transformCache
+  );
 }
 
 /**
@@ -280,13 +304,20 @@ export function transformSQL(query: string): TransformResult {
  */
 export function clearTransformCache(): void {
   transformCache.clear();
+  conservativeTransformCache.clear();
 }
 
 /**
  * Get current cache statistics for monitoring.
  */
-export function getTransformCacheStats(): { size: number; maxSize: number } {
-  return { size: transformCache.size, maxSize: CACHE_SIZE };
+export function getTransformCacheStats(
+  options: { qualifyJoinColumns?: boolean } = {}
+): { size: number; maxSize: number } {
+  const cache =
+    options.qualifyJoinColumns === false
+      ? conservativeTransformCache
+      : transformCache;
+  return { size: cache.size, maxSize: CACHE_SIZE };
 }
 
 export { transformArrayBounds } from './visitors/array-bounds.ts';

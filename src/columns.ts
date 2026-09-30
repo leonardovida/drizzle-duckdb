@@ -86,6 +86,8 @@ type Primitive = AnyColType | ListColType | ArrayColType | StructColType;
 type DuckDbTypeName<TKnown extends string> = TKnown | (string & {});
 
 interface MapOptions {
+  /** Object decoding is opt-in. Default output retains native entry arrays. */
+  mode?: 'entries' | 'object';
   /** DuckDB key type for the MAP column. Defaults to STRING. */
   keyType?: DuckDbTypeName<AnyColType>;
 }
@@ -377,6 +379,15 @@ export const duckDbMap = <TData extends Record<string, any>>(
       return wrapMap(value, valueType);
     },
     fromDriver(value: TData | MapValueWrapper): TData {
+      // node-api's JS converter represents MAP as key/value entries.
+      if (options.mode === 'object' && Array.isArray(value)) {
+        return Object.fromEntries(
+          value.map((entry: { key: unknown; value: unknown }) => [
+            String(entry.key),
+            entry.value,
+          ])
+        ) as TData;
+      }
       return value as TData;
     },
   })(name);
@@ -698,7 +709,10 @@ function shouldBindTimestamp(options: TimestampOptions): boolean {
   return true;
 }
 
-export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
+export const duckDbTimestamp = <TMode extends TimestampMode = 'date'>(
+  name: string,
+  options: TimestampOptions & { mode?: TMode } = {}
+) =>
   customType<{
     data: Date | string;
     driverData: SQL | string | Date | TimestampValueWrapper;
@@ -733,11 +747,13 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
         (value as TimestampValueWrapper).kind === 'timestamp'
       ) {
         const wrapped = value as TimestampValueWrapper;
-        return wrapped.data instanceof Date
-          ? wrapped.data
-          : typeof wrapped.data === 'number' || typeof wrapped.data === 'bigint'
-            ? new Date(Number(wrapped.data) / 1000)
-            : wrapped.data;
+        value =
+          wrapped.data instanceof Date
+            ? wrapped.data
+            : typeof wrapped.data === 'number' ||
+                typeof wrapped.data === 'bigint'
+              ? new Date(Number(wrapped.data) / 1000)
+              : wrapped.data;
       }
       if (options.mode === 'string') {
         return timestampModeString(
@@ -751,7 +767,7 @@ export const duckDbTimestamp = (name: string, options: TimestampOptions = {}) =>
       const stringValue = typeof value === 'string' ? value : value.toString();
       return new Date(timestampStringToDateInput(stringValue));
     },
-  })(name);
+  })(name).$type<TMode extends 'string' ? string : Date | string>();
 
 export const duckDbDate = (name: string) =>
   customType<{ data: string | Date; driverData: string | Date }>({

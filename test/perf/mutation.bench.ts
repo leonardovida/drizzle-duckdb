@@ -1,8 +1,11 @@
-import type { DuckDBConnection } from '@duckdb/node-api';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { DuckDBDatabase } from '../../src/index.ts';
 import { afterAll, beforeAll, bench, describe } from 'vitest';
-import { closePerfHarness, createPerfHarness } from './setup.ts';
+import {
+  closePerfHarness,
+  createPerfHarness,
+  type PerfHarness,
+} from './setup.ts';
 import {
   benchComplex,
   benchInsert,
@@ -10,7 +13,7 @@ import {
   factLarge,
 } from './schema.ts';
 
-let connection: DuckDBConnection;
+let harness: PerfHarness;
 let db: DuckDBDatabase;
 
 const batch = Array.from({ length: 100 }, (_, i) => ({
@@ -18,22 +21,24 @@ const batch = Array.from({ length: 100 }, (_, i) => ({
   val: `payload-${i}`,
 }));
 
-let preparedSelect: ReturnType<ReturnType<DuckDBDatabase['select']>['prepare']>;
-let mixedId = 1000;
-
-beforeAll(async () => {
-  const harness = await createPerfHarness();
-  connection = harness.connection;
-  db = harness.db;
-  preparedSelect = db
+function buildPreparedSelect(db: DuckDBDatabase) {
+  return db
     .select({ id: benchPrepared.id, val: benchPrepared.val })
     .from(benchPrepared)
     .where(eq(benchPrepared.id, sql.placeholder('id')))
     .prepare('perf_prepared_select');
+}
+let preparedSelect: ReturnType<typeof buildPreparedSelect>;
+let mixedId = 1000;
+
+beforeAll(async () => {
+  harness = await createPerfHarness();
+  db = harness.db;
+  preparedSelect = buildPreparedSelect(db);
 });
 
 afterAll(async () => {
-  await closePerfHarness({ connection, db });
+  await closePerfHarness(harness);
 });
 
 describe('mutations', () => {

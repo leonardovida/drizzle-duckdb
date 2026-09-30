@@ -65,6 +65,7 @@ import {
 } from './ducklake.ts';
 
 export interface PgDriverOptions {
+  decimalMode?: 'number' | 'string';
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
@@ -88,6 +89,7 @@ export class DuckDBDriver {
       rejectStringArrayLiterals: this.options.rejectStringArrayLiterals,
       arrayLiteralWarning: this.options.arrayLiteralWarning,
       prepareCache: this.options.prepareCache,
+      decimalMode: this.options.decimalMode,
     });
   }
 }
@@ -106,6 +108,10 @@ export interface DuckDBDrizzleConfig<
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
   prepareCache?: PrepareCacheOption;
+  /** Opt into legacy heuristic qualification of raw SQL join operands. */
+  qualifyRawJoinColumns?: boolean;
+  /** Opt into exact DECIMAL strings across execution paths. */
+  decimalMode?: 'number' | 'string';
   /** Pool configuration. Use preset name, size config, or false to disable. */
   pool?: DuckDBPoolConfig | PoolPreset | false;
   /** Optional DuckLake configuration */
@@ -270,7 +276,11 @@ function createFromClient<
     }
   }
 
-  const dialect = new DuckDBDialect({ casing: config.casing });
+  const dialect = new DuckDBDialect({
+    casing: config.casing,
+    qualifyRawJoinColumns: config.qualifyRawJoinColumns,
+    decimalMode: config.decimalMode,
+  });
   const prepareCache = resolvePrepareCacheOption(config.prepareCache);
 
   const logger =
@@ -295,6 +305,7 @@ function createFromClient<
     rejectStringArrayLiterals: config.rejectStringArrayLiterals,
     arrayLiteralWarning: config.arrayLiteralWarning,
     prepareCache,
+    decimalMode: config.decimalMode,
   });
   const session = driver.createSession(schema);
 

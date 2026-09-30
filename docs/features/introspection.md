@@ -142,6 +142,9 @@ interface IntrospectOptions {
   // Database/catalog to introspect (default: current database)
   database?: string;
 
+  // BIGINT output mode (default: bigint, preserves every digit)
+  bigintMode?: 'bigint' | 'number';
+
   // When true, introspects all attached databases (default: false)
   allDatabases?: boolean;
 
@@ -260,13 +263,17 @@ Things to note in the output:
 | ----------------------------------- | ------------------------------------- |
 | `TINYINT`, `SMALLINT`, `INTEGER`    | `integer()`                           |
 | `UTINYINT`, `USMALLINT`, `UINTEGER` | `integer()`                           |
-| `BIGINT`                            | `bigint({ mode: 'number' })`          |
+| `BIGINT`                            | `bigint({ mode: 'bigint' })`          |
 | `UBIGINT`, `HUGEINT`, `UHUGEINT`    | `bigint({ mode: 'bigint' })`          |
 | `FLOAT`, `REAL`, `FLOAT4`           | `real()`                              |
 | `DOUBLE`                            | `doublePrecision()`                   |
 | `DECIMAL(p,s)`                      | `numeric({ precision: p, scale: s })` |
 
-DuckDB returns the unsigned 8, 16 and 32-bit types as JS numbers, so they use `integer()` even though `UINTEGER` values go past the Postgres `int4` range. `UBIGINT`, `HUGEINT` and `UHUGEINT` come back as JS `bigint` values, so they use `bigint` mode to keep every digit. `BIGINT` keeps `mode: 'number'`, which rounds values beyond `Number.MAX_SAFE_INTEGER`. Change it to `mode: 'bigint'` by hand if you store larger values.
+DuckDB returns the unsigned 8, 16 and 32-bit types as JS numbers, so they use `integer()` even though `UINTEGER` values go past the Postgres `int4` range. `BIGINT`, `UBIGINT`, `HUGEINT` and `UHUGEINT` use bigint mode to keep every digit. Regenerating an existing schema changes ordinary BIGINT fields from `number` to `bigint`. Set `bigintMode: 'number'` or pass `--bigint-mode number` to retain the previous mapping, accepting rounding beyond `Number.MAX_SAFE_INTEGER`.
+
+An explicit `database` takes precedence over `allDatabases`. Introspection pins a pooled connection inside a transaction, so all metadata comes from one catalog snapshot. It combines table, column, constraint, index and DDL metadata in one query. Generated list, fixed array, map and struct helpers include TypeScript element and field types with nullable nested values. Nested DECIMAL types allow `number | string` to match the configured precision policy.
+
+Generated MAP helpers opt into `{ mode: 'object' }` so their `Record<string, T>` type matches the decoded value and insertion shape. Handwritten `duckDbMap` helpers retain native key/value entry arrays unless you opt into this mode. Regenerating a schema therefore changes its MAP read shape to an object.
 
 ### String and Other Scalar Types
 

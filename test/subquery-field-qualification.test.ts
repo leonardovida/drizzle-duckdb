@@ -45,14 +45,22 @@ async function runStock(query: { toSQL(): { sql: string } }) {
 
 describe('subquery and CTE fields stay qualified', () => {
   test('a subquery field that shares a name with the base table', async () => {
-    const bigOrders = (qb: typeof stock | DuckDBDatabase) =>
-      qb
-        .select({ id: orders.id, userId: orders.userId, total: orders.total })
+    const selection = {
+      id: orders.id,
+      userId: orders.userId,
+      total: orders.total,
+    };
+    const bigOrders = (
+      query:
+        | ReturnType<typeof stock.select<typeof selection>>
+        | ReturnType<typeof db.select<typeof selection>>
+    ) =>
+      query
         .from(orders)
         .where(sql`${orders.total} > 20`)
         .as('big');
 
-    const sq = bigOrders(db);
+    const sq = bigOrders(db.select(selection));
     const query = db
       .select({ user: users.name, orderId: sq.id })
       .from(users)
@@ -68,7 +76,7 @@ describe('subquery and CTE fields stay qualified', () => {
       { user: 'cid', orderId: null },
     ]);
 
-    const stockSq = bigOrders(stock);
+    const stockSq = bigOrders(stock.select(selection));
     const stockRows = await runStock(
       stock
         .select({ user: users.name, orderId: stockSq.id })
@@ -80,14 +88,14 @@ describe('subquery and CTE fields stay qualified', () => {
   });
 
   test('an anti join on a renamed subquery field keeps unmatched rows', async () => {
-    const perUser = (qb: typeof stock | DuckDBDatabase) =>
-      qb
-        .select({ id: orders.userId, n: sql<number>`count(*)`.as('n') })
-        .from(orders)
-        .groupBy(orders.userId)
-        .as('agg');
+    const selection = { id: orders.userId, n: sql<number>`count(*)`.as('n') };
+    const perUser = (
+      query:
+        | ReturnType<typeof stock.select<typeof selection>>
+        | ReturnType<typeof db.select<typeof selection>>
+    ) => query.from(orders).groupBy(orders.userId).as('agg');
 
-    const agg = perUser(db);
+    const agg = perUser(db.select(selection));
     const rows = await db
       .select({ user: users.name, aggId: agg.id })
       .from(users)
@@ -96,7 +104,7 @@ describe('subquery and CTE fields stay qualified', () => {
       .orderBy(users.id);
     expect(rows).toEqual([{ user: 'cid', aggId: null }]);
 
-    const stockAgg = perUser(stock);
+    const stockAgg = perUser(stock.select(selection));
     const stockRows = await runStock(
       stock
         .select({ user: users.name, aggId: stockAgg.id })

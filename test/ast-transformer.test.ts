@@ -54,7 +54,9 @@ describe('transformSQL', () => {
       );
 
       expect(result.transformed).toBe(true);
-      expect(result.sql.toLowerCase()).toContain('case when');
+      expect(result.sql.toLowerCase()).toContain(
+        'nullif(array_length(tags), 0)'
+      );
       expect(result.sql.toLowerCase()).toContain('array_length(tags)');
       expect(result.sql.toLowerCase()).not.toContain('array_upper');
     });

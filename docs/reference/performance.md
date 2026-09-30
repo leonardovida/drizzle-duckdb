@@ -184,13 +184,15 @@ const columns = await db.executeArrow(sql`SELECT id, name FROM users`);
 
 It returns an Arrow table only when the client result exposes an Arrow API. `@duckdb/node-api` does not, so with it you get plain JavaScript arrays keyed by column name. The whole result is materialized.
 
-### Benchmark: Materialized vs Streaming
+### Measure materialization and streaming
 
-```
-100K row scan:
-  Full materialization:  817ms
-  Batch streaming:        67ms (12x faster memory efficiency)
-```
+Run `bun run perf:run` to compare native rows, raw objects, builders, columnar output, streaming, native caching, concurrency and exact decimal conversion. Benchmarks validate row counts or checksums. The output includes throughput and relative margin of error, with runtime, CPU, dependency and dataset metadata in `action-bench.json.meta.json`. Raw Vitest measurements are saved under `perf-results/`.
+
+Use `bun run perf:compare -- --fail-on-regression old.json new.json` to reject missing measurements or a throughput drop beyond the threshold and reported uncertainty. `--allow-new` permits added benchmarks, while removed benchmarks still fail. Pull requests measure their base revision on the same runner before applying this gate. Historical action reports use a `105.2631579%` worsening ratio for a 5% throughput drop and report alerts without independently failing the job.
+
+After building, run `node --expose-gc scripts/measure-memory.ts` with Node 24 or newer for separate-process memory comparisons. It saves RSS observations and checksums in `perf-results/memory.json`. RSS is sampled, so observed peaks are lower bounds. Latency alone does not establish memory efficiency.
+
+Pools expose `pool.stats()` for current leases, idle connections, pending creation, queue depth, queue wait time, timeouts and recycling. `getPreparedStatementCacheStats(connection)` reports native cache hits, misses, evictions and capacity without creating a cache. Measure these counters before changing pool or cache sizes.
 
 ## Query Optimization
 

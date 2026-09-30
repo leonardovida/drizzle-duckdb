@@ -44,7 +44,7 @@ describe('generate_series alias compatibility', () => {
   test('rewrites gs::date to gs.generate_series::date', async () => {
     const result = await db
       .select({
-        date: sql<string>`gs::date`.as('date'),
+        date: sql<Date>`gs::date`.as('date'),
         outletCount: sql<number>`count(offers.start_date)`.as('outletCount'),
       })
       .from(
@@ -62,9 +62,11 @@ describe('generate_series alias compatibility', () => {
       .orderBy(sql`1`);
 
     expect(result).toHaveLength(3);
-    expect(
-      result.map((r) => (r.date as Date).toISOString().slice(0, 10))
-    ).toEqual(['2024-01-01', '2024-01-02', '2024-01-03']);
+    expect(result.map((r) => r.date.toISOString().slice(0, 10))).toEqual([
+      '2024-01-01',
+      '2024-01-02',
+      '2024-01-03',
+    ]);
     expect(result.map((r) => Number(r.outletCount))).toEqual([0, 1, 0]);
   });
 

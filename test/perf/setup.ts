@@ -6,10 +6,7 @@ import {
   type DuckDBConnectionPool,
 } from '../../src/client.ts';
 import { createDuckDBConnectionPool } from '../../src/pool.ts';
-import type {
-  PrepareCacheOption,
-  RewriteArraysMode,
-} from '../../src/options.ts';
+import type { PrepareCacheOption } from '../../src/options.ts';
 
 export interface PerfHarness {
   connection: DuckDBConnection;
@@ -19,7 +16,7 @@ export interface PerfHarness {
 }
 
 export interface PooledPerfHarness {
-  pool: DuckDBConnectionPool;
+  pool: DuckDBConnectionPool & { close(): Promise<void> };
   db: DuckDBDatabase;
   instance: DuckDBInstance;
   mode: 'pooled';
@@ -33,12 +30,21 @@ export interface PerfHarnessOptions {
   pooled?: boolean;
   /** Pool size (default: 4) */
   poolSize?: number;
-  /** Array rewrite mode */
-  rewriteArrays?: RewriteArraysMode;
+  /** Exact DECIMAL output for precision benchmarks. */
+  decimalMode?: 'number' | 'string';
   /** Prepared statement cache configuration */
   prepareCache?: PrepareCacheOption;
 }
 
+export function createPerfHarness(
+  options?: PerfHarnessOptions & { pooled?: false }
+): Promise<PerfHarness>;
+export function createPerfHarness(
+  options: PerfHarnessOptions & { pooled: true }
+): Promise<PooledPerfHarness>;
+export function createPerfHarness(
+  options: PerfHarnessOptions
+): Promise<AnyPerfHarness>;
 export async function createPerfHarness(
   options?: PerfHarnessOptions
 ): Promise<AnyPerfHarness> {
@@ -46,7 +52,7 @@ export async function createPerfHarness(
   const connection = await instance.connect();
 
   const drizzleConfig = {
-    rewriteArrays: options?.rewriteArrays,
+    decimalMode: options?.decimalMode,
     prepareCache: options?.prepareCache,
   } as const;
 
@@ -71,10 +77,10 @@ export async function createPerfHarness(
 }
 
 export async function closePerfHarness(harness: AnyPerfHarness): Promise<void> {
-  if (harness.mode === 'pooled') {
-    await harness.pool.close();
-  } else {
-    await closeClientConnection(harness.connection);
+  try {
+    await harness.db.close();
+  } finally {
+    harness.instance.closeSync();
   }
 }
 

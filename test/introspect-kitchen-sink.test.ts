@@ -228,7 +228,7 @@ describe('introspection kitchen sink', () => {
       `v: varchar("v").default("5")`,
       `n: integer("n").default(-1)`,
       `d: doublePrecision("d").default(1000.0)`,
-      'big: bigint("big", { mode: \'number\' }).default(sql`9007199254740993`)',
+      'big: bigint("big", { mode: \'bigint\' }).default(sql`9007199254740993`)',
       `dec: numeric("dec", { precision: 10, scale: 2 }).default("1.5")`,
       'tstz: duckDbTimestamp("tstz", { withTimezone: true }).default(sql`now()`)',
       'ts: duckDbTimestamp("ts").default(sql`current_timestamp`)',
@@ -239,8 +239,8 @@ describe('introspection kitchen sink', () => {
       `r: real("r").default(1.5)`,
       `f: real("f")`,
       'g: integer("g").generatedAlwaysAs(sql`(n + 1)`)',
-      `st: duckDbStruct("st", { "Nice Name": "INTEGER", "tags": "VARCHAR[]" })`,
-      `mp: duckDbMap("mp", "INTEGER[]")`,
+      `st: duckDbStruct<{ "Nice Name": number | null; "tags": Array<string | null> | null }>("st", { "Nice Name": "INTEGER", "tags": "VARCHAR[]" })`,
+      `mp: duckDbMap<Record<string, Array<number | null> | null>>("mp", "INTEGER[]", { mode: 'object' })`,
     ];
     for (const fragment of expected) {
       expect(customSchemaTs).toContain(fragment);
@@ -318,15 +318,17 @@ test('maps nested and decimal element types without losing case', async () => {
       mk map(integer, varchar)
     )`);
     const { schemaTs } = (await introspect(drizzle(conn))).files;
-    expect(schemaTs).toContain(`lDec: duckDbList("l_dec", "DECIMAL(10,2)")`);
     expect(schemaTs).toContain(
-      `aDec: duckDbArray("a_dec", "DECIMAL(10,2)", 3)`
+      `lDec: duckDbList<number | string | null>("l_dec", "DECIMAL(10,2)")`
     );
     expect(schemaTs).toContain(
-      `mp: duckDbMap("mp", "STRUCT(\\"Nice Name\\" INTEGER)")`
+      `aDec: duckDbArray<number | string | null>("a_dec", "DECIMAL(10,2)", 3)`
     );
     expect(schemaTs).toContain(
-      `mk: duckDbMap("mk", "VARCHAR", { keyType: "INTEGER" })`
+      `mp: duckDbMap<Record<string, { "Nice Name": number | null } | null>>("mp", "STRUCT(\\"Nice Name\\" INTEGER)", { mode: 'object' })`
+    );
+    expect(schemaTs).toContain(
+      `mk: duckDbMap<Record<string, string | null>>("mk", "VARCHAR", { mode: 'object', keyType: "INTEGER" })`
     );
   } finally {
     conn.closeSync();
