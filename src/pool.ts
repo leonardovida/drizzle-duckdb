@@ -221,16 +221,21 @@ export function createDuckDBConnectionPool(
     lastUsedAt: meta.lastUsedAt,
   });
 
+  // The caller owns dequeueing and cancelling the timer. A replacement
+  // failure belongs to this waiter's acquire, not to the releasing caller.
+  const acquireForWaiter = (waiter: WaitingRequest): Promise<void> =>
+    acquire().then(
+      (connection) => resolveWaiter(waiter, connection),
+      (error) => rejectWaiter(waiter, toError(error))
+    );
+
   const retryNextWaiter = (): void => {
     if (closed) return;
 
     const waiter = takeWaiter();
     if (!waiter) return;
 
-    void acquire().then(
-      (connection) => resolveWaiter(waiter, connection),
-      (error) => rejectWaiter(waiter, toError(error))
-    );
+    void acquireForWaiter(waiter);
   };
 
   const acquire = async (): Promise<DuckDBConnection> => {
@@ -341,12 +346,7 @@ export function createDuckDBConnectionPool(
 
       const waiter = takeWaiter();
       if (waiter) {
-        try {
-          const replacement = await acquire();
-          resolveWaiter(waiter, replacement);
-        } catch (error) {
-          rejectWaiter(waiter, toError(error));
-        }
+        await acquireForWaiter(waiter);
       }
       return;
     }
