@@ -171,13 +171,17 @@ const CLOSING_CONNECTION_MESSAGE =
 const CLOSE_DRAIN_TIMEOUT_MS = 5_000;
 const CLOSE_DRAIN_POLL_MS = 10;
 
-function beginOperation(connection: DuckDBConnection): void {
+function assertConnectionAvailable(connection: DuckDBConnection): void {
   if (closingConnections.has(connection)) {
     throw new Error(CLOSING_CONNECTION_MESSAGE);
   }
   if (streamingConnections.has(connection)) {
     throw new Error(STREAMING_CONNECTION_MESSAGE);
   }
+}
+
+function beginOperation(connection: DuckDBConnection): void {
+  assertConnectionAvailable(connection);
   activeOperationCounts.set(
     connection,
     (activeOperationCounts.get(connection) ?? 0) + 1
@@ -808,6 +812,9 @@ async function executePreparedQuery(
   const cache = getPreparedStatementCache(connection, cacheConfig.size);
 
   return await cache.runExclusive(async () => {
+    // The connection may start streaming or closing while this query waits
+    // behind another cached execution. Recheck before touching native state.
+    assertConnectionAvailable(connection);
     let statement;
     try {
       statement = await cache.getOrPrepare(query);
@@ -815,6 +822,7 @@ async function executePreparedQuery(
       if (!isUnpreparableQueryError(error)) {
         throw error;
       }
+      assertConnectionAvailable(connection);
       const result = await connection.run(query, values, types);
       return await materializeResultRows(
         result,
@@ -823,6 +831,9 @@ async function executePreparedQuery(
       );
     }
 
+    // Preparing is asynchronous too. A stream opened during preparation must
+    // keep its result, and a closing connection must not start another query.
+    assertConnectionAvailable(connection);
     try {
       bindPreparedStatement(statement, values, types);
       const result = await statement.run();
