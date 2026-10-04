@@ -176,6 +176,36 @@ describe('parseMapKey', () => {
   });
 });
 
+describe('MAP parsing compatibility', () => {
+  test.each<[string, string | undefined, string]>([
+    [' map(character varying, character varying[]) ', undefined, 'VARCHAR[]'],
+    [
+      'MAP(TEXT, MAP(INTEGER, DECIMAL(10,2)))',
+      undefined,
+      'MAP(INTEGER, DECIMAL(10,2))',
+    ],
+    [
+      'MAP(DECIMAL(10,2), STRUCT("a,b" INT, "say""hi" VARCHAR[]))',
+      'DECIMAL(10,2)',
+      'STRUCT("a,b" INT, "say""hi" VARCHAR[])',
+    ],
+    ['MAP(VARCHAR(20), INTEGER)', 'VARCHAR(20)', 'INTEGER'],
+    ['MAP(string, timestamp without time zone)', undefined, 'TIMESTAMP'],
+    ['MAP(INTEGER)', undefined, 'TEXT'],
+    ['MAP()', undefined, 'TEXT'],
+    ['', undefined, 'TEXT'],
+    ['MAP(, INTEGER)', '', 'INTEGER'],
+    ['MAP(INTEGER,)', undefined, 'TEXT'],
+    ['MAP(INTEGER, )', 'INTEGER', ''],
+    ['MAP(INTEGER, VARCHAR, BOOLEAN)', 'INTEGER', 'VARCHAR'],
+    ['INTEGER, VARCHAR', 'INTEGER', 'VARCHAR'],
+    ['MAP (INTEGER, VARCHAR)', undefined, 'TEXT'],
+  ])('preserves key and value parsing for %s', (raw, key, value) => {
+    expect(parseMapKey(raw)).toBe(key);
+    expect(parseMapValue(raw)).toBe(value);
+  });
+});
+
 describe('splitTopLevel', () => {
   test('splits simple comma-separated values', () => {
     const result = splitTopLevel('a, b, c', ',');

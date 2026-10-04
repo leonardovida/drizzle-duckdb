@@ -40,7 +40,9 @@ const DDL = [
     a_dec decimal(10, 2)[3],
     l_uuid uuid[],
     mp map(varchar, struct("Nice Name" integer)),
-    mk map(integer, varchar)
+    mk map(integer, varchar),
+    nested_maps map(integer, map(varchar, struct("a,b" decimal(10,2), "say""hi" integer[]))),
+    map_list map(integer, varchar)[]
   )`,
   `create table ks.cols (
     user_id integer,
@@ -266,6 +268,37 @@ describe('introspection kitchen sink', () => {
     } finally {
       conn.closeSync();
     }
+  });
+
+  test('preserves nested MAP keys, quoted fields and nullable list values', async () => {
+    const valueType = JSON.stringify(
+      'MAP(VARCHAR, STRUCT("a,b" DECIMAL(10,2), "say""hi" INTEGER[]))'
+    );
+    expect(customSchemaTs).toContain(
+      `nestedMaps: duckDbMap<Record<string, Array<{ key: string; value: { "a,b": number | string | null; "say\\"hi": Array<number | null> | null } | null }> | null>>("nested_maps", ${valueType}, { mode: 'object', keyType: "INTEGER" })`
+    );
+    expect(customSchemaTs).toContain(
+      `mapList: duckDbList<Array<{ key: number; value: string | null }> | null>("map_list", "MAP(INTEGER, VARCHAR)")`
+    );
+    const mod = await import(path.join(tmpDir, 'schema.ts'));
+    await connection.run(`insert into ks.nested (nested_maps, map_list) values (
+      map([7], [map(['label'], [struct_pack("a,b" := 1.25::decimal(10,2), "say""hi" := [2, NULL])])]),
+      [map([3], ['three']), NULL]
+    )`);
+    const rows = await drizzle(connection)
+      .select({
+        nestedMaps: mod.nested.nestedMaps,
+        mapList: mod.nested.mapList,
+      })
+      .from(mod.nested);
+    expect(rows).toEqual([
+      {
+        nestedMaps: {
+          '7': [{ key: 'label', value: { 'a,b': 1.25, 'say"hi': [2, null] } }],
+        },
+        mapList: [[{ key: 3, value: 'three' }], null],
+      },
+    ]);
   });
 
   test('generated module loads without side effects and resolves references', async () => {
