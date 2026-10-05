@@ -1270,8 +1270,10 @@ function nestedValueType(raw: string): string {
     );
     return `{ ${fields.map(({ name, type }) => `${JSON.stringify(name)}: ${nestedValueType(type)} | null`).join('; ')} }`;
   }
-  if (type.startsWith('MAP('))
-    return `Array<{ key: ${nestedValueType(parseMapKey(type) ?? 'VARCHAR')}; value: ${nestedValueType(parseMapValue(type))} | null }>`;
+  if (type.startsWith('MAP(')) {
+    const { keyType, valueType } = parseMapTypes(type);
+    return `Array<{ key: ${nestedValueType(keyType ?? 'VARCHAR')}; value: ${nestedValueType(valueType)} | null }>`;
+  }
   if (BIGINT_MODE_TYPES.has(type) || type === 'BIGINT' || type === 'INT8')
     return 'bigint';
   if (
@@ -1514,8 +1516,7 @@ function mapDuckDbType(
 
   if (upper.startsWith('MAP(')) {
     imports.local.add('duckDbMap');
-    const valueType = parseMapValue(upper);
-    const keyType = parseMapKey(upper);
+    const { keyType, valueType } = parseMapTypes(upper);
     const mapOptions = keyType
       ? `, { mode: 'object', keyType: ${JSON.stringify(keyType)} }`
       : `, { mode: 'object' }`;
@@ -1654,32 +1655,38 @@ export function parseStructFields(
   return result;
 }
 
-export function parseMapValue(raw: string): string {
+const STRING_MAP_KEY_TYPES = new Set(['VARCHAR', 'TEXT', 'STRING']);
+
+// Schema builders and nested value types share the same MAP grammar and
+// defaults. Keep its permissive arity handling for the exported parsers too.
+function parseMapTypes(raw: string): {
+  keyType: string | undefined;
+  valueType: string;
+} {
   const inner = raw
     .trim()
     .replace(/^MAP\(/i, '')
     .replace(/\)$/, '');
   const parts = splitTopLevel(inner, ',');
   if (parts.length < 2) {
-    return 'TEXT';
+    return { keyType: undefined, valueType: 'TEXT' };
   }
-  return normalizeTypeLiteral(parts[1] ?? 'TEXT');
+  const keyType = normalizeTypeLiteral(parts[0] ?? '');
+  return {
+    keyType: STRING_MAP_KEY_TYPES.has(keyType.toUpperCase())
+      ? undefined
+      : keyType,
+    valueType: normalizeTypeLiteral(parts[1] ?? 'TEXT'),
+  };
 }
 
-const STRING_MAP_KEY_TYPES = new Set(['VARCHAR', 'TEXT', 'STRING']);
+export function parseMapValue(raw: string): string {
+  return parseMapTypes(raw).valueType;
+}
 
 /** Returns the MAP key type, or undefined when it is a string type. */
 export function parseMapKey(raw: string): string | undefined {
-  const inner = raw
-    .trim()
-    .replace(/^MAP\(/i, '')
-    .replace(/\)$/, '');
-  const parts = splitTopLevel(inner, ',');
-  if (parts.length < 2) {
-    return undefined;
-  }
-  const keyType = normalizeTypeLiteral(parts[0] ?? '');
-  return STRING_MAP_KEY_TYPES.has(keyType.toUpperCase()) ? undefined : keyType;
+  return parseMapTypes(raw).keyType;
 }
 
 function tableKey(
