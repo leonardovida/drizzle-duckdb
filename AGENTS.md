@@ -49,7 +49,7 @@
 
 ## DuckDB Runtime Notes
 
-- The repo develops and tests against `@duckdb/node-api@1.5.5-r.5` (the dev dependency). The peer range starts at `1.4.4`, so avoid APIs that older supported clients lack. For hermetic runs, use `DuckDBInstance.create(':memory:')` or `DuckDBConnection.create`.
+- The repo develops and tests against `@duckdb/node-api@1.5.6-r.1` (the dev dependency). The peer range starts at `1.4.4`, so avoid APIs that older supported clients lack. For hermetic runs, use `DuckDBInstance.create(':memory:')` or `DuckDBConnection.create`.
 - Clean up connections with `closeSync`, `close`, or `disconnectSync`. Avoid leaving `.duckdb` files in the repo.
 - Custom column helpers live in `src/columns.ts` (`duckDbStruct`, `duckDbMap`, `duckDbBlob`). For JSON like structures, use these helpers or Drizzle custom types, not Postgres JSON columns.
 
