@@ -294,19 +294,39 @@ function walkOrderBy(orderby: OrderBy[] | null | undefined): boolean {
   return transformed;
 }
 
-type UpdateStatement = {
+type WriteStatement = {
+  with?: Select['with'];
   set?: Array<{ value?: ExpressionValue }>;
   from?: From[] | null;
   where?: ExpressionValue | null;
+  values?: Select | { type: 'values'; values: ExpressionValue[] };
+  returning?: { columns?: Array<{ expr?: ExpressionValue }> } | null;
+  conflict?: { action?: { expr?: WriteStatement & { type: string } } };
 };
 
-function walkUpdate(update: UpdateStatement): boolean {
-  let transformed = false;
-  for (const item of update.set ?? []) {
+function walkWrite(statement: WriteStatement): boolean {
+  let transformed = walkWith(statement.with);
+  for (const item of statement.set ?? []) {
     transformed = walkExpression(item.value, item, 'value') || transformed;
   }
-  transformed = walkFrom(update.from) || transformed;
-  transformed = walkExpression(update.where, update, 'where') || transformed;
+  transformed = walkFrom(statement.from) || transformed;
+  transformed =
+    walkExpression(statement.where, statement, 'where') || transformed;
+
+  // INSERT sources are either a SELECT (including its CTEs) or VALUES rows,
+  // which the PostgreSQL parser represents as expression lists.
+  if (statement.values?.type === 'select') {
+    transformed = walkSelectImpl(statement.values) || transformed;
+  } else if (statement.values?.type === 'values') {
+    transformed = walkList(statement.values.values) || transformed;
+  }
+  for (const column of statement.returning?.columns ?? []) {
+    transformed = walkExpression(column.expr, column, 'expr') || transformed;
+  }
+  const conflictUpdate = statement.conflict?.action?.expr;
+  if (conflictUpdate?.type === 'update') {
+    transformed = walkWrite(conflictUpdate) || transformed;
+  }
   return transformed;
 }
 
@@ -328,17 +348,21 @@ function walkFrom(from: From[] | null | undefined): boolean {
   return transformed;
 }
 
-function walkSelectImpl(select: Select): boolean {
+function walkWith(withClauses: Select['with'] | undefined): boolean {
   let transformed = false;
-
-  if (select.with) {
-    for (const cte of select.with) {
+  if (withClauses) {
+    for (const cte of withClauses) {
       const cteSelect = cte.stmt?.ast ?? cte.stmt;
       if (cteSelect && cteSelect.type === 'select') {
         transformed = walkSelectImpl(cteSelect as Select) || transformed;
       }
     }
   }
+  return transformed;
+}
+
+function walkSelectImpl(select: Select): boolean {
+  let transformed = walkWith(select.with);
 
   if (Array.isArray(select.from)) {
     transformed = walkFrom(select.from) || transformed;
@@ -393,9 +417,12 @@ export function transformArrayBounds(ast: AST | AST[]): boolean {
   for (const stmt of statements) {
     if (stmt.type === 'select') {
       transformed = walkSelectImpl(stmt as Select) || transformed;
-    } else if (stmt.type === 'update') {
-      transformed =
-        walkUpdate(stmt as unknown as UpdateStatement) || transformed;
+    } else if (
+      stmt.type === 'update' ||
+      stmt.type === 'delete' ||
+      stmt.type === 'insert'
+    ) {
+      transformed = walkWrite(stmt as unknown as WriteStatement) || transformed;
     }
   }
 
