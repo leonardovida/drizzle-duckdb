@@ -1,9 +1,9 @@
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
-import { eq, isNotNull, sql } from 'drizzle-orm';
+import { eq, isNotNull, sql, type SQLWrapper } from 'drizzle-orm';
 import { pgTable, text } from 'drizzle-orm/pg-core';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   countN,
   drizzle,
@@ -43,6 +43,23 @@ export function parquetRevenue(db: DuckDBDatabase, paths: string | string[]) {
 }
 
 // Keep all scanned rows visible when an export mixes numeric text and bad data.
+function reconciliationMeasures(
+  rawAmount: SQLWrapper,
+  parsedAmount: SQLWrapper
+) {
+  return {
+    scanned: countN(),
+    accepted: countN(
+      sql`CASE WHEN ${rawAmount} IS NOT NULL AND ${parsedAmount} IS NOT NULL THEN 1 END`
+    ),
+    invalid: countN(
+      sql`CASE WHEN ${rawAmount} IS NOT NULL AND ${parsedAmount} IS NULL THEN 1 END`
+    ),
+    missing: countN(sql`CASE WHEN ${rawAmount} IS NULL THEN 1 END`),
+    revenue: sql<number>`COALESCE(SUM(${parsedAmount}), 0)`.mapWith(Number),
+  };
+}
+
 export function parquetReconciliation(
   db: DuckDBDatabase,
   paths: string | string[]
@@ -65,21 +82,47 @@ export function parquetReconciliation(
   return db
     .select({
       region: sales.region,
-      scanned: countN(),
-      accepted: countN(
-        sql`CASE WHEN ${sales.rawAmount} IS NOT NULL AND ${sales.parsedAmount} IS NOT NULL THEN 1 END`
-      ),
-      invalid: countN(
-        sql`CASE WHEN ${sales.rawAmount} IS NOT NULL AND ${sales.parsedAmount} IS NULL THEN 1 END`
-      ),
-      missing: countN(sql`CASE WHEN ${sales.rawAmount} IS NULL THEN 1 END`),
-      revenue: sql<number>`COALESCE(SUM(${sales.parsedAmount}), 0)`.mapWith(
-        Number
-      ),
+      ...reconciliationMeasures(sales.rawAmount, sales.parsedAmount),
     })
     .from(sales)
     .groupBy(sales.region)
     .orderBy(sales.region);
+}
+
+// Attribute rejected rows to a file without changing the region-only report.
+export function parquetReconciliationByFile(
+  db: DuckDBDatabase,
+  paths: string | string[]
+) {
+  const sales = db
+    .select({
+      region: sql<string>`region`.as('region'),
+      sourceFile: sql<string>`_export_file`.as('source_file'),
+      rawAmount: sql<string | null>`amount`.as('raw_amount'),
+      parsedAmount: sql<string | null>`TRY_CAST(amount AS DECIMAL(18, 2))`.as(
+        'parsed_amount'
+      ),
+    })
+    .from(
+      motherDuckReadParquet(paths, {
+        named: {
+          union_by_name: true,
+          hive_partitioning: true,
+          filename: '_export_file',
+        },
+      })
+    )
+    .as('sales');
+
+  return db
+    .select({
+      region: sales.region,
+      sourceFile: sales.sourceFile,
+      ...reconciliationMeasures(sales.rawAmount, sales.parsedAmount),
+    })
+    .from(sales)
+    .groupBy(sales.region, sales.sourceFile)
+    .orderBy(sales.region, sales.sourceFile);
 }
 
 export const regions = pgTable('regions', {
@@ -162,8 +205,21 @@ export function runParquetDimensionAnalytics() {
   });
 }
 
+export function runParquetReconciliation() {
+  return withParquetFixtures(async (db, paths) => {
+    const rejected = join(dirname(paths[0]!), 'rejected.parquet');
+    await db.execute(
+      sql`COPY (SELECT 'bad' AS amount) TO ${rejected} (FORMAT PARQUET)`
+    );
+    return await parquetReconciliationByFile(db, [...paths, rejected]);
+  });
+}
+
 if (import.meta.main) {
-  runParquetDimensionAnalytics()
+  const run = process.argv.includes('--reconcile')
+    ? runParquetReconciliation
+    : runParquetDimensionAnalytics;
+  run()
     .then(console.table)
     .catch((error) => {
       console.error(error);
