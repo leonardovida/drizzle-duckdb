@@ -145,12 +145,12 @@ const results = await db
 
 Postgres first-dimension bounds helpers are rewritten for DuckDB lists:
 
-| Postgres Function   | DuckDB Equivalent                                                  |
-| ------------------- | ------------------------------------------------------------------ |
-| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END`               |
-| `array_upper(a, 1)` | `CASE WHEN array_length(a) > 0 THEN array_length(a) ELSE NULL END` |
+| Postgres Function   | DuckDB Equivalent                                    |
+| ------------------- | ---------------------------------------------------- |
+| `array_lower(a, 1)` | `CASE WHEN array_length(a) > 0 THEN 1 ELSE NULL END` |
+| `array_upper(a, 1)` | `nullif(array_length(a), 0)`                         |
 
-The rewrite applies anywhere in the statement, including casts, `ORDER BY`, `GROUP BY` and `UPDATE` statements.
+The rewrite applies anywhere in the statement, including casts, window clauses, `ORDER BY`, `GROUP BY`, `RETURNING` and every write statement Drizzle builds. When `a` contains a function call, `array_upper` binds the length once so a volatile expression still runs once per row.
 
 ## Combining Array Conditions
 

@@ -104,16 +104,28 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: benchmark-base
 
+      # Runs go head, base, base, head (ABBA) and each side is averaged, so
+      # runner drift between the first and last run cancels out instead of
+      # landing on one revision.
       - name: Benchmark base on the same runner
         if: github.event_name == 'pull_request'
         working-directory: benchmark-base
         run: |
           bun install --frozen-lockfile
           bun run perf:run -- --gha-output ../base-bench.json
+          bun run perf:run -- --gha-output ../base-bench-2.json
+
+      - name: Benchmark head again
+        if: github.event_name == 'pull_request'
+        run: |
+          # Vitest would also collect the base checkout's benchmarks.
+          mv benchmark-base "$RUNNER_TEMP/benchmark-base"
+          bun run perf:run -- --gha-output action-bench-2.json
+          mv "$RUNNER_TEMP/benchmark-base" benchmark-base
 
       - name: Gate regressions beyond measurement uncertainty
         if: github.event_name == 'pull_request'
-        run: bun run perf:compare -- --threshold 5 --fail-on-regression --allow-new base-bench.json action-bench.json
+        run: bun run perf:compare -- --threshold 5 --fail-on-regression --allow-new base-bench.json,base-bench-2.json action-bench.json,action-bench-2.json
 
       - name: Upload comparison artifacts
         if: always() && github.event_name == 'pull_request'
@@ -123,4 +135,6 @@ jobs:
           path: |
             base-bench.json
             base-bench.json.meta.json
+            base-bench-2.json
+            action-bench-2.json
             benchmark-base/perf-results/*.json

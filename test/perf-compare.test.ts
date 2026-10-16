@@ -6,6 +6,8 @@ import { afterEach, describe, expect, test } from 'vitest';
 import {
   compareBenchmarks,
   loadNormalizedFile,
+  loadNormalizedRuns,
+  mergeBenchmarkRuns,
   normalizePerfFile,
   parseArgs,
   renderComparison,
@@ -226,5 +228,71 @@ describe('run-perf', () => {
       ghaOutput: 'action-bench.json',
       runFilters: ['test/perf/query.bench.ts'],
     });
+  });
+});
+
+describe('repeated perf runs', () => {
+  test('averages runs and widens the margin to the spread between them', () => {
+    const merged = mergeBenchmarkRuns([
+      [
+        { name: 'scan', opsPerSecond: 90, relativeMargin: 2 },
+        { name: 'steady', opsPerSecond: 100, relativeMargin: 3 },
+      ],
+      [
+        { name: 'scan', opsPerSecond: 110, relativeMargin: 1 },
+        { name: 'steady', opsPerSecond: 100, relativeMargin: 1 },
+      ],
+    ]);
+
+    expect(merged).toEqual([
+      { name: 'scan', opsPerSecond: 100, relativeMargin: 10 },
+      { name: 'steady', opsPerSecond: 100, relativeMargin: 3 },
+    ]);
+  });
+
+  test('drops a benchmark missing from any run so the gate reports it', () => {
+    const merged = mergeBenchmarkRuns([
+      [
+        { name: 'scan', opsPerSecond: 100, relativeMargin: 1 },
+        { name: 'flaky', opsPerSecond: 50, relativeMargin: 1 },
+      ],
+      [{ name: 'scan', opsPerSecond: 100, relativeMargin: 1 }],
+    ]);
+    expect(merged.map((row) => row.name)).toEqual(['scan']);
+    expect(
+      regressionFailures(
+        compareBenchmarks(
+          [
+            { name: 'scan', opsPerSecond: 100, relativeMargin: 1 },
+            { name: 'flaky', opsPerSecond: 50, relativeMargin: 1 },
+          ],
+          merged,
+          5
+        ),
+        5
+      )
+    ).toEqual(['flaky']);
+  });
+
+  test('loads comma-separated run lists from disk', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'perf-runs-'));
+    tempDirs.push(dir);
+    const first = join(dir, 'a.json');
+    const second = join(dir, 'b.json');
+    writeFileSync(
+      first,
+      JSON.stringify([{ name: 'scan', unit: 'ops/s', value: 80, range: 1 }])
+    );
+    writeFileSync(
+      second,
+      JSON.stringify([{ name: 'scan', unit: 'ops/s', value: 120, range: 1 }])
+    );
+
+    expect(await loadNormalizedRuns(`${first},${second}`)).toEqual([
+      { name: 'scan', opsPerSecond: 100, relativeMargin: 20 },
+    ]);
+    expect(await loadNormalizedRuns(first)).toEqual([
+      { name: 'scan', opsPerSecond: 80, relativeMargin: 1 },
+    ]);
   });
 });
