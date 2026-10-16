@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../src/driver.ts';
+import {
+  duckLakeMergeAdjacentFiles,
+  type DuckLakeMergeAdjacentFilesRow,
+} from '../src/ducklake.ts';
 import { createDuckDBConnectionPool } from '../src/pool.ts';
 
 async function canLoadDuckLake(): Promise<boolean> {
@@ -200,6 +204,62 @@ describe.skipIf(!ducklakeAvailable)('DuckLake attach integration', () => {
           sql`select type from duckdb_databases() where database_name = 'ducklake'`
         )
       ).resolves.toEqual([{ type: 'ducklake' }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('duckLakeMergeAdjacentFiles compacts small files with bound options', async () => {
+    const db = await drizzle(':memory:', {
+      ducklake: {
+        catalog: join(directory, 'meta.ducklake'),
+        alias: 'lake',
+        // Write every insert to its own data file instead of inlining it.
+        attachOptions: {
+          dataPath: join(directory, 'data'),
+          dataInliningRowLimit: 0,
+        },
+      },
+    });
+
+    try {
+      await db.execute(sql`create table events (id integer)`);
+      for (const id of [1, 2, 3]) {
+        await db.execute(sql`insert into events values (${id})`);
+      }
+
+      const countFiles = async () => {
+        const [{ files }] = await db.execute<{ files: number }>(
+          sql`select count(*)::int as files from ducklake_list_files('lake', 'events')`
+        );
+        return files;
+      };
+      expect(await countFiles()).toBe(3);
+
+      const merged = await db.execute<DuckLakeMergeAdjacentFilesRow>(
+        sql`select * from ${duckLakeMergeAdjacentFiles('lake', {
+          table: 'events',
+          schema: 'main',
+          maxCompactedFiles: 10,
+        })}`
+      );
+      expect(await countFiles()).toBe(1);
+      // DuckLake for DuckDB 1.4 reports no rows. Later versions report one
+      // row per compacted table.
+      if (merged.length > 0) {
+        expect(merged).toHaveLength(1);
+        expect(merged[0]).toMatchObject({
+          schema_name: 'main',
+          table_name: 'events',
+        });
+        expect(Number(merged[0]!.files_processed)).toBe(3);
+        expect(Number(merged[0]!.files_created)).toBe(1);
+      }
+
+      const [{ total }] = await db.execute<{ total: number }>(
+        sql`select count(*)::int as total from events`
+      );
+      expect(total).toBe(3);
     } finally {
       await db.close();
     }

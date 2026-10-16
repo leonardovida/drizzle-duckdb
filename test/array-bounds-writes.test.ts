@@ -124,13 +124,90 @@ test('INSERT conflict updates walk both assignments and predicates', async () =>
   ).toEqual([{ n: 2 }]);
 });
 
-test('write bounds keep the existing safe fallback for unsupported SQL', () => {
-  for (const query of [
-    'DELETE FROM "bounds items" WHERE array_upper(tags, 2) = $1',
-    'DELETE FROM "bounds items" WHERE array_upper(tags, 1) IS DISTINCT FROM $1',
-    "INSERT INTO lengths VALUES (1, array_upper(ARRAY['c:\\tmp'], 1))",
-    'DELETE FROM "bounds items" USING lengths WHERE array_upper(tags, 1) = n',
-  ]) {
-    expect(transformSQL(query)).toEqual({ sql: query, transformed: false });
-  }
+test('bounds the parser cannot read are rewritten in place', async () => {
+  // A non-first dimension has no DuckDB equivalent and stays as written.
+  const otherDimension =
+    'DELETE FROM "bounds items" WHERE array_upper(tags, 2) = $1';
+  expect(transformSQL(otherDimension)).toEqual({
+    sql: otherDimension,
+    transformed: false,
+  });
+
+  expect(
+    transformSQL(
+      "INSERT INTO lengths VALUES (1, array_upper(ARRAY['c:\\tmp'], 1))"
+    )
+  ).toEqual({
+    sql: "INSERT INTO lengths VALUES (1, nullif(array_length(ARRAY['c:\\tmp']), 0))",
+    transformed: true,
+  });
+
+  await db.execute(sql`create table lengths (id int, n int)`);
+  await db.execute(sql`insert into lengths values (1, 2)`);
+  await db.execute(
+    sql`delete from ${items} using lengths where array_upper(tags, 1) = lengths.n`
+  );
+  await db.execute(
+    sql`delete from ${items} where array_lower(tags, 1) is distinct from ${1} and id = ${2}`
+  );
+  expect(
+    await db.select({ id: items.id }).from(items).orderBy(items.id)
+  ).toEqual([{ id: 3 }]);
+});
+
+test('Drizzle write builders the parser rejects still rewrite bounds', async () => {
+  const lengths = pgTable('lengths', { id: integer('id'), n: integer('n') });
+  await db.execute(sql`create table lengths (id int, n int)`);
+  const hi = sql<number>`array_upper(${items.tags}, 1)`;
+  const source = db
+    .$with('source')
+    .as(db.select({ id: items.id, hi: hi.as('hi') }).from(items));
+
+  expect(
+    await db
+      .insert(lengths)
+      .select(db.select({ id: items.id, n: hi.as('n') }).from(items))
+      .returning()
+  ).toEqual([
+    { id: 1, n: 2 },
+    { id: 2, n: null },
+    { id: 3, n: null },
+  ]);
+  await db
+    .with(source)
+    .insert(lengths)
+    .select(sql`select id, hi from ${source} where hi is not null`);
+  expect(
+    await db
+      .select()
+      .from(lengths)
+      .where(sql`n = 2`)
+      .orderBy(lengths.id)
+  ).toEqual([
+    { id: 1, n: 2 },
+    { id: 1, n: 2 },
+  ]);
+
+  expect(
+    await db
+      .select({
+        id: items.id,
+        rank: sql<number>`row_number() over (order by ${hi} nulls last, ${items.id})`,
+      })
+      .from(items)
+      .orderBy(items.id)
+  ).toEqual([
+    { id: 1, rank: 1n },
+    { id: 2, rank: 2n },
+    { id: 3, rank: 3n },
+  ]);
+
+  await db
+    .with(source)
+    .delete(items)
+    .where(sql`${items.id} in (select id from ${source} where hi = ${2})`);
+  expect(await db.delete(items).returning({ id: items.id, hi })).toEqual([
+    { id: 2, hi: null },
+    { id: 3, hi: null },
+  ]);
 });

@@ -33,9 +33,10 @@ A short map of the source tree for contributors.
 
 - `src/columns.ts`: DuckDB column helpers (`duckDbList`, `duckDbArray`, `duckDbMap`, `duckDbStruct`, `duckDbJson`, `duckDbTimestamp` and others), literal builders, and the array predicate helpers. `src/operators.ts` re-exports those predicates as `arrayHasAll`, `arrayHasAny` and `arrayContainedBy`.
 - `src/olap.ts`: numeric aggregates, window helpers, Lance search helpers and the `olap()` builder.
-- `src/motherduck.ts` and `src/jev.ts`: MotherDuck table function helpers.
-- `src/ducklake.ts`: DuckLake attach and pool setup.
-- `src/sql/ast-transformer.ts`: AST-based SQL transformer using `node-sql-parser`. It parses only queries that match a rewrite pattern and keeps the original SQL when the printed result would drop string literals, parameters or quoted identifiers. Visitors in `src/sql/visitors/` rewrite `array_lower`/`array_upper` (`array-bounds.ts`), qualify ambiguous join columns (`column-qualifier.ts`), alias `generate_series` (`generate-series-alias.ts`) and hoist `WITH` clauses out of set operation arms (`union-with-hoister.ts`). Postgres array operators pass through unchanged.
+- `src/motherduck.ts`: MotherDuck table function and session identity helpers.
+- `src/jev.ts` and `src/prompt.ts`: MotherDuck `prompt_jev` and `prompt` builders. Both inline settings as constants through `src/sql-constants.ts`.
+- `src/ducklake.ts`: DuckLake attach, pool setup and the compaction helper.
+- `src/sql/ast-transformer.ts`: AST-based SQL transformer using `node-sql-parser`. It parses only queries that match a rewrite pattern and keeps the original SQL when the printed result would drop string literals, parameters or quoted identifiers. Visitors in `src/sql/visitors/` rewrite `array_lower`/`array_upper` (`array-bounds.ts`, with a text fallback in `src/sql/array-bounds-text.ts` for statements the parser cannot read), qualify ambiguous join columns (`column-qualifier.ts`), alias `generate_series` (`generate-series-alias.ts`) and hoist `WITH` clauses out of set operation arms (`union-with-hoister.ts`). Postgres array operators pass through unchanged.
 - `src/sql/result-mapper.ts`: maps result rows into Drizzle's nested selection shape.
 
 ## Introspection and CLI

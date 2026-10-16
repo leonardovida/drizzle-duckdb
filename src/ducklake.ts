@@ -1,4 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
+import { sql, type SQLWrapper } from 'drizzle-orm';
+import { isSQLWrapper, type SQL } from 'drizzle-orm/sql/sql';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -438,4 +440,141 @@ export function resolveDuckLakePoolSize(
     isLocalCatalog,
     hasPoolSetting,
   };
+}
+
+export interface DuckLakeMergeAdjacentFilesOptions {
+  /** Only compact this table. */
+  table?: string | SQLWrapper;
+  /** Schema of `table`. */
+  schema?: string | SQLWrapper;
+  minFileSize?: number | bigint | SQLWrapper;
+  maxFileSize?: number | bigint | SQLWrapper;
+  maxCompactedFiles?: number | bigint | SQLWrapper;
+  /**
+   * Only merge files written at or after this time. MotherDuck DuckLake
+   * supports it. The DuckLake extension that ships for DuckDB 1.5.6 does not.
+   */
+  newerThan?: Date | string | SQLWrapper;
+  /** Only merge files written before this time. Same support as `newerThan`. */
+  olderThan?: Date | string | SQLWrapper;
+}
+
+/** One row per compacted table. DuckLake for DuckDB 1.4 returns no rows. */
+export type DuckLakeMergeAdjacentFilesRow = {
+  schema_name: string;
+  table_name: string;
+  files_processed: number | bigint;
+  files_created: number | bigint;
+};
+
+function fileSizeArg(
+  value: number | bigint | SQLWrapper | undefined,
+  name: string,
+  minimum: 0 | 1 = 1
+): SQLWrapper | undefined {
+  if (value === undefined || isSQLWrapper(value)) {
+    return value;
+  }
+  if (
+    (typeof value === 'number' &&
+      (!Number.isSafeInteger(value) || value < minimum)) ||
+    (typeof value === 'bigint' && value < BigInt(minimum)) ||
+    (typeof value !== 'number' && typeof value !== 'bigint')
+  ) {
+    throw new Error(
+      `ducklake_merge_adjacent_files ${name} must be an integer of at least ${minimum}`
+    );
+  }
+  return sql`CAST(${sql.param(value)} AS UBIGINT)`;
+}
+
+/** Only instants with an explicit zone compare the same in JS and DuckDB. */
+function comparableInstant(value: Date | string): number | undefined {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  return /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(value.trim())
+    ? new Date(value).getTime()
+    : undefined;
+}
+
+function timestampArg(
+  value: Date | string | SQLWrapper | undefined,
+  name: string
+): SQLWrapper | undefined {
+  if (value === undefined || isSQLWrapper(value)) {
+    return value;
+  }
+  if (
+    value instanceof Date
+      ? Number.isNaN(value.getTime())
+      : typeof value !== 'string'
+  ) {
+    throw new Error(
+      `ducklake_merge_adjacent_files ${name} must be a valid Date or timestamp string`
+    );
+  }
+  return sql`CAST(${sql.param(value instanceof Date ? value.toISOString() : value)} AS TIMESTAMPTZ)`;
+}
+
+/**
+ * Build `ducklake_merge_adjacent_files` to compact small adjacent data files.
+ * Use it as a table source, as in `select * from ${duckLakeMergeAdjacentFiles('lake')}`.
+ */
+export function duckLakeMergeAdjacentFiles(
+  catalog: string | SQLWrapper,
+  options: DuckLakeMergeAdjacentFilesOptions = {}
+): SQL {
+  if (options.schema !== undefined && options.table === undefined) {
+    throw new Error('ducklake_merge_adjacent_files schema requires table');
+  }
+  const { newerThan, olderThan, minFileSize, maxFileSize } = options;
+  if (
+    newerThan !== undefined &&
+    olderThan !== undefined &&
+    !isSQLWrapper(newerThan) &&
+    !isSQLWrapper(olderThan) &&
+    // Zone-less strings follow the DuckDB session TimeZone, so leave them
+    // to the server.
+    (comparableInstant(newerThan) ?? Number.NaN) >=
+      (comparableInstant(olderThan) ?? Number.NaN)
+  ) {
+    throw new Error(
+      'ducklake_merge_adjacent_files newerThan must be earlier than olderThan'
+    );
+  }
+  if (
+    (typeof minFileSize === 'number' || typeof minFileSize === 'bigint') &&
+    (typeof maxFileSize === 'number' || typeof maxFileSize === 'bigint') &&
+    BigInt(maxFileSize) <= BigInt(minFileSize)
+  ) {
+    throw new Error(
+      'ducklake_merge_adjacent_files maxFileSize must be greater than minFileSize'
+    );
+  }
+
+  const args: SQL[] = [sql`${catalog}`];
+  if (options.table !== undefined) {
+    args.push(sql`${options.table}`);
+  }
+  const named: [string, SQLWrapper | undefined][] = [
+    [
+      'schema',
+      options.schema === undefined ? undefined : sql`${options.schema}`,
+    ],
+    ['min_file_size', fileSizeArg(minFileSize, 'minFileSize', 0)],
+    ['max_file_size', fileSizeArg(maxFileSize, 'maxFileSize')],
+    [
+      'max_compacted_files',
+      fileSizeArg(options.maxCompactedFiles, 'maxCompactedFiles'),
+    ],
+    ['newer_than', timestampArg(newerThan, 'newerThan')],
+    ['older_than', timestampArg(olderThan, 'olderThan')],
+  ];
+  for (const [name, value] of named) {
+    if (value !== undefined) {
+      args.push(sql`${sql.raw(name)} := ${value}`);
+    }
+  }
+  return sql`ducklake_merge_adjacent_files(${sql.join(args, sql`, `)})`;
 }

@@ -108,6 +108,26 @@ await configureDuckLake(connection, {
 const db = drizzle(connection);
 ```
 
+## Compacting Data Files
+
+Many small writes leave many small data files. `duckLakeMergeAdjacentFiles` builds the `ducklake_merge_adjacent_files` table function, which merges adjacent files and returns one row per table it changed:
+
+```typescript
+import { duckLakeMergeAdjacentFiles } from '@duckdbfan/drizzle-duckdb';
+import { sql } from 'drizzle-orm';
+
+const merged = await db.execute(sql`
+  select * from ${duckLakeMergeAdjacentFiles('ducklake', {
+    table: 'events',
+    schema: 'main',
+    maxCompactedFiles: 100,
+  })}
+`);
+// [{ schema_name: 'main', table_name: 'events', files_processed: 12, files_created: 1 }]
+```
+
+Leave out `table` to compact every table in the catalog. DuckLake for DuckDB 1.4 compacts the same way but returns no rows. `minFileSize`, `maxFileSize` and `maxCompactedFiles` must be positive integers, and `maxFileSize` must be larger than `minFileSize`. On MotherDuck DuckLake, `newerThan` and `olderThan` limit the merge to files written in a time window, for example to skip files that are still being written. The DuckLake extension that ships for DuckDB 1.5.6 rejects these two options.
+
 ## Limitations
 
 DuckLake only supports `NOT NULL` constraints. Primary keys, foreign keys, unique constraints, and indexes are not supported. Avoid relying on those features in migrations or schema design.

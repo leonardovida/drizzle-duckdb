@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { expect, test } from 'vitest';
+import { expect, expectTypeOf, test } from 'vitest';
 import {
   mdAccessTokens,
   mdCancelFlightRun,
@@ -31,17 +31,31 @@ import {
   mdListFlightRuns,
   mdListFlights,
   mdListFlightVersions,
+  mdListFiles,
+  mdCurrentEmail,
+  mdSessionRoles,
+  mdIsRoleInSession,
+  mdUpdateDiveStatus,
   mdRunFlight,
   mdRunJob,
   mdUpdateDiveContent,
   mdUpdateDiveMetadata,
   mdUpdateFlight,
   mdUpdateJob,
+  type MotherDuckDiveCreateRow,
+  type MotherDuckDiveDetailRow,
+  type MotherDuckDiveSummaryRow,
+  type MotherDuckFileRow,
+  type MotherDuckFlightRunRow,
   type MotherDuckDiveVersionSummaryRow,
+  type MotherDuckFlightSummaryRow,
+  type MotherDuckFlightVersionRow,
   type MotherDuckFlightLogLineRow,
   type MotherDuckFlightLogsRow,
 } from '../src/motherduck.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
+import type { DuckLakeMergeAdjacentFilesRow } from '../src/ducklake.ts';
+import { drizzle } from '../src/index.ts';
 
 test('MotherDuck table function helpers emit callable SQL', () => {
   const dialect = new DuckDBDialect();
@@ -617,4 +631,186 @@ test('deprecated MotherDuck job config helpers share Flight validation', () => {
       })}
     `)
   ).toThrow(/value for key "GOOD_KEY" must not contain a NULL byte/i);
+});
+
+test('MotherDuck Flight helpers pass instance types and the owner filter', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  const created = dialect.sqlToQuery(
+    sql`from ${mdCreateFlight({
+      name: 'nightly',
+      sourceCode: 'print(1)',
+      instanceType: 'F16',
+    })}`
+  );
+  expect(created.sql).toContain(
+    'from md_create_flight(name = $1, source_code = $2, instance_type = $3)'
+  );
+  expect(created.params).toEqual(['nightly', 'print(1)', 'F16']);
+
+  const updated = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({ flightId, instanceType: sql`'F32'` })}`
+  );
+  expect(updated.sql).toContain(
+    "from md_update_flight(flight_id = $1, instance_type = 'F32')"
+  );
+
+  const owned = dialect.sqlToQuery(
+    sql`from ${mdListFlights({ ownerOnly: true, limit: 5 })}`
+  );
+  expect(owned.sql).toContain(
+    'from md_list_flights("LIMIT" = $1, owner_only = $2)'
+  );
+  expect(owned.params).toEqual([5, true]);
+
+  const version: MotherDuckFlightVersionRow = {
+    version_id: '1',
+    flight_id: flightId,
+    flight_version: 2,
+    created_at: '2026-10-01T00:00:00Z',
+    access_token_name: 'token',
+    flight_secret_names: [],
+    config: null,
+    source_code: 'print(1)',
+    requirements_txt: null,
+    instance_type: 'F4',
+  };
+  const summary: MotherDuckFlightSummaryRow = {
+    flight_id: flightId,
+    flight_name: 'nightly',
+    schedule_cron: null,
+    schedule_status: null,
+    status: 'active',
+    current_version: 2,
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z',
+    owner_name: 'leo',
+  };
+  expect([version.instance_type, summary.owner_name]).toEqual(['F4', 'leo']);
+});
+
+test('MotherDuck Dive helpers set status and required resources', () => {
+  const dialect = new DuckDBDialect();
+  const diveId = '90000000-0000-0000-0000-000000000001';
+
+  const status = dialect.sqlToQuery(
+    sql`from ${mdUpdateDiveStatus({ id: diveId, status: 'endorsed', version: 3 })}`
+  );
+  expect(status.sql).toContain(
+    'from md_update_dive_status(id = $1, status = $2, version = $3)'
+  );
+  expect(status.params).toEqual([diveId, 'endorsed', 3]);
+
+  const created = dialect.sqlToQuery(
+    sql`from ${mdCreateDive({
+      title: 'Revenue',
+      content: 'export default () => null',
+      requiredResources: [
+        { url: 'md:_share/sales/abc', alias: 'sales' },
+        { url: 'md:analytics' },
+      ],
+    })}`
+  );
+  expect(created.sql).toContain(
+    'required_resources = CAST([{url: $3, alias: $4}, {url: $5, alias: $6}] AS STRUCT(url VARCHAR, alias VARCHAR)[])'
+  );
+  expect(created.params.slice(2)).toEqual([
+    'md:_share/sales/abc',
+    'sales',
+    'md:analytics',
+    null,
+  ]);
+
+  const cleared = dialect.sqlToQuery(
+    sql`from ${mdUpdateDiveContent({
+      id: diveId,
+      content: 'x',
+      requiredResources: [],
+    })}`
+  );
+  expect(cleared.sql).toContain(
+    'required_resources = CAST([] AS STRUCT(url VARCHAR, alias VARCHAR)[])'
+  );
+
+  expect(() =>
+    mdCreateDive({
+      title: 't',
+      content: 'c',
+      requiredResources: [{ url: '' }],
+    })
+  ).toThrow(/needs a non-empty url/);
+
+  const row: MotherDuckDiveSummaryRow = {
+    id: diveId,
+    title: 'Revenue',
+    description: null,
+    owner_id: '1',
+    current_version: 3,
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z',
+    owner_name: 'leo',
+    status: 'endorsed',
+    status_applies_to_version: 3,
+  };
+  expect(row.status).toBe('endorsed');
+});
+
+test('MotherDuck file listing and session identity helpers emit SQL', () => {
+  const dialect = new DuckDBDialect();
+
+  const files = dialect.sqlToQuery(
+    sql`select name from ${mdListFiles('s3://bucket/raw/', { limit: 100 })}`
+  );
+  expect(files.sql).toContain('from md_list_files($1, "LIMIT" = $2)');
+  expect(files.params).toEqual(['s3://bucket/raw/', 100]);
+
+  const identity = dialect.sqlToQuery(
+    sql`select ${mdCurrentEmail()}, ${mdSessionRoles()}, ${mdIsRoleInSession(
+      'analyst'
+    )}, ${mdIsRoleInSession(['admin', 'owner'])}, ${mdIsRoleInSession([])}`
+  );
+  expect(identity.sql).toBe(
+    'select current_email(), session_roles(), is_role_in_session(CAST($1 AS VARCHAR)), is_role_in_session(CAST($2 AS VARCHAR[])), is_role_in_session(CAST([] AS VARCHAR[]))'
+  );
+  expect(identity.params).toEqual(['analyst', ['admin', 'owner']]);
+});
+
+test('MotherDuck helper argument expressions bind in DuckDB', async () => {
+  // Mirrors the list arguments the Dive and role helpers emit.
+  const db = await drizzle(':memory:');
+  try {
+    const [row] = await db.execute<{
+      resources: { url: string; alias: string | null }[];
+      empty: unknown[];
+      roles: string[];
+    }>(sql`
+      select
+        CAST([{url: ${'md:a'}, alias: ${'a'}}, {url: ${'md:b'}, alias: ${null}}] AS STRUCT(url VARCHAR, alias VARCHAR)[]) as resources,
+        CAST([] AS STRUCT(url VARCHAR, alias VARCHAR)[]) as empty,
+        CAST(${sql.param(['admin', 'owner'])} AS VARCHAR[]) as roles
+    `);
+    expect(row).toEqual({
+      resources: [
+        { url: 'md:a', alias: 'a' },
+        { url: 'md:b', alias: null },
+      ],
+      empty: [],
+      roles: ['admin', 'owner'],
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test('MotherDuck row types work as db.execute result types', () => {
+  // db.execute<T> requires T to extend Record<string, unknown>, which an
+  // interface does not.
+  expectTypeOf<MotherDuckFlightRunRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<MotherDuckDiveDetailRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<MotherDuckDiveCreateRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<MotherDuckFileRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<DuckLakeMergeAdjacentFilesRow>().toExtend<
+    Record<string, unknown>
+  >();
 });
