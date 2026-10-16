@@ -214,7 +214,13 @@ const versions = await db.execute(sql`
 the past. `mdListDives()` accepts pagination plus `includeOrgShares` for Dives
 shared with the organization. The Dives helper family covers listing, reading,
 creating, updating metadata or content, deleting, listing versions, and reading
-a specific version. `mdListDives()`, `mdListDiveVersions()`, and
+a specific version. `mdUpdateDiveStatus({ id, status, version })` sets a
+Dive's governance status to `draft`, `ready`, `endorsed` or `archived`, and
+summary rows from `mdListDives()` and `mdGetDive()` carry `status`,
+`status_changed_at`, `status_set_by` and `status_applies_to_version`.
+`mdCreateDive()` and `mdUpdateDiveContent()` accept `requiredResources` as a
+list of `{ url, alias }` objects for the shares or databases a Dive reads. An
+empty list is sent as a typed empty list. `mdListDives()`, `mdListDiveVersions()`, and
 `mdGetDiveVersion()` include `required_resources` on supported MotherDuck
 deployments. The column is a list of structs with `name`, `alias`, `url`, `id`,
 and `resource_type` fields.
@@ -292,6 +298,40 @@ The deprecated `mdFlightLogs()` and `mdJobRunLogs()` blobs join lines in
 `line_number` order, descending when `order` is `'desc'`.
 Use `maxRuntimeSec` on `mdCreateFlight()` or `mdUpdateFlight()` to cap each run
 in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
+Use `instanceType` (`'F4'`, `'F8'`, `'F16'` or `'F32'`) to pick the Flight
+size. Each plan offers a subset and uses its own default when you omit it.
+Changing the size with `mdUpdateFlight()` creates a new version, and version
+rows from `mdListFlightVersions()` and `mdGetFlightVersion()` report it as
+`instance_type`. Summary rows include `owner_name`, and
+`mdListFlights({ ownerOnly: true })` lists only the Flights you own.
+
+## MotherDuck files and session identity
+
+`mdListFiles(path, { limit })` lists one level of an `s3://` or `azure://`
+path with your MotherDuck secrets. Rows have `name`, `type` (`file` or
+`folder`), `size` and `last_modified`.
+
+MotherDuck exposes the session's identity as SQL scalars. Use them to scope
+queries to the caller:
+
+```typescript
+import {
+  mdCurrentEmail,
+  mdIsRoleInSession,
+  mdSessionRoles,
+} from '@duckdbfan/drizzle-duckdb';
+
+const [me] = await db.execute(sql`
+  select
+    ${mdCurrentEmail()} as email,
+    ${mdSessionRoles()} as roles,
+    ${mdIsRoleInSession(['admin', 'analyst'])} as can_view
+`);
+```
+
+`mdCurrentEmail()` returns `NULL` for service accounts. `mdIsRoleInSession()`
+matches case-insensitively, follows the role hierarchy and returns `true` when
+any listed role is held.
 
 `config` entries are exposed to Flight code as environment variables using the
 config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and

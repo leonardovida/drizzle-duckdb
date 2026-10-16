@@ -35,11 +35,15 @@ export * from './operators.ts';
 export * from './pgduck.ts';
 export * from './motherduck.ts';
 export * from './jev.ts';
+export * from './prompt.ts';
 export {
   configureDuckLake,
+  duckLakeMergeAdjacentFiles,
   wrapDuckLakePool,
   type DuckLakeAttachOptions,
   type DuckLakeConfig,
+  type DuckLakeMergeAdjacentFilesOptions,
+  type DuckLakeMergeAdjacentFilesRow,
 } from './ducklake.ts';
 export { DuckDBDialect } from './dialect.ts';
 export { DuckDBSelectBuilder } from './select-builder.ts';

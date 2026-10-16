@@ -1,7 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { expect, test } from 'vitest';
+import type { SQL } from 'drizzle-orm/sql/sql';
+import { expect, expectTypeOf, test } from 'vitest';
 import { DuckDBDialect } from '../src/dialect.ts';
-import { mdPromptJev, type MotherDuckPromptJevOptions } from '../src/jev.ts';
+import {
+  mdPromptJev,
+  type MotherDuckJevBoxResult,
+  type MotherDuckJevChoiceResult,
+  type MotherDuckJevQuestion,
+  type MotherDuckJevMultipleChoiceResult,
+  type MotherDuckJevScoreResult,
+  type MotherDuckPromptJevOptions,
+} from '../src/jev.ts';
 
 const dialect = new DuckDBDialect();
 
@@ -164,4 +173,161 @@ test('prompt_jev validates single question instructions and criteria', () => {
       noul: [{ description: 'missing label' }],
     } as unknown as MotherDuckPromptJevOptions)
   ).toThrow(/noul labels must be strings/);
+});
+
+test('prompt_jev supports multiple choice criteria', () => {
+  const query = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(sql`message`, {
+      instructions: 'Which features does this request?',
+      multipleChoice: [
+        { label: 'api', description: 'Programmatic API access' },
+        { label: 'sso' },
+      ],
+      batchSize: 8,
+    })}
+  `);
+
+  expect(query.sql).toContain(
+    "prompt_jev(CAST(message AS VARCHAR), 'Which features does this request?', multiple_choice := [{label: 'api', description: 'Programmatic API access'}, {label: 'sso', description: NULL}], batch_size := 8)"
+  );
+  expect(() =>
+    mdPromptJev('message', {
+      instructions: 'Features?',
+      multipleChoice: ['api'],
+      choice: ['a', 'b'],
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/cannot be combined/);
+});
+
+test('prompt_jev builds named image input for classification and boxes', () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+  const classify = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(
+      [
+        { name: 'receipt', image: bytes, format: 'png' },
+        { name: 'photo', image: sql`photo_bytes` },
+      ],
+      { instructions: 'Is `receipt` itemized?' }
+    )}
+  `);
+  expect(classify.sql).toContain(
+    "prompt_jev([{name: 'receipt', image: CAST($1 AS BLOB), format: 'png'}, {name: 'photo', image: photo_bytes, format: 'jpg'}], 'Is `receipt` itemized?')"
+  );
+  expect(classify.params).toEqual([bytes]);
+
+  const box = dialect.sqlToQuery(sql`
+    select ${mdPromptJev([{ name: 'receipt', image: sql`image_blob` }], {
+      box: 'the itemized section in `receipt`',
+    })}
+  `);
+  expect(box.sql).toContain(
+    "prompt_jev([{name: 'receipt', image: image_blob}], box := 'the itemized section in `receipt`')"
+  );
+
+  const questions = dialect.sqlToQuery(sql`
+    select ${mdPromptJev([{ name: 'pet', image: sql`img` }], {
+      questions: {
+        animal: {
+          type: 'choice',
+          instructions: 'Which animal is in `pet`?',
+          criteria: ['cat', 'dog'],
+        },
+        location: { type: 'box', instructions: 'the animal in `pet`' },
+      },
+    })}
+  `);
+  expect(questions.sql).toContain(
+    "questions := {'animal': {type: 'choice', instructions: 'Which animal is in `pet`?', criteria: ['cat', 'dog']}, 'location': {type: 'box', instructions: 'the animal in `pet`'}}"
+  );
+});
+
+test('prompt_jev rejects question names that collide in a STRUCT', () => {
+  expect(() =>
+    mdPromptJev('x', {
+      questions: {
+        Refund: { type: 'noul', instructions: 'Refund?' },
+        refund: { type: 'noul', instructions: 'Refund again?' },
+      },
+    })
+  ).toThrow(/"Refund" and "refund" differ only in case/);
+});
+
+test('prompt_jev rejects image settings MotherDuck would refuse', () => {
+  const image = { name: 'receipt', image: sql`img` };
+  expect(() => mdPromptJev('text', { box: 'region' })).toThrow(
+    /box requires image input/
+  );
+  expect(() =>
+    mdPromptJev('text', {
+      questions: { where: { type: 'box', instructions: 'region' } },
+    })
+  ).toThrow(/of type 'box' requires image input/);
+  expect(() =>
+    mdPromptJev([image], { instructions: 'Itemized?', batchSize: 4 })
+  ).toThrow(/batchSize is not supported with image input/);
+  expect(() => mdPromptJev([], { instructions: 'Itemized?' })).toThrow(
+    /at least one image/
+  );
+  expect(() =>
+    mdPromptJev([image, image], { instructions: 'Itemized?' })
+  ).toThrow(/"receipt" is used more than once/);
+  expect(() =>
+    mdPromptJev([{ ...image, format: 'gif' as 'png' }], {
+      instructions: 'Itemized?',
+    })
+  ).toThrow(/format must be one of png, jpg or jpeg/);
+  expect(() =>
+    mdPromptJev([{ name: 'x', image: 'not bytes' as unknown as Uint8Array }], {
+      instructions: 'Itemized?',
+    })
+  ).toThrow(/must be a Uint8Array or SQL expression/);
+  expect(() =>
+    mdPromptJev([image], {
+      box: 'region',
+      instructions: 'extra',
+    } as unknown as MotherDuckPromptJevOptions)
+  ).toThrow(/cannot be combined/);
+});
+
+test('prompt_jev infers the decoded result type from its options', () => {
+  expectTypeOf(mdPromptJev('x', { instructions: 'Refund?' })).toEqualTypeOf<
+    SQL<number | null>
+  >();
+  expectTypeOf(
+    mdPromptJev('x', { instructions: 'Team?', choice: ['a', 'b'] })
+  ).toEqualTypeOf<SQL<MotherDuckJevChoiceResult | null>>();
+  expectTypeOf(
+    mdPromptJev('x', { instructions: 'Severity?', score: ['low', 'high'] })
+  ).toEqualTypeOf<SQL<MotherDuckJevScoreResult | null>>();
+  expectTypeOf(
+    mdPromptJev('x', { instructions: 'Features?', multipleChoice: ['api'] })
+  ).toEqualTypeOf<SQL<MotherDuckJevMultipleChoiceResult | null>>();
+  expectTypeOf(
+    mdPromptJev([{ name: 'a', image: sql`b` }], { box: 'region' })
+  ).toEqualTypeOf<SQL<MotherDuckJevBoxResult | null>>();
+  expectTypeOf(
+    mdPromptJev('x', {
+      questions: {
+        refund: { type: 'noul', instructions: 'Refund?' },
+        team: { type: 'choice', instructions: 'Team?', criteria: ['a', 'b'] },
+      },
+    })
+  ).toEqualTypeOf<
+    SQL<{ refund: number; team: MotherDuckJevChoiceResult } | null>
+  >();
+  const widelyTyped: Record<string, MotherDuckJevQuestion> = {
+    refund: { type: 'noul', instructions: 'Refund?' },
+  };
+  expectTypeOf(mdPromptJev('x', { questions: widelyTyped })).toEqualTypeOf<
+    SQL<{
+      [name: string]:
+        | number
+        | MotherDuckJevChoiceResult
+        | MotherDuckJevScoreResult
+        | MotherDuckJevBoxResult;
+    } | null>
+  >();
+  expectTypeOf(mdPromptJev('x', { questions: '{}' })).toEqualTypeOf<
+    SQL<Record<string, unknown> | null>
+  >();
 });

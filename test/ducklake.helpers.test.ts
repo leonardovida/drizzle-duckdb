@@ -1,8 +1,11 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { describe, expect, test, vi } from 'vitest';
+import { sql as sqlTag } from 'drizzle-orm';
+import { DuckDBDialect } from '../src/dialect.ts';
 import {
   buildDuckLakeAttachSql,
   configureDuckLake,
+  duckLakeMergeAdjacentFiles,
   isDuckDbFileCatalog,
   normalizeDuckLakeConfig,
   resolveDuckLakePoolSize,
@@ -257,5 +260,64 @@ describe('DuckLake helpers', () => {
     await expect(wrapped.acquire()).rejects.toThrow('setup failed');
     expect(pool.release).toHaveBeenCalledTimes(1);
     expect(pool.release).toHaveBeenCalledWith(connection);
+  });
+});
+
+describe('duckLakeMergeAdjacentFiles', () => {
+  const dialect = new DuckDBDialect();
+
+  test('emits positional and named arguments', () => {
+    const query = dialect.sqlToQuery(
+      sqlTag`select * from ${duckLakeMergeAdjacentFiles('lake', {
+        table: 'events',
+        schema: 'main',
+        maxCompactedFiles: 50,
+        newerThan: new Date('2026-10-01T00:00:00Z'),
+        olderThan: '2026-10-08T00:00:00Z',
+      })}`
+    );
+    expect(query.sql).toBe(
+      'select * from ducklake_merge_adjacent_files($1, $2, schema := $3, max_compacted_files := CAST($4 AS UBIGINT), newer_than := CAST($5 AS TIMESTAMPTZ), older_than := CAST($6 AS TIMESTAMPTZ))'
+    );
+    expect(query.params).toEqual([
+      'lake',
+      'events',
+      'main',
+      50,
+      '2026-10-01T00:00:00.000Z',
+      '2026-10-08T00:00:00Z',
+    ]);
+  });
+
+  test('rejects option combinations DuckLake refuses', () => {
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', { schema: 'main' })
+    ).toThrow(/schema requires table/);
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', {
+        newerThan: '2026-10-08T00:00:00Z',
+        olderThan: new Date('2026-10-01T00:00:00Z'),
+      })
+    ).toThrow(/newerThan must be earlier than olderThan/);
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', { minFileSize: 10, maxFileSize: 10n })
+    ).toThrow(/maxFileSize must be greater than minFileSize/);
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', { maxCompactedFiles: 0 })
+    ).toThrow(/maxCompactedFiles must be an integer of at least 1/);
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', { minFileSize: -1 })
+    ).toThrow(/minFileSize must be an integer of at least 0/);
+    // Zero is a valid lower bound, and zone-less strings are left to DuckDB.
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', {
+        minFileSize: 0,
+        newerThan: '2026-10-08 00:00:00',
+        olderThan: '2026-10-08 00:00:00+00',
+      })
+    ).not.toThrow();
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', { newerThan: new Date('nope') })
+    ).toThrow(/newerThan must be a valid Date/);
   });
 });
