@@ -1,6 +1,6 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import {
   doublePrecision,
   integer,
@@ -10,9 +10,15 @@ import {
 import { drizzle } from '../src';
 import { introspect } from '../src/introspect';
 import {
+  mdCurrentEmail,
   mdFlightLogs,
   mdGetFlightLogs,
   mdGetFlightRun,
+  mdIsRoleInSession,
+  mdListDives,
+  mdListFlights,
+  mdListFlightVersions,
+  mdSessionRoles,
 } from '../src/motherduck.ts';
 import { expect, test } from 'vitest';
 
@@ -21,6 +27,7 @@ const skipMotherduck = !motherduckToken || process.env.SKIP_MOTHERDUCK === '1';
 const MOTHERDUCK_TRANSIENT_ERROR_PATTERNS = [
   /DEADLINE_EXCEEDED/i,
   /request timed out/i,
+  /Could not connect to MotherDuck/i,
 ];
 const MOTHERDUCK_UNAVAILABLE_ERROR_PATTERNS = [
   /failed to resolve extension version from server response/i,
@@ -280,5 +287,51 @@ if (skipMotherduck) {
     if (completed === undefined) {
       return;
     }
+  }, 120_000);
+
+  test('Flight, Dive and session helpers expose current MotherDuck columns', async () => {
+    await runWithMotherDuckAccess(async () => {
+      const instance = await DuckDBInstance.create('md:', {
+        motherduck_token: motherduckToken,
+      });
+      const connection: DuckDBConnection = await instance.connect();
+      const db = drizzle(connection);
+      const describeColumns = async (source: SQL) =>
+        (
+          await db.execute<{ column_name: string }>(
+            sql`describe select * from ${source}`
+          )
+        ).map((column) => column.column_name);
+
+      try {
+        expect(
+          await describeColumns(mdListFlights({ ownerOnly: true, limit: 1 }))
+        ).toContain('owner_name');
+        expect(
+          await describeColumns(mdListFlightVersions(sql`uuid()`))
+        ).toContain('instance_type');
+        expect(await describeColumns(mdListDives({ limit: 1 }))).toEqual(
+          expect.arrayContaining(['status', 'status_applies_to_version'])
+        );
+
+        const [identity] = await db.execute<{
+          roles: string[];
+          any_role: boolean;
+          no_role: boolean;
+        }>(sql`
+          select
+            ${mdCurrentEmail()} as email,
+            ${mdSessionRoles()} as roles,
+            ${mdIsRoleInSession(['missing_role', 'other_missing_role'])} as any_role,
+            ${mdIsRoleInSession([])} as no_role
+        `);
+        expect(Array.isArray(identity?.roles)).toBe(true);
+        expect(identity?.any_role).toBe(false);
+        expect(identity?.no_role).toBe(false);
+      } finally {
+        connection.closeSync();
+        instance.closeSync();
+      }
+    });
   }, 120_000);
 }

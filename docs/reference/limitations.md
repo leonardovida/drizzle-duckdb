@@ -259,7 +259,7 @@ Postgres array operators are not rewritten. DuckDB supports them on `LIST` and f
 | `column <@ ARRAY[...]` | `array_has_all([...], column)` |
 | `column && ARRAY[...]` | `array_has_any(column, [...])` |
 
-Only the first-dimension bounds helpers `array_lower(a, 1)` and `array_upper(a, 1)` are rewritten, because DuckDB does not have them. The rewrite applies anywhere in the statement, including casts, `ARRAY[...]`, `ORDER BY`, `GROUP BY` and the `SET` and `WHERE` clauses of `UPDATE`.
+Only the first-dimension bounds helpers `array_lower(a, 1)` and `array_upper(a, 1)` are rewritten, because DuckDB does not have them. The rewrite applies anywhere in the statement, including casts, `ARRAY[...]`, window clauses, `ORDER BY`, `GROUP BY`, `RETURNING`, and the `SET` and `WHERE` clauses of writes. Statements the SQL parser cannot read, such as `WITH ... DELETE` or `INSERT ... SELECT ... RETURNING`, are rewritten by a text pass that changes only the call itself. Other dimensions, as in `array_upper(a, 2)`, are sent unchanged and fail in DuckDB.
 
 All three styles work:
 

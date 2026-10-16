@@ -57,6 +57,21 @@ const db = drizzle(connection);
 >
 > Always use environment variables for tokens. Never hardcode credentials.
 
+### Bound the Connection Time
+
+By default the MotherDuck extension sets no overall deadline for opening a connection and keeps retrying network errors. Add `connection_timeout` to the path to fail fast instead, for example in a serverless handler with its own deadline:
+
+```typescript
+const db = await drizzle({
+  connection: {
+    path: 'md:?connection_timeout=30s',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+});
+```
+
+The value is a DuckDB interval such as `30s` or `2 minutes`. The `MOTHERDUCK_CONNECTION_TIMEOUT` environment variable sets the same option. It bounds the token exchange and the initial attach. A connection that runs out of time throws `Timed out connecting to MotherDuck after <N>ms`. When no MotherDuck server answers, the `Could not connect to MotherDuck` error now includes the underlying gRPC message as `msg: '...'`.
+
 ## Connecting to a Specific Database
 
 By default, connecting to `md:` opens your default MotherDuck database. To connect to a specific database:
@@ -129,11 +144,11 @@ MOTHERDUCK_TOKEN=xxx bunx duckdb-introspect --url md: --all-databases --out ./sc
 
 See [Introspection]({{ '/features/introspection' | relative_url }}) for more details.
 
-## Classify Text with Jev
+## Classify Text and Images with Jev
 
-MotherDuck [`prompt_jev`](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/) classifies text with a yes/no probability, a choice, or a score. Its question settings must be SQL constants, so use `mdPromptJev` when building a query with Drizzle. The input can be a bound string or a column expression.
+MotherDuck [`prompt_jev`](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/) classifies text or images. It returns a yes/no probability, a choice, a score, a set of matching labels, or a bounding box. Its question settings must be SQL constants, so use `mdPromptJev` when building a query with Drizzle. The input can be a bound string or a column expression.
 
-Use a current `@duckdb/node-api` 1.5.5 client for this function. In live checks, `1.5.5-r.5` resolved `prompt_jev`, while `1.4.4-r.1` did not expose it.
+Use a `@duckdb/node-api` 1.5.5 or newer client for this function. In live checks, `1.5.5-r.5` and `1.5.6-r.1` resolved `prompt_jev`, while `1.4.4-r.1` did not expose it.
 
 ```typescript
 import { mdPromptJev } from '@duckdbfan/drizzle-duckdb';
@@ -148,7 +163,85 @@ const rows = await db.execute(sql`
 `);
 ```
 
-For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. The helper renders the object as a constant SQL STRUCT. It throws on an empty `questions` object, missing or empty `instructions`, an empty criteria list, and a `choice` or `score` question without `criteria`. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
+`mdPromptJev` returns an `SQL` value typed from the options. Raw `db.execute` rows are untyped, so select it through the query builder to keep the type:
+
+```typescript
+const routed = await db
+  .select({
+    id: supportMessages.id,
+    routing: mdPromptJev(supportMessages.message, {
+      instructions: 'Which team should handle this?',
+      choice: ['billing', 'technical', 'sales'],
+    }),
+  })
+  .from(supportMessages);
+// routed[0].routing is MotherDuckJevChoiceResult | null
+```
+
+The modes are:
+
+| Option                               | Result                                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `instructions` alone, or with `noul` | probability that the answer is yes, a `number`                                                           |
+| `choice`                             | `{ choice, probabilities, confidence }`                                                                  |
+| `score`                              | `{ score, probabilities, confidence }` for ordered criteria                                              |
+| `multipleChoice`                     | `{ choices, probabilities }`. Each label is judged on its own, and `choices` holds every label above 0.5 |
+| `box`                                | `{ box: { top, bottom, left, right }, confidence }` for a region of an image                             |
+| `questions`                          | an object with one result per question                                                                   |
+
+```typescript
+const rows = await db.execute(sql`
+  select ${mdPromptJev(sql`message`, {
+    instructions: 'Which features does this request?',
+    multipleChoice: [
+      { label: 'sso', description: 'Single sign-on' },
+      { label: 'api', description: 'Programmatic access' },
+      'billing',
+    ],
+  })} as features
+  from support_messages
+`);
+```
+
+To classify images, pass a list of named images as the input. Each image is a `Uint8Array` or a SQL expression that yields a BLOB, with an optional `format` of `png`, `jpg` or `jpeg` (MotherDuck assumes `jpg`). Refer to images by name in backticks. `box` locates a region and needs image input:
+
+```typescript
+import { readFile } from 'node:fs/promises';
+
+const receipt = await readFile('./receipt.png');
+const [row] = await db.execute(sql`
+  select
+    ${mdPromptJev([{ name: 'receipt', image: receipt, format: 'png' }], {
+      instructions: 'Is `receipt` itemized?',
+    })} as itemized,
+    ${mdPromptJev([{ name: 'receipt', image: receipt, format: 'png' }], {
+      box: 'the line items in `receipt`',
+    })} as items
+`);
+```
+
+Image rows go to MotherDuck one request at a time, so `batchSize` is not allowed with image input. A row whose images are too large or too small for the model returns `NULL`. For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. Use `type: 'box'` for a region question on image input. The helper renders the object as a constant SQL STRUCT. It throws on an empty `questions` object, missing or empty `instructions`, an empty criteria list, and a `choice` or `score` question without `criteria`. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
+
+## Generate Text with Prompt
+
+MotherDuck [`prompt`](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt/) calls a language model for each row. Its model and output settings must be SQL constants too, so a plain `${'gpt-5'}` placeholder fails to bind. `mdPrompt` inlines them and keeps the input as a bound value or column:
+
+```typescript
+import { mdPrompt } from '@duckdbfan/drizzle-duckdb';
+
+const rows = await db.execute(sql`
+  select
+    id,
+    ${mdPrompt(sql`review`, { model: 'gpt-5-mini', reasoningEffort: 'low' })} as summary,
+    ${mdPrompt<{ sentiment: string; stars: number }>(sql`review`, {
+      struct: { sentiment: 'VARCHAR', stars: 'INTEGER' },
+      structDescr: { sentiment: 'positive, neutral or negative' },
+    })} as parsed
+  from reviews
+`);
+```
+
+Use one of `struct`, `jsonSchema` or `returnType` to get structured output, and pass the decoded type as the generic. `temperature` takes a number from 0 to 1 and does not apply to reasoning models such as `gpt-5` and `gpt-6-luna`. `reasoningEffort` defaults to `none` on MotherDuck, and `gpt-6-luna` rejects `minimal`.
 
 ## Hybrid Queries
 

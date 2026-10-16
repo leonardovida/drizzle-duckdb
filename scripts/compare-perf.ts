@@ -123,6 +123,55 @@ export async function loadNormalizedFile(
   return normalizePerfFile(JSON.parse(raw));
 }
 
+/**
+ * Average repeated runs of one revision. The margin grows to half the spread
+ * between runs when that exceeds every run's own margin, so runs that
+ * disagree widen the uncertainty the gate allows for.
+ */
+export function mergeBenchmarkRuns(
+  runs: NormalizedBenchRow[][]
+): NormalizedBenchRow[] {
+  if (!runs.length) throw new Error('No benchmark runs to merge');
+  if (runs.length === 1) return runs[0]!;
+
+  const byName = new Map<string, NormalizedBenchRow[]>();
+  for (const run of runs) {
+    for (const row of run) {
+      const rows = byName.get(row.name);
+      if (rows) rows.push(row);
+      else byName.set(row.name, [row]);
+    }
+  }
+
+  // A benchmark missing from any run stays missing, so the gate reports it.
+  return [...byName.entries()]
+    .filter(([, rows]) => rows.length === runs.length)
+    .map(([name, rows]) => {
+      const values = rows.map((row) => row.opsPerSecond);
+      const mean = values.reduce((sum, value) => sum + value, 0) / rows.length;
+      const spread =
+        ((Math.max(...values) - Math.min(...values)) / 2 / mean) * 100;
+      return {
+        name,
+        opsPerSecond: mean,
+        relativeMargin: Math.max(
+          spread,
+          ...rows.map((row) => row.relativeMargin)
+        ),
+      };
+    });
+}
+
+/** Load one file, or a comma-separated list of repeated runs to merge. */
+export async function loadNormalizedRuns(
+  pathList: string
+): Promise<NormalizedBenchRow[]> {
+  const paths = pathList.split(',').filter(Boolean);
+  return mergeBenchmarkRuns(
+    await Promise.all(paths.map((path) => loadNormalizedFile(path)))
+  );
+}
+
 export function percentChange(previous: number, next: number): number {
   if (previous === 0) {
     return 0;
@@ -229,7 +278,7 @@ export function parseArgs(argv: string[]): CliArgs {
 
     if (arg === '--help' || arg === '-h') {
       console.log(
-        'Usage: bun run scripts/compare-perf.ts [--threshold <percent>] [--fail-on-regression] [--allow-new] <old.json> <new.json>'
+        'Usage: bun run scripts/compare-perf.ts [--threshold <percent>] [--fail-on-regression] [--allow-new] <old.json[,old-2.json]> <new.json[,new-2.json]>'
       );
       process.exit(0);
     }
@@ -255,8 +304,8 @@ export function parseArgs(argv: string[]): CliArgs {
 async function main(): Promise<void> {
   const { previousPath, nextPath, threshold, failOnRegression, allowNew } =
     parseArgs(process.argv.slice(2));
-  const previousRows = await loadNormalizedFile(previousPath);
-  const nextRows = await loadNormalizedFile(nextPath);
+  const previousRows = await loadNormalizedRuns(previousPath);
+  const nextRows = await loadNormalizedRuns(nextPath);
   const comparison = compareBenchmarks(previousRows, nextRows, threshold);
 
   console.log(renderComparison(comparison));

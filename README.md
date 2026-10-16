@@ -271,7 +271,9 @@ The package ships composable SQL helpers for analytical work:
 
 - OLAP helpers such as `sumN`, `percentileCont`, window helpers and the `olap()` grouped measures builder.
 - Lance vector, full-text and hybrid search.
-- MotherDuck table functions for Dives, Flights and access tokens.
+- MotherDuck table functions for Dives, Flights, file listings and access tokens, plus session identity scalars such as `mdCurrentEmail()` and `mdIsRoleInSession()`.
+- Typed MotherDuck AI builders: `mdPromptJev()` classifies text or images and `mdPrompt()` generates text or structured output.
+- `duckLakeMergeAdjacentFiles()` for DuckLake compaction.
 - Batch and Arrow reads through `db.executeBatches()`, `db.executeBatchesRaw()` and `db.executeArrow()`.
 
 ```typescript
@@ -291,6 +293,7 @@ const [flight] = await db.execute(sql`
     sourceCode: 'print("hello")',
     scheduleCron: '0 0 * * *',
     maxRuntimeSec: 1_800,
+    instanceType: 'F16',
   })}
 `);
 
@@ -300,7 +303,7 @@ await db.execute(sql`
 `);
 ```
 
-The older `mdJobs()` and `mdFlights()` helper names remain as deprecated aliases. See [OLAP Helpers](https://leonardovida.github.io/drizzle-duckdb/api/olap-helpers) for the full list, Flight options and log pagination.
+The older `mdJobs()` and `mdFlights()` helper names remain as deprecated aliases. See [OLAP Helpers](https://leonardovida.github.io/drizzle-duckdb/api/olap-helpers) for the full list, Flight options and log pagination, and [MotherDuck](https://leonardovida.github.io/drizzle-duckdb/integrations/motherduck) for the AI builders.
 
 ## Known Limitations
 

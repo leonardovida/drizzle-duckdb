@@ -1,27 +1,29 @@
 import { sql, type SQLWrapper } from 'drizzle-orm';
 import { isSQLWrapper, type SQL } from 'drizzle-orm/sql/sql';
 
-export interface MotherDuckAccessTokenRow {
+export type MotherDuckAccessTokenRow = {
   token_name: string;
   token_type: string;
   created_ts: Date | string;
   expire_at: Date | string | null;
-}
+};
 
 export interface MotherDuckAccessTokenOptions {
   activeOnly?: boolean;
   asOf?: string | SQLWrapper;
 }
 
-export interface MotherDuckRequiredResource {
+export type MotherDuckRequiredResource = {
   name: string | null;
   alias: string | null;
   url: string | null;
   id: string | null;
   resource_type: string | null;
-}
+};
 
-export interface MotherDuckDiveSummaryRow {
+export type MotherDuckDiveStatus = 'draft' | 'ready' | 'endorsed' | 'archived';
+
+export type MotherDuckDiveSummaryRow = {
   id: string;
   title: string;
   description: string | null;
@@ -30,10 +32,15 @@ export interface MotherDuckDiveSummaryRow {
   created_at: Date | string;
   updated_at: Date | string;
   owner_name: string;
+  /** One of MotherDuckDiveStatus on current MotherDuck releases. */
+  status?: MotherDuckDiveStatus | (string & {}) | null;
+  status_changed_at?: Date | string | null;
+  status_set_by?: string | null;
+  status_applies_to_version?: number | null;
   required_resources?: MotherDuckRequiredResource[] | null;
-}
+};
 
-export interface MotherDuckDiveDetailRow extends MotherDuckDiveSummaryRow {
+export type MotherDuckDiveDetailRow = MotherDuckDiveSummaryRow & {
   version_id: string;
   version_storage_url: string;
   version_description: string | null;
@@ -41,14 +48,14 @@ export interface MotherDuckDiveDetailRow extends MotherDuckDiveSummaryRow {
   version_api_version: number;
   content: string;
   version_required_resources?: MotherDuckRequiredResource[] | null;
-}
+};
 
 export type MotherDuckDiveCreateRow = Omit<
   MotherDuckDiveDetailRow,
   'content' | 'required_resources' | 'version_required_resources'
 >;
 
-export interface MotherDuckDiveVersionSummaryRow {
+export type MotherDuckDiveVersionSummaryRow = {
   id: string;
   version: number;
   storage_url: string;
@@ -56,17 +63,24 @@ export interface MotherDuckDiveVersionSummaryRow {
   created_at: Date | string;
   api_version: number;
   required_resources?: MotherDuckRequiredResource[] | null;
-}
+};
 
-export interface MotherDuckDiveVersionDetailRow extends MotherDuckDiveVersionSummaryRow {
+export type MotherDuckDiveVersionDetailRow = MotherDuckDiveVersionSummaryRow & {
   content: string;
-}
+};
 
-export interface MotherDuckDiveDeleteRow {
+export type MotherDuckFileRow = {
+  name: string;
+  type: 'file' | 'folder';
+  size: number | bigint | null;
+  last_modified: Date | string | null;
+};
+
+export type MotherDuckDiveDeleteRow = {
   success: boolean;
-}
+};
 
-export interface MotherDuckFlightSummaryRow {
+export type MotherDuckFlightSummaryRow = {
   flight_id: string;
   flight_name: string;
   schedule_cron: string | null;
@@ -75,9 +89,16 @@ export interface MotherDuckFlightSummaryRow {
   current_version: number;
   created_at: Date | string;
   updated_at: Date | string;
-}
+  owner_name?: string | null;
+};
 
-export interface MotherDuckFlightVersionRow {
+/**
+ * Flight sizes. Each plan offers a subset and picks a default when none is
+ * given. MotherDuck rejects a size the plan does not offer.
+ */
+export type MotherDuckFlightInstanceType = 'F4' | 'F8' | 'F16' | 'F32';
+
+export type MotherDuckFlightVersionRow = {
   version_id: string;
   flight_id: string;
   flight_version: number;
@@ -88,9 +109,11 @@ export interface MotherDuckFlightVersionRow {
   source_code: string;
   requirements_txt: string | null;
   max_runtime_sec?: number;
-}
+  /** Returned by MotherDuck clients from 1.5.5 on. */
+  instance_type?: MotherDuckFlightInstanceType | (string & {}) | null;
+};
 
-export interface MotherDuckFlightRunRow {
+export type MotherDuckFlightRunRow = {
   run_id: string;
   flight_id: string;
   flight_name: string;
@@ -105,32 +128,32 @@ export interface MotherDuckFlightRunRow {
   scheduled_at: Date | string | null;
   cancelled_at: Date | string | null;
   exit_code: number | null;
-}
+};
 
-export interface MotherDuckFlightLogLineRow {
+export type MotherDuckFlightLogLineRow = {
   line_number: number | bigint | null;
   reported_at: Date | string | null;
   line: string | null;
-}
+};
 
 /**
  * @deprecated Flight logs are returned one line per row. Use
  * MotherDuckFlightLogLineRow.
  */
-export interface MotherDuckFlightLogsRow {
+export type MotherDuckFlightLogsRow = {
   logs: string;
-}
+};
 
-export interface MotherDuckFlightDeleteRow {
+export type MotherDuckFlightDeleteRow = {
   deleted_count: number | bigint;
-}
+};
 
-export interface MotherDuckFlightCancelRunRow {
+export type MotherDuckFlightCancelRunRow = {
   canceled_count: number | bigint;
-}
+};
 
 /** @deprecated Use MotherDuckFlightSummaryRow. */
-export interface MotherDuckJobSummaryRow {
+export type MotherDuckJobSummaryRow = {
   job_id: string;
   job_name: string;
   schedule_cron: string | null;
@@ -139,10 +162,10 @@ export interface MotherDuckJobSummaryRow {
   current_version: number;
   created_at: Date | string;
   updated_at: Date | string;
-}
+};
 
 /** @deprecated Use MotherDuckFlightVersionRow. */
-export interface MotherDuckJobVersionRow {
+export type MotherDuckJobVersionRow = {
   version_id: string;
   job_id: string;
   version: number;
@@ -152,10 +175,10 @@ export interface MotherDuckJobVersionRow {
   config: Record<string, string> | Map<string, string> | null;
   source_code: string;
   requirements_txt: string | null;
-}
+};
 
 /** @deprecated Use MotherDuckFlightRunRow. */
-export interface MotherDuckJobRunRow {
+export type MotherDuckJobRunRow = {
   run_id: string;
   job_id: string;
   job_name: string;
@@ -169,26 +192,31 @@ export interface MotherDuckJobRunRow {
   scheduled_at: Date | string | null;
   cancelled_at: Date | string | null;
   exit_code: number | null;
-}
+};
 
 /** @deprecated Use MotherDuckFlightLogsRow. */
-export interface MotherDuckJobRunLogsRow {
+export type MotherDuckJobRunLogsRow = {
   logs: string;
-}
+};
 
 /** @deprecated Use MotherDuckFlightDeleteRow. */
-export interface MotherDuckJobDeleteRow {
+export type MotherDuckJobDeleteRow = {
   deleted_count: number | bigint;
-}
+};
 
 /** @deprecated Use MotherDuckFlightCancelRunRow. */
-export interface MotherDuckJobCancelRunRow {
+export type MotherDuckJobCancelRunRow = {
   canceled_count: number | bigint;
-}
+};
 
 export interface MotherDuckPaginationOptions {
   limit?: number | SQLWrapper;
   offset?: number | SQLWrapper;
+}
+
+export interface MotherDuckListFlightsOptions extends MotherDuckPaginationOptions {
+  /** Only list Flights the current user owns. */
+  ownerOnly?: boolean | SQLWrapper;
 }
 
 export interface MotherDuckFlightLogOptions extends MotherDuckPaginationOptions {
@@ -199,11 +227,18 @@ export interface MotherDuckListDivesOptions extends MotherDuckPaginationOptions 
   includeOrgShares?: boolean | SQLWrapper;
 }
 
+/** A share or database a Dive reads from, as `md_create_dive` accepts it. */
+export interface MotherDuckDiveResourceInput {
+  url: string;
+  alias?: string | null;
+}
+
 export interface MotherDuckCreateDiveOptions {
   title: string | SQLWrapper;
   content: string | SQLWrapper;
   description?: string | SQLWrapper | null;
   apiVersion?: number | SQLWrapper;
+  requiredResources?: readonly MotherDuckDiveResourceInput[] | SQLWrapper;
 }
 
 export interface MotherDuckUpdateDiveMetadataOptions {
@@ -217,6 +252,14 @@ export interface MotherDuckUpdateDiveContentOptions {
   content: string | SQLWrapper;
   description?: string | SQLWrapper | null;
   apiVersion?: number | SQLWrapper;
+  requiredResources?: readonly MotherDuckDiveResourceInput[] | SQLWrapper;
+}
+
+export interface MotherDuckUpdateDiveStatusOptions {
+  id: string | SQLWrapper;
+  status: MotherDuckDiveStatus | SQLWrapper;
+  /** The Dive version the status applies to. */
+  version?: number | SQLWrapper;
 }
 
 export interface MotherDuckCreateFlightOptions {
@@ -228,6 +271,7 @@ export interface MotherDuckCreateFlightOptions {
   config?: Record<string, string | null> | SQLWrapper | null;
   requirementsTxt?: string | SQLWrapper | null;
   maxRuntimeSec?: number | SQLWrapper;
+  instanceType?: MotherDuckFlightInstanceType | SQLWrapper;
 }
 
 export interface MotherDuckUpdateFlightOptions {
@@ -240,6 +284,8 @@ export interface MotherDuckUpdateFlightOptions {
   accessTokenName?: string | SQLWrapper | null;
   flightSecretNames?: readonly (string | null)[] | SQLWrapper | null;
   maxRuntimeSec?: number | SQLWrapper;
+  /** A different size creates a new Flight version. */
+  instanceType?: MotherDuckFlightInstanceType | SQLWrapper;
 }
 
 export interface MotherDuckRunFlightOptions {
@@ -393,6 +439,35 @@ function motherDuckStringListArg(
     return sql`CAST([] AS VARCHAR[])`;
   }
   return value;
+}
+
+function motherDuckDiveResourcesArg(
+  value: readonly MotherDuckDiveResourceInput[] | SQLWrapper | undefined
+): SQLWrapper | undefined {
+  if (value === undefined || isSQLWrapper(value)) {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('MotherDuck Dive requiredResources must be an array');
+  }
+
+  // A typed list keeps empty lists and NULL aliases bindable.
+  const items = value.map((resource, index) => {
+    if (resource === null || typeof resource !== 'object') {
+      throw new Error(
+        `MotherDuck Dive requiredResources item ${index} must be an object`
+      );
+    }
+    if (typeof resource.url !== 'string' || resource.url === '') {
+      throw new Error(
+        `MotherDuck Dive requiredResources item ${index} needs a non-empty url`
+      );
+    }
+    return sql`{url: ${sql.param(resource.url)}, alias: ${sql.param(
+      resource.alias ?? null
+    )}}`;
+  });
+  return sql`CAST([${sql.join(items, sql`, `)}] AS STRUCT(url VARCHAR, alias VARCHAR)[])`;
 }
 
 function validateMotherDuckConfigMap(
@@ -660,6 +735,46 @@ export function mdAccessTokens(
   return sql`(select token_name, token_type, created_ts, expire_at from md_access_tokens() where expire_at is null or expire_at > ${asOf}) as active_access_tokens`;
 }
 
+/** List one level of an `s3://` or `azure://` path with MotherDuck secrets. */
+export function mdListFiles(
+  path: string | SQLWrapper,
+  options: { limit?: number | bigint | SQLWrapper } = {}
+): SQL {
+  const chunks: SQL[] = [sql`${motherDuckArg(path)}`];
+  if (options.limit !== undefined) {
+    chunks.push(sql`"LIMIT" = ${motherDuckArg(options.limit)}`);
+  }
+  return sql`md_list_files(${sql.join(chunks, sql`, `)})`;
+}
+
+/** The session user's primary email. NULL for service accounts. */
+export function mdCurrentEmail(): SQL<string | null> {
+  return sql<string | null>`current_email()`;
+}
+
+/** The session's roles, including inherited and preset roles. */
+export function mdSessionRoles(): SQL<string[]> {
+  return sql<string[]>`session_roles()`;
+}
+
+/**
+ * Whether the session holds a role, or any of a list of roles. Matching is
+ * case-insensitive and follows the role hierarchy.
+ */
+export function mdIsRoleInSession(
+  role: string | readonly string[] | SQLWrapper
+): SQL<boolean | null> {
+  if (Array.isArray(role)) {
+    return sql<boolean | null>`is_role_in_session(${
+      role.length === 0
+        ? sql`CAST([] AS VARCHAR[])`
+        : sql`CAST(${sql.param(role)} AS VARCHAR[])`
+    })`;
+  }
+  const value = isSQLWrapper(role) ? role : sql`CAST(${role} AS VARCHAR)`;
+  return sql<boolean | null>`is_role_in_session(${value})`;
+}
+
 export function mdListDives(options: MotherDuckListDivesOptions = {}): SQL {
   return motherDuckNamedFunction(
     'md_list_dives',
@@ -677,6 +792,10 @@ export function mdCreateDive(options: MotherDuckCreateDiveOptions): SQL {
     { name: 'content', value: options.content },
     { name: 'description', value: options.description },
     { name: 'api_version', value: options.apiVersion },
+    {
+      name: 'required_resources',
+      value: motherDuckDiveResourcesArg(options.requiredResources),
+    },
   ]);
 }
 
@@ -698,6 +817,21 @@ export function mdUpdateDiveContent(
     { name: 'content', value: options.content },
     { name: 'description', value: options.description },
     { name: 'api_version', value: options.apiVersion },
+    {
+      name: 'required_resources',
+      value: motherDuckDiveResourcesArg(options.requiredResources),
+    },
+  ]);
+}
+
+/** Set a Dive's governance status. Returns the Dive summary row. */
+export function mdUpdateDiveStatus(
+  options: MotherDuckUpdateDiveStatusOptions
+): SQL {
+  return motherDuckNamedFunction('md_update_dive_status', [
+    { name: 'id', value: options.id },
+    { name: 'status', value: options.status },
+    { name: 'version', value: options.version },
   ]);
 }
 
@@ -770,11 +904,11 @@ export const motherDuckReadJsonAuto = (
   options?: MotherDuckTableFunctionOptions
 ) => motherDuckTableFunction('read_json_auto', [path], options);
 
-export function mdListFlights(options: MotherDuckPaginationOptions = {}): SQL {
-  return motherDuckNamedFunction(
-    'md_list_flights',
-    motherDuckPagedParams(options)
-  );
+export function mdListFlights(options: MotherDuckListFlightsOptions = {}): SQL {
+  return motherDuckNamedFunction('md_list_flights', [
+    ...motherDuckPagedParams(options),
+    { name: 'owner_only', value: options.ownerOnly },
+  ]);
 }
 
 /** @deprecated Use mdListFlights. */
@@ -795,6 +929,7 @@ export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
     { name: 'config', value: motherDuckOptionalMapArg(options.config) },
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'max_runtime_sec', value: options.maxRuntimeSec },
+    { name: 'instance_type', value: options.instanceType },
   ]);
 }
 
@@ -819,6 +954,7 @@ export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
       value: motherDuckStringListArg(options.flightSecretNames),
     },
     { name: 'max_runtime_sec', value: options.maxRuntimeSec },
+    { name: 'instance_type', value: options.instanceType },
   ]);
 }
 

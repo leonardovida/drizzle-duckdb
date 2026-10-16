@@ -23,6 +23,7 @@ import nodeSqlParser from 'node-sql-parser';
 const { Parser } = nodeSqlParser;
 import type { AST } from 'node-sql-parser';
 
+import { rewriteArrayBoundsText } from './array-bounds-text.ts';
 import { transformArrayBounds } from './visitors/array-bounds.ts';
 import { qualifyJoinColumns } from './visitors/column-qualifier.ts';
 import { rewriteGenerateSeriesAliases } from './visitors/generate-series-alias.ts';
@@ -237,66 +238,102 @@ export function transformSQL(
 
   if (MANGLED_PATTERN.test(query)) {
     debugLog('Query uses a construct the parser cannot re-print; skipping');
-    return { sql: query, transformed: false };
+    return needsArrayTransform
+      ? rewriteRemainingArrayBounds({ sql: query, transformed: false })
+      : { sql: query, transformed: false };
   }
 
   // Use cache for repeated queries
   return getCachedOrTransform(
     query,
     () => {
-      try {
-        const ast = parser.astify(query, { database: 'PostgreSQL' });
-
-        let transformed = false;
-        let arrayBoundsTransformed = false;
-
-        if (needsArrayTransform) {
-          arrayBoundsTransformed = transformArrayBounds(ast);
-          transformed = arrayBoundsTransformed || transformed;
-        }
-
-        // Before join qualification, so `ON e.n = gs` is already gs.generate_series
-        // and is not qualified as a column of another source.
-        if (needsGenerateSeriesTransform) {
-          transformed = rewriteGenerateSeriesAliases(ast) || transformed;
-        }
-
-        if (needsJoinTransform) {
-          transformed = qualifyJoinColumns(ast) || transformed;
-        }
-
-        if (needsUnionTransform) {
-          transformed = hoistUnionWith(ast) || transformed;
-        }
-
-        if (!transformed) {
-          debugLog('AST parsed but no transformation applied', {
-            join: needsJoinTransform,
-          });
-          return { sql: query, transformed: false };
-        }
-
-        const transformedSql = parser.sqlify(ast, { database: 'PostgreSQL' });
-
-        if (!preservesTokens(query, transformedSql, arrayBoundsTransformed)) {
-          debugLog('Re-printed SQL changed literals or identifiers; skipping', {
-            sql: transformedSql,
-          });
-          return { sql: query, transformed: false };
-        }
-
-        return { sql: transformedSql, transformed: true };
-      } catch (err) {
-        debugLog('AST transform failed; returning original SQL', {
-          error: (err as Error).message,
-        });
-        return { sql: query, transformed: false };
-      }
+      const result = transformWithAst(query, {
+        needsArrayTransform,
+        needsJoinTransform,
+        needsUnionTransform,
+        needsGenerateSeriesTransform,
+      });
+      return needsArrayTransform ? rewriteRemainingArrayBounds(result) : result;
     },
     options.qualifyJoinColumns === false
       ? conservativeTransformCache
       : transformCache
   );
+}
+
+/**
+ * Rewrite array bounds calls the AST pass left behind, because the parser
+ * could not read the statement, the re-print guard rejected it, or the call
+ * sat where the visitor does not walk.
+ */
+function rewriteRemainingArrayBounds(result: TransformResult): TransformResult {
+  if (!ARRAY_BOUNDS_PATTERN.test(result.sql)) return result;
+  const sql = rewriteArrayBoundsText(result.sql);
+  return sql === result.sql ? result : { sql, transformed: true };
+}
+
+function transformWithAst(
+  query: string,
+  {
+    needsArrayTransform,
+    needsJoinTransform,
+    needsUnionTransform,
+    needsGenerateSeriesTransform,
+  }: {
+    needsArrayTransform: boolean;
+    needsJoinTransform: boolean;
+    needsUnionTransform: boolean;
+    needsGenerateSeriesTransform: boolean;
+  }
+): TransformResult {
+  try {
+    const ast = parser.astify(query, { database: 'PostgreSQL' });
+
+    let transformed = false;
+    let arrayBoundsTransformed = false;
+
+    if (needsArrayTransform) {
+      arrayBoundsTransformed = transformArrayBounds(ast);
+      transformed = arrayBoundsTransformed || transformed;
+    }
+
+    // Before join qualification, so `ON e.n = gs` is already gs.generate_series
+    // and is not qualified as a column of another source.
+    if (needsGenerateSeriesTransform) {
+      transformed = rewriteGenerateSeriesAliases(ast) || transformed;
+    }
+
+    if (needsJoinTransform) {
+      transformed = qualifyJoinColumns(ast) || transformed;
+    }
+
+    if (needsUnionTransform) {
+      transformed = hoistUnionWith(ast) || transformed;
+    }
+
+    if (!transformed) {
+      debugLog('AST parsed but no transformation applied', {
+        join: needsJoinTransform,
+      });
+      return { sql: query, transformed: false };
+    }
+
+    const transformedSql = parser.sqlify(ast, { database: 'PostgreSQL' });
+
+    if (!preservesTokens(query, transformedSql, arrayBoundsTransformed)) {
+      debugLog('Re-printed SQL changed literals or identifiers; skipping', {
+        sql: transformedSql,
+      });
+      return { sql: query, transformed: false };
+    }
+
+    return { sql: transformedSql, transformed: true };
+  } catch (err) {
+    debugLog('AST transform failed; returning original SQL', {
+      error: (err as Error).message,
+    });
+    return { sql: query, transformed: false };
+  }
 }
 
 /**
