@@ -157,6 +157,61 @@ match your input contract: casting can round extra fractional digits. The
 returned revenue is a JavaScript number, so use
 an exact decimal result representation for high-precision accounting.
 
+## Find the export containing rejected rows
+
+When a region has invalid or missing amounts, use the example's
+`parquetReconciliationByFile(db, paths)` to identify the source export. Run its
+self-contained demo with:
+
+```bash
+bun example/parquet-analytics.ts --reconcile
+```
+
+The demo adds an invalid-only file to the numeric and missing-column fixtures.
+It returns one row per region and source file, including zero-revenue groups:
+
+| Region | File             | Scanned | Accepted | Invalid | Missing | Revenue |
+| ------ | ---------------- | ------- | -------- | ------- | ------- | ------- |
+| east   | third.parquet    | 1       | 1        | 0       | 0       | 7       |
+| west   | first's.parquet  | 2       | 2        | 0       | 0       | 15      |
+| west   | rejected.parquet | 1       | 0        | 1       | 0       | 0       |
+| west   | second.parquet   | 1       | 0        | 0       | 1       | 0       |
+
+`sourceFile` contains DuckDB's full source path. The table shortens it for
+readability. For each file, `accepted + invalid + missing = scanned`. Sum
+the file counts by region to recover `parquetReconciliation()` totals over
+the same input. Revenue uses the same decimal policy, with ordinary JavaScript
+floating-point limits when adding returned numbers.
+
+The query uses existing scan options and typed subquery fields:
+
+```typescript
+const source = motherDuckReadParquet(paths, {
+  named: {
+    union_by_name: true,
+    hive_partitioning: true,
+    filename: '_export_file',
+  },
+});
+// Select sql<string>`_export_file`.as('source_file') in the sales subquery,
+// then group by both sales.region and sales.sourceFile.
+```
+
+DuckDB's `filename` option names the metadata column `_export_file`. This avoids
+confusing a payload column named `filename` with the source path. Reserve
+`_export_file` in the input schema: DuckDB rejects this scan if that name already
+exists. Choose another metadata name and update the selection if needed.
+Paths and option values remain bound parameters, including globs and file lists.
+
+The report counts rows rather than inventorying files, so empty files have no
+row. It does not report row positions or persist rejected values. Missing or
+unreadable files, incompatible schemas, and an `amount` column absent from every
+file still fail the scan. TypeScript selections do not validate file contents.
+The `DECIMAL(18, 2)` policy accepts zero and negative values, rounds extra
+fractional digits (for example `1.235` becomes `1.24`), and classifies malformed
+or out-of-range values as invalid. SQL NULL is missing. Number output is not
+exact accounting. This workflow is verified with local Parquet files only.
+
 ## Schema and value boundaries
 
 - `union_by_name` matches columns by name across files and fills missing columns
