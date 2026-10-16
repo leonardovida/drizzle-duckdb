@@ -97,7 +97,8 @@ type JevQuestionOptions = NoSelectors & {
   questions: string | Record<string, MotherDuckJevQuestion>;
   instructions?: never;
   box?: never;
-  batchSize?: never;
+  /** Rows per request, from 1 to 64. Not allowed with image input. */
+  batchSize?: number;
 };
 
 type JevBoxOptions = NoSelectors & {
@@ -112,6 +113,7 @@ type JevSingleQuestionOptions = {
   questions?: never;
   box?: never;
   instructions: string;
+  /** Rows per request, from 1 to 64. Not allowed with image input. */
   batchSize?: number;
 } & (
   | NoSelectors
@@ -307,6 +309,22 @@ function imageListInput(images: readonly MotherDuckJevImage[]): SQL {
   return sql`[${sql.join(items, sql`, `)}]`;
 }
 
+function batchSizeArg(
+  batchSize: number | undefined,
+  imageInput: boolean
+): SQL | undefined {
+  if (batchSize === undefined) {
+    return undefined;
+  }
+  if (imageInput) {
+    throw new Error('prompt_jev batchSize is not supported with image input');
+  }
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 64) {
+    throw new Error('prompt_jev batchSize must be an integer from 1 to 64');
+  }
+  return sql`, batch_size := ${sql.raw(String(batchSize))}`;
+}
+
 /**
  * Build prompt_jev with literal question metadata required by MotherDuck's
  * binder. The input remains a bound value or SQL expression. Pass a list of
@@ -327,7 +345,8 @@ export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
   ].filter((name) => settings[name] !== undefined);
   if (
     modes.length > 1 ||
-    ((modes[0] === 'questions' || modes[0] === 'box') &&
+    (modes[0] === 'questions' && settings.instructions !== undefined) ||
+    (modes[0] === 'box' &&
       (settings.instructions !== undefined || settings.batchSize !== undefined))
   ) {
     throw new Error('prompt_jev question modes cannot be combined');
@@ -337,6 +356,7 @@ export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
   const inputExpression = imageInput
     ? imageListInput(input)
     : sql`CAST(${input} AS VARCHAR)`;
+  const batchSize = batchSizeArg(options.batchSize, imageInput);
 
   if (options.questions !== undefined) {
     if (typeof options.questions === 'string' && !options.questions.trim()) {
@@ -346,7 +366,9 @@ export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
       typeof options.questions === 'string'
         ? sql`${constant(options.questions)}::JSON`
         : constantQuestions(options.questions, imageInput);
-    return sql`prompt_jev(${inputExpression}, questions := ${questions})`;
+    return sql`prompt_jev(${inputExpression}, questions := ${questions}${
+      batchSize ?? sql``
+    })`;
   }
 
   if (options.box !== undefined) {
@@ -378,19 +400,5 @@ export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
     );
   }
 
-  if (options.batchSize !== undefined) {
-    if (imageInput) {
-      throw new Error('prompt_jev batchSize is not supported with image input');
-    }
-    if (
-      !Number.isInteger(options.batchSize) ||
-      options.batchSize < 1 ||
-      options.batchSize > 64
-    ) {
-      throw new Error('prompt_jev batchSize must be an integer from 1 to 64');
-    }
-    args.push(sql`batch_size := ${sql.raw(String(options.batchSize))}`);
-  }
-
-  return sql`prompt_jev(${sql.join(args, sql`, `)})`;
+  return sql`prompt_jev(${sql.join(args, sql`, `)}${batchSize ?? sql``})`;
 }

@@ -77,6 +77,24 @@ test('prompt_jev supports multiple questions as a constant STRUCT', () => {
   expect(query.params).toEqual(['A refund is overdue']);
 });
 
+test('prompt_jev accepts a batch size with a question set', () => {
+  const query = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(sql`message`, {
+      questions: { refund: { type: 'noul', instructions: 'Refund?' } },
+      batchSize: 16,
+    })}
+  `);
+  expect(query.sql).toContain(
+    "prompt_jev(CAST(message AS VARCHAR), questions := {'refund': {type: 'noul', instructions: 'Refund?'}}, batch_size := 16)"
+  );
+  expect(() =>
+    mdPromptJev([{ name: 'a', image: sql`img` }], {
+      questions: { where: { type: 'box', instructions: 'region' } },
+      batchSize: 2,
+    })
+  ).toThrow(/batchSize is not supported with image input/);
+});
+
 test('prompt_jev preserves the JSON question escape hatch', () => {
   const query = dialect.sqlToQuery(sql`
     select ${mdPromptJev('message', {
