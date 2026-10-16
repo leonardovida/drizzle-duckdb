@@ -54,6 +54,7 @@ The package exports from `src/index.ts`, which re-exports most of these modules:
 
 - `ast-transformer.ts`: AST transformation entry point using `node-sql-parser`. It parses only when a pattern matches and keeps the original SQL when the reprint would change literals, parameters or identifiers
 - `visitors/array-bounds.ts`: rewrites `array_lower(a, 1)` and `array_upper(a, 1)`, which DuckDB lacks
+- `array-bounds-text.ts`: text fallback for the same rewrite in statements the parser cannot read or the visitor does not walk
 - `visitors/column-qualifier.ts`: qualifies unqualified column references in JOIN ON clauses
 - `visitors/generate-series-alias.ts`: rewrites Postgres-style `generate_series` aliases
 - `visitors/union-with-hoister.ts`: hoists WITH clauses out of UNION and other set operations
