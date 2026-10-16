@@ -1,126 +1,62 @@
-name: Benchmarks
+name: Benchmarks Linux controls
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read
-  pull-requests: write
-
-concurrency:
-  group: bench-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  perf:
+  control:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v7
+        with:
+          ref: 3c79abad4d2941509847d1396736d7e4ecdb1fed
+          path: baseline
+      - uses: actions/checkout@v7
+        with:
+          ref: fc3dce8087066a984799e185e1a421dc5e60bf7b
+          path: candidate
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.23.3'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.9'
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Restore benchmark history
-        id: bench-restore
-        uses: actions/cache/restore@v6
-        with:
-          path: .bench-cache/benchmark-data.json
-          key: bench-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'main' }}-${{ github.run_id }}
-          restore-keys: |
-            bench-${{ runner.os }}-main-
-
-      - name: Ensure benchmark cache dir
-        run: mkdir -p .bench-cache
-
-      - name: Seed empty benchmark history if missing
+      - name: Install both immutable revisions before measuring
         run: |
-          if [ ! -f .bench-cache/benchmark-data.json ]; then
-            echo "[]" > .bench-cache/benchmark-data.json
-          fi
-
-      - name: Run perf benchmarks
-        run: bun run perf:run -- --gha-output action-bench.json
-
-      - name: Upload raw perf artifacts
-        uses: actions/upload-artifact@v7
+          (cd baseline && bun install --frozen-lockfile)
+          (cd candidate && bun install --frozen-lockfile)
+          mkdir controls
+          diff -r baseline/src candidate/src
+          diff -r baseline/test/perf candidate/test/perf
+          diff -r baseline/scripts candidate/scripts
+          lscpu > controls/cpu.txt
+      - name: Interleave full unchanged harness B1 H1 B2 H2 B3
+        run: |
+          for label in B1 H1 B2 H2 B3; do
+            revision=baseline
+            if [[ "$label" == H* ]]; then revision=candidate; fi
+            (cd "$revision" && bun run perf:run -- --gha-output "../controls/$label.json") 2>&1 | tee "controls/$label.log"
+            cp "$revision"/perf-results/*-raw.json "controls/$label-raw.json"
+            rm "$revision"/perf-results/*-raw.json
+          done
+      - name: Record original comparison gate for every control pair
+        if: always()
+        run: |
+          set +e
+          for pair in B1:B2 B2:B3 B1:H1 B2:H1 B2:H2 B3:H2; do
+            base="${pair%:*}"
+            head="${pair#*:}"
+            (cd baseline && bun run perf:compare -- --threshold 5 --fail-on-regression --allow-new "../controls/$base.json" "../controls/$head.json") > "controls/$base-$head.txt" 2>&1
+            printf '%s %s\n' "$pair" "$?" >> controls/comparison-status.txt
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: perf-results
-          path: |
-            action-bench.json
-            action-bench.json.meta.json
-            perf-results/*.json
+          name: immutable-linux-controls
+          path: controls/
           if-no-files-found: error
-
-      - name: Benchmark report (with comments)
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == false
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: 'customBiggerIsBetter'
-          output-file-path: action-bench.json
-          external-data-json-path: .bench-cache/benchmark-data.json
-          # A 5% throughput drop is a worsening ratio of 100 / 0.95.
-          alert-threshold: '105.2631579%'
-          fail-on-alert: false
-          comment-on-alert: true
-          comment-always: true
-          summary-always: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Benchmark report (no comments for forks)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: 'customBiggerIsBetter'
-          output-file-path: action-bench.json
-          external-data-json-path: .bench-cache/benchmark-data.json
-          alert-threshold: '105.2631579%'
-          fail-on-alert: false
-          comment-on-alert: false
-          comment-always: false
-          summary-always: true
-
-      - name: Save benchmark history (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v6
-        with:
-          path: .bench-cache/benchmark-data.json
-          key: bench-${{ runner.os }}-main-${{ github.run_id }}
-
-      - name: Checkout comparison revision
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: benchmark-base
-
-      - name: Benchmark base on the same runner
-        if: github.event_name == 'pull_request'
-        working-directory: benchmark-base
-        run: |
-          bun install --frozen-lockfile
-          bun run perf:run -- --gha-output ../base-bench.json
-
-      - name: Gate regressions beyond measurement uncertainty
-        if: github.event_name == 'pull_request'
-        run: bun run perf:compare -- --threshold 5 --fail-on-regression --allow-new base-bench.json action-bench.json
-
-      - name: Upload comparison artifacts
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
-        with:
-          name: perf-base-results
-          path: |
-            base-bench.json
-            base-bench.json.meta.json
-            benchmark-base/perf-results/*.json
