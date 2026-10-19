@@ -258,6 +258,20 @@ export function createDuckDBConnectionPool(
     void acquireForWaiter(waiter);
   };
 
+  // Both idle acquire and expired release own their close failure. Freeing
+  // that slot must still let the oldest waiter try a replacement.
+  const recycleConnection = async (
+    connection: DuckDBConnection
+  ): Promise<void> => {
+    recycled += 1;
+    try {
+      await dropConnection(connection);
+    } catch (error) {
+      retryNextWaiter();
+      throw error;
+    }
+  };
+
   const acquire = async (): Promise<DuckDBConnection> => {
     if (closed) {
       throw new Error(POOL_CLOSED_MESSAGE);
@@ -267,13 +281,7 @@ export function createDuckDBConnectionPool(
       const pooled = idle.pop() as PooledConnection;
       const now = Date.now();
       if (shouldRecycleIdleConnection(pooled, now)) {
-        recycled += 1;
-        try {
-          await dropConnection(pooled.connection);
-        } catch (error) {
-          retryNextWaiter();
-          throw error;
-        }
+        await recycleConnection(pooled.connection);
         continue;
       }
       markConnectionUsed(pooled.connection, pooled, now);
@@ -367,13 +375,7 @@ export function createDuckDBConnectionPool(
     }
 
     if (hasExceededMaxLifetime(meta, now)) {
-      recycled += 1;
-      try {
-        await dropConnection(connection);
-      } catch (error) {
-        retryNextWaiter();
-        throw error;
-      }
+      await recycleConnection(connection);
 
       const waiter = takeWaiter();
       if (waiter) {
