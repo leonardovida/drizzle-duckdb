@@ -48,15 +48,19 @@ function reconciliationMeasures(
   parsedAmount: SQLWrapper
 ) {
   return {
-    scanned: countN(),
+    scanned: countN().as('scanned'),
     accepted: countN(
       sql`CASE WHEN ${rawAmount} IS NOT NULL AND ${parsedAmount} IS NOT NULL THEN 1 END`
-    ),
+    ).as('accepted'),
     invalid: countN(
       sql`CASE WHEN ${rawAmount} IS NOT NULL AND ${parsedAmount} IS NULL THEN 1 END`
+    ).as('invalid'),
+    missing: countN(sql`CASE WHEN ${rawAmount} IS NULL THEN 1 END`).as(
+      'missing'
     ),
-    missing: countN(sql`CASE WHEN ${rawAmount} IS NULL THEN 1 END`),
-    revenue: sql<number>`COALESCE(SUM(${parsedAmount}), 0)`.mapWith(Number),
+    revenue: sql<number>`COALESCE(SUM(${parsedAmount}), 0)`
+      .mapWith(Number)
+      .as('revenue'),
   };
 }
 
@@ -66,7 +70,7 @@ export function parquetReconciliation(
 ) {
   const sales = db
     .select({
-      region: sql<string>`region`.as('region'),
+      region: sql<string | null>`region`.as('region'),
       rawAmount: sql<string | null>`amount`.as('raw_amount'),
       parsedAmount: sql<string | null>`TRY_CAST(amount AS DECIMAL(18, 2))`.as(
         'parsed_amount'
@@ -96,7 +100,7 @@ export function parquetReconciliationByFile(
 ) {
   const sales = db
     .select({
-      region: sql<string>`region`.as('region'),
+      region: sql<string | null>`region`.as('region'),
       sourceFile: sql<string>`_export_file`.as('source_file'),
       rawAmount: sql<string | null>`amount`.as('raw_amount'),
       parsedAmount: sql<string | null>`TRY_CAST(amount AS DECIMAL(18, 2))`.as(
