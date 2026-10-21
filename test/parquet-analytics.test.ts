@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   parquetRevenue,
   parquetReconciliation,
+  parquetReconciliationByFile,
   runParquetAnalytics,
   runParquetDimensionAnalytics,
 } from '../example/parquet-analytics.ts';
@@ -37,15 +38,16 @@ test('reconciles accepted, invalid and missing amounts across real files', async
     const east = join(directory, 'region=east');
     await mkdir(west);
     await mkdir(east);
-    const numeric = join(west, 'numeric.parquet');
+    const numeric = join(west, "numeric's.parquet");
     const invalid = join(west, 'invalid.parquet');
     const missing = join(west, 'missing.parquet');
     const eastInvalid = join(east, 'invalid.parquet');
+    const empty = join(east, 'empty.parquet');
     await db.execute(
       sql`COPY (SELECT '10.50' AS amount UNION ALL SELECT '4.50') TO ${numeric} (FORMAT PARQUET)`
     );
     await db.execute(
-      sql`COPY (SELECT 'bad' AS amount) TO ${invalid} (FORMAT PARQUET)`
+      sql`COPY (SELECT 'bad' AS amount, 'payload-name' AS filename) TO ${invalid} (FORMAT PARQUET)`
     );
     await db.execute(
       sql`COPY (SELECT 'pending' AS status) TO ${missing} (FORMAT PARQUET)`
@@ -53,13 +55,12 @@ test('reconciles accepted, invalid and missing amounts across real files', async
     await db.execute(
       sql`COPY (SELECT 'too large' AS amount) TO ${eastInvalid} (FORMAT PARQUET)`
     );
+    await db.execute(
+      sql`COPY (SELECT '0' AS amount WHERE false) TO ${empty} (FORMAT PARQUET)`
+    );
 
-    const rows = await parquetReconciliation(db, [
-      numeric,
-      invalid,
-      missing,
-      eastInvalid,
-    ]);
+    const paths = [numeric, invalid, missing, eastInvalid, empty];
+    const rows = await parquetReconciliation(db, paths);
     expectTypeOf(rows).toEqualTypeOf<
       {
         region: string;
@@ -93,6 +94,77 @@ test('reconciles accepted, invalid and missing amounts across real files', async
         (row) => row.accepted + row.invalid + row.missing === row.scanned
       )
     ).toBe(true);
+
+    const byFile = await parquetReconciliationByFile(db, paths);
+    expectTypeOf(byFile).toEqualTypeOf<
+      {
+        region: string;
+        sourceFile: string;
+        scanned: number;
+        accepted: number;
+        invalid: number;
+        missing: number;
+        revenue: number;
+      }[]
+    >();
+    expect(byFile).toEqual([
+      {
+        region: 'east',
+        sourceFile: eastInvalid,
+        scanned: 1,
+        accepted: 0,
+        invalid: 1,
+        missing: 0,
+        revenue: 0,
+      },
+      {
+        region: 'west',
+        sourceFile: invalid,
+        scanned: 1,
+        accepted: 0,
+        invalid: 1,
+        missing: 0,
+        revenue: 0,
+      },
+      {
+        region: 'west',
+        sourceFile: missing,
+        scanned: 1,
+        accepted: 0,
+        invalid: 0,
+        missing: 1,
+        revenue: 0,
+      },
+      {
+        region: 'west',
+        sourceFile: numeric,
+        scanned: 2,
+        accepted: 2,
+        invalid: 0,
+        missing: 0,
+        revenue: 15,
+      },
+    ]);
+    expect(
+      await parquetReconciliationByFile(db, join(directory, '*/*.parquet'))
+    ).toEqual(byFile);
+    for (const row of byFile) {
+      expect(row.accepted + row.invalid + row.missing).toBe(row.scanned);
+    }
+    for (const region of rows) {
+      const files = byFile.filter((file) => file.region === region.region);
+      for (const measure of [
+        'scanned',
+        'accepted',
+        'invalid',
+        'missing',
+        'revenue',
+      ] as const) {
+        expect(files.reduce((total, file) => total + file[measure], 0)).toBe(
+          region[measure]
+        );
+      }
+    }
   } finally {
     try {
       connection.closeSync();
@@ -122,11 +194,17 @@ test('binds both a glob and file lists without injecting path text', async () =>
       "/tmp/it's/*.parquet",
       ["x'); DROP TABLE sales; --.parquet"],
     ]) {
-      const query = parquetRevenue(db, paths).toSQL();
-      expect(query.params).toEqual([paths, true, true]);
-      expect(query.sql).not.toContain(
-        typeof paths === 'string' ? paths : paths[0]
-      );
+      for (const report of [parquetRevenue, parquetReconciliationByFile]) {
+        const query = report(db, paths).toSQL();
+        expect(query.params).toEqual(
+          report === parquetRevenue
+            ? [paths, true, true]
+            : [paths, true, true, '_export_file']
+        );
+        expect(query.sql).not.toContain(
+          typeof paths === 'string' ? paths : paths[0]
+        );
+      }
     }
   } finally {
     connection.closeSync();
@@ -154,6 +232,9 @@ test('diagnoses missing and text amounts and recovers with an explicit numeric c
 
     // union_by_name cannot synthesize a column absent from every file.
     await expect(parquetRevenue(db, [missing])).rejects.toThrow(/amount/i);
+    await expect(parquetReconciliationByFile(db, [missing])).rejects.toThrow(
+      /amount/i
+    );
     // mapWith(Number) maps results, not the input to DuckDB's SUM.
     await expect(parquetRevenue(db, [numericText])).rejects.toThrow(
       /sum\(VARCHAR\)/i
@@ -180,6 +261,60 @@ test('diagnoses missing and text amounts and recovers with an explicit numeric c
     await expect(numericRevenue(invalidText)).rejects.toThrow(
       /convert.*invalid/i
     );
+    expect(await db.execute(sql`SELECT 1 AS ok`)).toEqual([{ ok: 1 }]);
+  } finally {
+    try {
+      connection.closeSync();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('applies the decimal policy and rejects source metadata collisions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'drizzle-parquet-policy-'));
+  const instance = await DuckDBInstance.create(':memory:');
+  const connection = await instance.connect();
+  try {
+    const db = drizzle(connection);
+    const amounts = join(directory, 'amounts.parquet');
+    const collision = join(directory, 'collision.parquet');
+    await db.execute(sql`
+      COPY (SELECT 'west' AS region, amount FROM (VALUES
+        ('1.235'), ('-1.235'), ('0'), ('10000000000000000'), (''), ('bad'), (NULL)
+      ) AS input(amount)) TO ${amounts} (FORMAT PARQUET)
+    `);
+    expect(await parquetReconciliationByFile(db, amounts)).toEqual([
+      {
+        region: 'west',
+        sourceFile: amounts,
+        scanned: 7,
+        accepted: 3,
+        invalid: 3,
+        missing: 1,
+        revenue: 0,
+      },
+    ]);
+    const cast = await db.execute(sql`SELECT
+      CAST(TRY_CAST('1.235' AS DECIMAL(18, 2)) AS VARCHAR) AS positive,
+      CAST(TRY_CAST('-1.235' AS DECIMAL(18, 2)) AS VARCHAR) AS negative`);
+    expect(cast).toEqual([{ positive: '1.24', negative: '-1.24' }]);
+    await db.execute(sql`COPY (SELECT 'west' AS region, '1' AS amount,
+      'payload' AS _export_file) TO ${collision} (FORMAT PARQUET)`);
+    await expect(parquetReconciliationByFile(db, collision)).rejects.toThrow(
+      /_export_file/i
+    );
+    // The original report does not reserve metadata names in the file schema.
+    expect(await parquetReconciliation(db, collision)).toEqual([
+      {
+        region: 'west',
+        scanned: 1,
+        accepted: 1,
+        invalid: 0,
+        missing: 0,
+        revenue: 1,
+      },
+    ]);
     expect(await db.execute(sql`SELECT 1 AS ok`)).toEqual([{ ok: 1 }]);
   } finally {
     try {
