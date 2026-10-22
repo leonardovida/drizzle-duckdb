@@ -904,6 +904,7 @@ export const motherDuckReadJsonAuto = (
   options?: MotherDuckTableFunctionOptions
 ) => motherDuckTableFunction('read_json_auto', [path], options);
 
+/** Flights you hold only `run` access on are not listed. */
 export function mdListFlights(options: MotherDuckListFlightsOptions = {}): SQL {
   return motherDuckNamedFunction('md_list_flights', [
     ...motherDuckPagedParams(options),
@@ -965,6 +966,12 @@ export function mdDeleteFlight(flightId: string | SQLWrapper): SQL {
   );
 }
 
+/**
+ * Start a run of a Flight you own or hold `run` access on. The run uses the
+ * owner's settings, secrets and token. `config` can only override keys the
+ * Flight already defines. Run access alone does not allow reading the Flight's
+ * runs or logs unless you are an organization admin.
+ */
 export function mdRunFlight(
   flightId: string | SQLWrapper,
   options: MotherDuckRunFlightOptions = {}

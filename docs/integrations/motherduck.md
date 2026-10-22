@@ -82,6 +82,23 @@ const instance = await DuckDBInstance.create('md:my_database', {
 });
 ```
 
+`md:my_database` still attaches every database in your workspace. To attach only that database, which shortens startup, add `attach_mode=single`:
+
+```typescript
+import { sql } from 'drizzle-orm';
+
+const db = await drizzle({
+  connection: {
+    path: 'md:my_database?attach_mode=single',
+    options: { motherduck_token: process.env.MOTHERDUCK_TOKEN },
+  },
+});
+
+await db.execute(sql`ATTACH 'md:other_database'`);
+```
+
+Attach any other database you need with `ATTACH`, as shown. Single attach mode needs the name of a database that already exists, so `md:?attach_mode=single` fails.
+
 Or use the database in your queries:
 
 ```typescript

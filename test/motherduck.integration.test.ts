@@ -226,6 +226,35 @@ if (skipMotherduck) {
     }
   }, 120_000);
 
+  test('attach_mode=single attaches only the named database', async () => {
+    await runWithMotherDuckAccess(async () => {
+      const options = { motherduck_token: motherduckToken };
+      const workspace = await drizzle({ connection: { path: 'md:', options } });
+      let database: string | undefined;
+      try {
+        const [row] = await workspace.execute<{ name: string }>(
+          sql`select current_database() as name`
+        );
+        database = row?.name;
+      } finally {
+        await workspace.close();
+      }
+      expect(database).toBeDefined();
+
+      const db = await drizzle({
+        connection: { path: `md:${database}?attach_mode=single`, options },
+      });
+      try {
+        const rows = await db.execute<{ database_name: string }>(sql`
+          select database_name from duckdb_databases() where type = 'motherduck'
+        `);
+        expect(rows.map((row) => row.database_name)).toEqual([database]);
+      } finally {
+        await db.close();
+      }
+    });
+  }, 120_000);
+
   test('Flight run helpers expose current result columns', async () => {
     const completed = await runWithMotherDuckAccess(async () => {
       const instance = await DuckDBInstance.create('md:', {
