@@ -304,6 +304,13 @@ Changing the size with `mdUpdateFlight()` creates a new version, and version
 rows from `mdListFlightVersions()` and `mdGetFlightVersion()` report it as
 `instance_type`. Summary rows include `owner_name`, and
 `mdListFlights({ ownerOnly: true })` lists only the Flights you own.
+`mdRunFlight()` also starts a Flight another user owns when they gave you run
+access. The run uses the owner's settings, secrets and token, and `config` can
+only override keys the Flight already defines. `mdListFlights()` does not list
+Flights you can only run, so pass the Flight ID the owner shared. Run access
+alone does not let you read the Flight, its runs or its logs, so
+`mdGetFlightRun()` and `mdGetFlightLogs()` report it as not found unless you are
+an organization admin.
 
 ## MotherDuck files and session identity
 
