@@ -63,7 +63,7 @@ test('reconciles accepted, invalid and missing amounts across real files', async
     const rows = await parquetReconciliation(db, paths);
     expectTypeOf(rows).toEqualTypeOf<
       {
-        region: string;
+        region: string | null;
         scanned: number;
         accepted: number;
         invalid: number;
@@ -98,7 +98,7 @@ test('reconciles accepted, invalid and missing amounts across real files', async
     const byFile = await parquetReconciliationByFile(db, paths);
     expectTypeOf(byFile).toEqualTypeOf<
       {
-        region: string;
+        region: string | null;
         sourceFile: string;
         scanned: number;
         accepted: number;

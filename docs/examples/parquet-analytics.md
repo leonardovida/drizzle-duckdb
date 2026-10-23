@@ -212,6 +212,61 @@ fractional digits (for example `1.235` becomes `1.24`), and classifies malformed
 or out-of-range values as invalid. SQL NULL is missing. Number output is not
 exact accounting. This workflow is verified with local Parquet files only.
 
+## Keep dimension labels without losing rejected groups
+
+Run the mixed-region reconciliation example:
+
+```bash
+bun example/parquet-reconciliation-regions.ts
+```
+
+It scans a non-partitioned file containing several region codes, an unknown
+code and SQL NULL keys. A second file lacks `amount`. The report keeps all seven
+scanned rows in five region/source groups: two accepted, two invalid and three
+missing amounts. Accepted revenue is 13. The missing-only and invalid-only groups
+remain visible even when they have no matching label.
+
+Use the existing reconciliation query as a subquery, then attach dimension
+labels without regrouping or filtering its rows:
+
+```typescript
+const reconciled = parquetReconciliationByFile(db, paths).as('reconciled');
+const report = await db
+  .select({
+    region: reconciled.region,
+    sourceFile: reconciled.sourceFile,
+    label: regions.label,
+    scanned: reconciled.scanned,
+    accepted: reconciled.accepted,
+    invalid: reconciled.invalid,
+    missing: reconciled.missing,
+    revenue: reconciled.revenue,
+  })
+  .from(reconciled)
+  .leftJoin(regions, eq(reconciled.region, regions.code))
+  .orderBy(reconciled.region, reconciled.sourceFile);
+```
+
+The example gives each computed measure an explicit SQL alias, such as
+`countN().as('scanned')`. This lets Drizzle preserve its numeric result type
+when the field is selected through the `reconciled` subquery.
+
+Keep the original region code and source path. Different codes can share a
+label, and both a NULL key and an unknown code have a NULL label. Grouping only
+by label would combine those distinct cases. Filtering on the right-hand label
+would discard unmatched reconciliation groups.
+
+The actual lookup table must enforce unique region codes, as the demo's
+`PRIMARY KEY` does. Declaring `primaryKey()` in TypeScript does not add that
+constraint to an existing database. Duplicate lookup keys would multiply report
+rows even though the amounts were already aggregated. Unused lookup rows stay
+absent, and an empty lookup leaves all counts and amounts intact.
+
+Both reconciliation examples declare `region` as `string | null` because a file
+key can be NULL. The joined label is also `string | null`. These types describe
+the expected values and do not validate file contents. The decimal policy,
+reserved metadata name and local-file limitations above still apply.
+
 ## Schema and value boundaries
 
 - `union_by_name` matches columns by name across files and fills missing columns

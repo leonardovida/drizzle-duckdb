@@ -6,6 +6,7 @@ Runnable scripts for `@duckdbfan/drizzle-duckdb`. They import from `../src/index
 | ------------------------ | --------------------------------------------- | ------------------------------------------- |
 | `analytics-dashboard.ts` | Nothing                                       | `bun example/analytics-dashboard.ts`        |
 | `parquet-analytics.ts`   | Nothing                                       | `bun example/parquet-analytics.ts`          |
+| `parquet-reconciliation-regions.ts` | Nothing | `bun example/parquet-reconciliation-regions.ts` |
 | `ducklake-local.ts`      | Nothing (installs the `ducklake` extension)   | `bun example/ducklake-local.ts`             |
 | `motherduck-nyc-taxi.ts` | `MOTHERDUCK_TOKEN`                            | `bun example/motherduck-nyc-taxi.ts`        |
 | `ducklake-motherduck.ts` | `MOTHERDUCK_TOKEN`, `DUCKLAKE_MOTHERDUCK_DB` | `bun example/ducklake-motherduck.ts`        |
