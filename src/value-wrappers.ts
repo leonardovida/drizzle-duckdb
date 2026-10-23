@@ -77,6 +77,7 @@ import {
   subMillisecondMicros,
   timestampStringToDateInput,
 } from './time.ts';
+import { assignOwnProperty } from './own-property.ts';
 
 /**
  * Convert a Date/string/epoch number to microseconds since Unix epoch.
@@ -147,7 +148,9 @@ function convertStructEntries(
 ): Record<string, DuckDBValue> {
   const entries: Record<string, DuckDBValue> = {};
   for (const [key, val] of Object.entries(data)) {
-    entries[key] = toValue(val, parseNodeApiTypeHint(schema?.[key]));
+    const hint = schema && Object.hasOwn(schema, key) ? schema[key] : undefined;
+    // STRUCT names are data, including the legacy __proto__ setter name.
+    assignOwnProperty(entries, key, toValue(val, parseNodeApiTypeHint(hint)));
   }
   return entries;
 }
@@ -414,7 +417,7 @@ function unifyTypes(a: DuckDBType, b: DuckDBType): DuckDBType {
             right.entryTypes[i] as DuckDBType
           );
           changed ||= entryType !== left.entryTypes[i];
-          entries[name] = entryType;
+          assignOwnProperty(entries, name, entryType);
         });
         return changed ? STRUCT(entries) : a;
       }
@@ -525,10 +528,10 @@ function inferNodeApiType(value: DuckDBValue): DuckDBType | undefined {
   }
   if (value instanceof DuckDBStructValue) {
     const entries: Record<string, DuckDBType> = {};
-    for (const key in value.entries) {
-      const entryType = inferNodeApiType(value.entries[key] as DuckDBValue);
+    for (const [key, entry] of Object.entries(value.entries)) {
+      const entryType = inferNodeApiType(entry);
       if (!entryType) return undefined;
-      entries[key] = entryType;
+      assignOwnProperty(entries, key, entryType);
     }
     return STRUCT(entries);
   }
@@ -623,7 +626,7 @@ function alignValueToType(value: DuckDBValue, type: DuckDBType): DuckDBValue {
             structType.entryTypes[index] as DuckDBType
           );
           changed ||= next !== entry;
-          entries[name] = next;
+          assignOwnProperty(entries, name, next);
         });
         return changed ? structValue(entries) : value;
       }
