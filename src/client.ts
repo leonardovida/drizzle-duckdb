@@ -1185,7 +1185,7 @@ function resolveRowsPerChunk(
 }
 
 async function* chunkRowStream(
-  rowStream: AsyncIterable<unknown[][]>,
+  rowStream: AsyncIterable<unknown[][]> | Iterable<unknown[][]>,
   columns: string[],
   rowsPerChunk: number
 ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
@@ -1200,26 +1200,6 @@ async function* chunkRowStream(
     }
   }
   if (rows.length > 0) yield { columns, rows };
-}
-
-async function* chunkRows(
-  rowStream: Iterable<unknown[]>,
-  columns: string[],
-  rowsPerChunk: number
-): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
-  let rows: unknown[][] = [];
-
-  for (const row of rowStream) {
-    rows.push(row);
-    if (rows.length >= rowsPerChunk) {
-      yield { columns, rows };
-      rows = [];
-    }
-  }
-
-  if (rows.length > 0) {
-    yield { columns, rows };
-  }
 }
 
 async function* streamRawBatches(
@@ -1239,7 +1219,9 @@ async function* streamRawBatches(
           query,
           params
         );
-        yield* chunkRows(rows, columns, rowsPerChunk);
+        // pg materializes before batching. Native readers supply async
+        // batches, but both paths share output boundaries and final flushing.
+        yield* chunkRowStream([rows], columns, rowsPerChunk);
         return;
       }
 

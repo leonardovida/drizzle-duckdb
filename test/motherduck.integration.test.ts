@@ -306,6 +306,8 @@ if (skipMotherduck) {
           'scheduled_at',
           'cancelled_at',
           'exit_code',
+          'started_by_id',
+          'started_by_name',
         ]);
       } finally {
         connection.closeSync();
