@@ -286,7 +286,9 @@ result column names where the Flight result uses `flight_*`. The earlier
 `mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and `mdFlightVersions()`
 TypeScript helper names remain as deprecated aliases too. New code should use
 the verb-style Flight helpers.
-`mdGetFlightRun()` fetches one run by Flight ID and run number.
+`mdGetFlightRun()` fetches one run by Flight ID and run number. Run rows from
+`mdRunFlight()`, `mdListFlightRuns()` and `mdGetFlightRun()` include
+`started_by_id` and `started_by_name`, which are `NULL` for scheduled runs.
 `mdGetFlightLogs()` returns line-oriented logs and accepts `limit`, `offset`,
 and `order: 'asc' | 'desc'` for pagination from either end of the log.
 For optional Flight fields, `undefined` omits the named parameter and `null`

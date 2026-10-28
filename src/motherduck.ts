@@ -128,6 +128,13 @@ export type MotherDuckFlightRunRow = {
   scheduled_at: Date | string | null;
   cancelled_at: Date | string | null;
   exit_code: number | null;
+  /**
+   * The user who started the run. NULL for scheduled runs and for runs from
+   * before MotherDuck recorded it. Returned by MotherDuck clients from 1.5.6.
+   */
+  started_by_id?: string | null;
+  /** Username of `started_by_id`. NULL once that user no longer exists. */
+  started_by_name?: string | null;
 };
 
 export type MotherDuckFlightLogLineRow = {
