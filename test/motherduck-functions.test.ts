@@ -814,3 +814,29 @@ test('MotherDuck row types work as db.execute result types', () => {
     Record<string, unknown>
   >();
 });
+
+test('MotherDuck Flight run rows carry who started the run', () => {
+  const run: MotherDuckFlightRunRow = {
+    run_id: '1',
+    flight_id: '80000000-0000-0000-0000-000000000001',
+    flight_name: 'nightly',
+    flight_version: 1,
+    config: null,
+    run_number: 1n,
+    is_scheduled: false,
+    status: 'SUCCEEDED',
+    created_at: '2026-10-28T00:00:00Z',
+    started_at: null,
+    ended_at: null,
+    scheduled_at: null,
+    cancelled_at: null,
+    exit_code: 0,
+    started_by_id: '90000000-0000-0000-0000-000000000002',
+    started_by_name: 'leo',
+  };
+  expect([run.started_by_id, run.started_by_name]).toEqual([
+    '90000000-0000-0000-0000-000000000002',
+    'leo',
+  ]);
+  expectTypeOf<MotherDuckFlightRunRow>().toExtend<Record<string, unknown>>();
+});
