@@ -14,12 +14,19 @@ import {
   mdFlightLogs,
   mdGetFlightLogs,
   mdGetFlightRun,
+  mdGetFlightVersion,
   mdIsRoleInSession,
   mdListDives,
+  mdListFlightGrantees,
   mdListFlights,
   mdListFlightVersions,
+  mdListRoleMembers,
+  mdListRoles,
+  mdListRolesGrantedToRole,
+  mdListRolesGrantedToUser,
   mdSessionRoles,
 } from '../src/motherduck.ts';
+import { mdPromptJev } from '../src/jev.ts';
 import { expect, test } from 'vitest';
 
 const motherduckToken = process.env.MOTHERDUCK_TOKEN;
@@ -344,6 +351,60 @@ if (skipMotherduck) {
         expect(await describeColumns(mdListDives({ limit: 1 }))).toEqual(
           expect.arrayContaining(['status', 'status_applies_to_version'])
         );
+        expect(
+          await describeColumns(mdGetFlightVersion(sql`uuid()`, 1))
+        ).toContain('metadata');
+        expect(
+          await describeColumns(mdListFlightGrantees(sql`uuid()`))
+        ).toEqual(['grantee_name', 'grantee_type', 'privilege']);
+        expect(await describeColumns(mdListRoles())).toEqual([
+          'role_name',
+          'role_type',
+          'included_roles',
+          'created_at',
+        ]);
+        expect(await describeColumns(mdListRoleMembers('explorer'))).toEqual([
+          'member_type',
+          'member_name',
+          'email',
+          'is_service_account',
+          'role_type',
+          'granted_at',
+        ]);
+        for (const source of [
+          mdListRolesGrantedToUser('someone'),
+          mdListRolesGrantedToRole('explorer'),
+        ]) {
+          expect(await describeColumns(source)).toEqual([
+            'role_name',
+            'role_type',
+            'is_direct',
+            'granted_at',
+          ]);
+        }
+
+        // Binding prompt_jev checks the image input shape without a model call.
+        const describeType = async (expression: SQL) =>
+          (
+            await db.execute<{ column_type: string }>(
+              sql`describe select ${expression} as result`
+            )
+          )[0]?.column_type;
+        expect(
+          await describeType(
+            mdPromptJev(new Uint8Array([0xff, 0xd8]), {
+              instructions: 'Does `image` show a duck?',
+            })
+          )
+        ).toBe('DOUBLE');
+        expect(
+          await describeType(
+            mdPromptJev(
+              { name: 'receipt', image: sql`'\\xFF'::BLOB`, format: 'png' },
+              { box: 'the total in `receipt`' }
+            )
+          )
+        ).toContain('box STRUCT');
 
         const [identity] = await db.execute<{
           roles: string[];

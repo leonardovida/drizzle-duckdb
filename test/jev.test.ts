@@ -259,6 +259,95 @@ test('prompt_jev builds named image input for classification and boxes', () => {
   );
 });
 
+test('prompt_jev accepts a bare BLOB and a single named image', () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+
+  const bare = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(bytes, { instructions: 'Does `image` show a duck?' })}
+  `);
+  expect(bare.sql).toContain(
+    "prompt_jev(CAST($1 AS BLOB), 'Does `image` show a duck?')"
+  );
+  expect(bare.params).toEqual([bytes]);
+
+  const bareColumn = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(
+      { image: sql`content` },
+      { box: 'the duck in `image`' }
+    )}
+  `);
+  expect(bareColumn.sql).toContain(
+    "prompt_jev(CAST(content AS BLOB), box := 'the duck in `image`')"
+  );
+
+  const named = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(
+      { name: 'receipt', image: sql`content` },
+      { instructions: 'Is `receipt` an itemized receipt?' }
+    )}
+  `);
+  expect(named.sql).toContain(
+    "prompt_jev({name: 'receipt', content: content}, 'Is `receipt` an itemized receipt?')"
+  );
+
+  const withFormat = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(
+      { name: 'diagram', image: bytes, format: 'png' },
+      {
+        questions: {
+          flowchart: {
+            type: 'noul',
+            instructions: 'Does `diagram` contain a flowchart?',
+          },
+          where: { type: 'box', instructions: 'the flowchart in `diagram`' },
+        },
+      }
+    )}
+  `);
+  expect(withFormat.sql).toContain(
+    "prompt_jev({name: 'diagram', content: CAST($1 AS BLOB), format: 'png'}, questions := "
+  );
+  expect(withFormat.params).toEqual([bytes]);
+
+  const defaultName = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(
+      { image: sql`content`, format: 'jpeg' },
+      { instructions: 'Is `image` blurry?' }
+    )}
+  `);
+  expect(defaultName.sql).toContain(
+    "prompt_jev({name: 'image', content: content, format: 'jpeg'}, 'Is `image` blurry?')"
+  );
+
+  expect(() =>
+    mdPromptJev(bytes, { instructions: 'Duck?', batchSize: 2 })
+  ).toThrow(/batchSize is not supported with image input/);
+  expect(() =>
+    mdPromptJev(
+      { image: sql`content` },
+      { instructions: 'Duck?', batchSize: 2 }
+    )
+  ).toThrow(/batchSize is not supported with image input/);
+  expect(() =>
+    mdPromptJev({ name: '', image: sql`content` }, { instructions: 'Duck?' })
+  ).toThrow(/image name must be a non-empty string/);
+  expect(() =>
+    mdPromptJev(
+      { image: sql`content`, format: 'gif' as 'png' },
+      { instructions: 'Duck?' }
+    )
+  ).toThrow(/"image" format must be one of png, jpg or jpeg/);
+  expect(() =>
+    mdPromptJev(
+      { image: 'not bytes' as unknown as Uint8Array },
+      { instructions: 'Duck?' }
+    )
+  ).toThrow(/must be a Uint8Array or SQL expression/);
+  expectTypeOf(
+    mdPromptJev({ image: sql`content` }, { box: 'region' })
+  ).toEqualTypeOf<SQL<MotherDuckJevBoxResult | null>>();
+});
+
 test('prompt_jev rejects question names that collide in a STRUCT', () => {
   expect(() =>
     mdPromptJev('x', {

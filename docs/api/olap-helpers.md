@@ -309,10 +309,55 @@ rows from `mdListFlightVersions()` and `mdGetFlightVersion()` report it as
 `mdRunFlight()` also starts a Flight another user owns when they gave you run
 access. The run uses the owner's settings, secrets and token, and `config` can
 only override keys the Flight already defines. `mdListFlights()` does not list
-Flights you can only run, so pass the Flight ID the owner shared. Run access
-alone does not let you read the Flight, its runs or its logs, so
-`mdGetFlightRun()` and `mdGetFlightLogs()` report it as not found unless you are
-an organization admin.
+Flights you can only run, so pass the Flight ID the owner shared. With run
+access alone, `mdGetFlightRun()` reads the runs you started and reports other
+runs as not found. `mdListFlightRuns()` refuses callers who are neither the
+owner nor an organization admin, and `mdGetFlightLogs()` stays limited to them.
+
+### Flight charts and grants
+
+`mdCreateFlight()` and `mdUpdateFlight()` accept `metadata: { chart }`, for
+example Mermaid flowchart source that describes the Flight's steps. On update,
+an empty string clears the chart and `chart: null` leaves it unchanged.
+`chart` is the only metadata key MotherDuck accepts, and the helper throws on
+any other key. `mdGetFlightVersion()` returns the version's chart in a
+`metadata` MAP column. `db.execute` returns MAP values as key and value
+entries, so select `metadata['chart']` to read it as a string.
+`mdListFlightVersions()` does not return `metadata`.
+
+```typescript
+import {
+  mdGetFlightVersion,
+  mdListFlightGrantees,
+  mdUpdateFlight,
+} from '@duckdbfan/drizzle-duckdb';
+
+await db.execute(sql`
+  select current_version
+  from ${mdUpdateFlight({
+    flightId,
+    metadata: { chart: 'flowchart TD\n  extract[Extract] --> load[Load]' },
+  })}
+`);
+
+const [version] = await db.execute<{ chart: string | null }>(sql`
+  select metadata['chart'] as chart
+  from ${mdGetFlightVersion(flightId, 2)}
+`);
+
+const grantees = await db.execute(sql`
+  select grantee_name, grantee_type, privilege
+  from ${mdListFlightGrantees(flightId)}
+`);
+```
+
+`mdListFlightGrantees(flightId)` calls `md_list_flight_grantees`, the table
+function behind `SHOW GRANTS ON FLIGHT`, and casts the ID to `UUID`. Rows match
+`MotherDuckFlightGranteeRow`: `grantee_name`, `grantee_type` (`user`, `role`
+or `organization`) and `privilege` (`run`). `grantee_name` is `NULL` when the
+caller may read the Flight but not manage its grants. Grant and revoke access
+with the `GRANT RUN ON FLIGHT '<id>' TO USER <name>, ROLE <name>, ORGANIZATION`
+and `REVOKE RUN ON FLIGHT '<id>' FROM ...` statements.
 
 ## MotherDuck files and session identity
 
@@ -341,6 +386,41 @@ const [me] = await db.execute(sql`
 `mdCurrentEmail()` returns `NULL` for service accounts. `mdIsRoleInSession()`
 matches case-insensitively, follows the role hierarchy and returns `true` when
 any listed role is held.
+
+The role introspection table functions return the rows of the `SHOW` role
+statements from a `SELECT`, so they can be filtered, joined and run by
+read-only callers:
+
+```typescript
+import {
+  mdListRoleMembers,
+  mdListRoles,
+  mdListRolesGrantedToRole,
+  mdListRolesGrantedToUser,
+} from '@duckdbfan/drizzle-duckdb';
+
+const [member] = await db.execute<{ member_name: string }>(sql`
+  select member_name
+  from ${mdListRoleMembers('explorer')}
+  where member_type = 'user' and email = ${'alice@example.com'}
+`);
+```
+
+| Helper                           | Rows                                                                 | Matching statement                         |
+| -------------------------------- | -------------------------------------------------------------------- | ------------------------------------------ |
+| `mdListRoles()`                  | `MotherDuckRoleRow`: every role in the organization                  | `SHOW ALL ROLES`                           |
+| `mdListRoleMembers(role)`        | `MotherDuckRoleMemberRow`: direct members, users then roles          | `SHOW USERS OF ROLE`, `SHOW ROLES OF ROLE` |
+| `mdListRolesGrantedToUser(user)` | `MotherDuckGrantedRoleRow`: roles held directly or through hierarchy | `SHOW ROLES TO USER`                       |
+| `mdListRolesGrantedToRole(role)` | `MotherDuckGrantedRoleRow`: roles a role inherits                    | `SHOW ROLES TO ROLE`                       |
+
+Member rows set `email` and `is_service_account` to `NULL` for a role member
+and `role_type` to `NULL` for a user member. Granted role rows mark direct
+grants with `is_direct` and leave `granted_at` `NULL` for inherited roles.
+MotherDuck refuses `NULL` arguments and roles that do not exist. Listing
+members of a role or the roles of a role needs a full-scope token, and users
+who are not admins see only roles within their own role hierarchy.
+`mdSessionRoles()` and `mdIsRoleInSession()` are unchanged and remain the way to
+check the current session's roles.
 
 `config` entries are exposed to Flight code as environment variables using the
 config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and

@@ -237,7 +237,24 @@ const [row] = await db.execute(sql`
 `);
 ```
 
-Image rows go to MotherDuck one request at a time, so `batchSize` is not allowed with image input. A row whose images are too large or too small for the model returns `NULL`. For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. Use `type: 'box'` for a region question on image input. The helper renders the object as a constant SQL STRUCT. It throws on an empty `questions` object, missing or empty `instructions`, an empty criteria list, and a `choice` or `score` question without `criteria`. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
+For one image, pass it without the list. Image bytes or `{ image }` are sent as a bare BLOB that the instructions call `image`. Add `name` or `format` to send a single named image, whose name defaults to `image`. A SQL expression on its own is text input, so wrap a BLOB column as `{ image: column }`:
+
+```typescript
+const rows = await db.execute(sql`
+  select
+    ${mdPromptJev(
+      { image: sql`content` },
+      { instructions: 'Does `image` show a duck?' }
+    )} as duck,
+    ${mdPromptJev(
+      { name: 'receipt', image: sql`content`, format: 'png' },
+      { box: 'the total in `receipt`' }
+    )} as total
+  from read_blob('receipts/*.png')
+`);
+```
+
+The single-image forms need a MotherDuck client extension that includes the `prompt_jev` image shorthands. A constant image, such as bytes passed from JavaScript, must be smaller than 4 MiB. Images read from a column or `read_blob()` can be up to 8 MiB. Image rows go to MotherDuck one request at a time, so `batchSize` is not allowed with image input. A row whose images are too large or too small for the model returns `NULL`. For several questions about one input, pass a `questions` object instead of `instructions` and `choice`. Use `type: 'box'` for a region question on image input. The helper renders the object as a constant SQL STRUCT. It throws on an empty `questions` object, missing or empty `instructions`, an empty criteria list, and a `choice` or `score` question without `criteria`. Pass a JSON string when you need the function's JSON escape hatch. See the MotherDuck docs for [availability and AI Unit usage](https://motherduck.com/docs/sql-reference/motherduck-sql-reference/ai-functions/prompt-jev/).
 
 ## Generate Text with Prompt
 

@@ -32,6 +32,11 @@ import {
   mdListFlights,
   mdListFlightVersions,
   mdListFiles,
+  mdListFlightGrantees,
+  mdListRoleMembers,
+  mdListRoles,
+  mdListRolesGrantedToRole,
+  mdListRolesGrantedToUser,
   mdCurrentEmail,
   mdSessionRoles,
   mdIsRoleInSession,
@@ -52,6 +57,10 @@ import {
   type MotherDuckFlightVersionRow,
   type MotherDuckFlightLogLineRow,
   type MotherDuckFlightLogsRow,
+  type MotherDuckFlightGranteeRow,
+  type MotherDuckGrantedRoleRow,
+  type MotherDuckRoleMemberRow,
+  type MotherDuckRoleRow,
 } from '../src/motherduck.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 import type { DuckLakeMergeAdjacentFilesRow } from '../src/ducklake.ts';
@@ -839,4 +848,195 @@ test('MotherDuck Flight run rows carry who started the run', () => {
     'leo',
   ]);
   expectTypeOf<MotherDuckFlightRunRow>().toExtend<Record<string, unknown>>();
+});
+
+test('MotherDuck Flight helpers set and return chart metadata', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+  const chart = 'flowchart TD\n  extract[Extract] --> load[Load]';
+
+  const created = dialect.sqlToQuery(
+    sql`from ${mdCreateFlight({
+      name: 'nightly',
+      sourceCode: 'print(1)',
+      metadata: { chart },
+    })}`
+  );
+  expect(created.sql).toContain(
+    'from md_create_flight(name = $1, source_code = $2, metadata = MAP(CAST($3 AS VARCHAR[]), CAST($4 AS VARCHAR[])))'
+  );
+  expect(created.params).toEqual(['nightly', 'print(1)', ['chart'], [chart]]);
+
+  const cleared = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({ flightId, metadata: { chart: '' } })}`
+  );
+  expect(cleared.params).toEqual([flightId, ['chart'], ['']]);
+
+  const unchanged = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({ flightId, metadata: { chart: null } })}`
+  );
+  expect(unchanged.params).toEqual([flightId, ['chart'], [null]]);
+
+  const empty = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({ flightId, metadata: {} })}`
+  );
+  expect(empty.sql).toContain(
+    'from md_update_flight(flight_id = $1, metadata = MAP {}::MAP(VARCHAR, VARCHAR))'
+  );
+
+  const nullMetadata = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({ flightId, metadata: null })}`
+  );
+  expect(nullMetadata.sql).toContain(
+    'from md_update_flight(flight_id = $1, metadata = $2)'
+  );
+  expect(nullMetadata.params).toEqual([flightId, null]);
+
+  const wrapped = dialect.sqlToQuery(
+    sql`from ${mdUpdateFlight({
+      flightId,
+      metadata: sql`MAP {'chart': 'x'}`,
+    })}`
+  );
+  expect(wrapped.sql).toContain("metadata = MAP {'chart': 'x'}");
+
+  expect(() =>
+    mdUpdateFlight({
+      flightId,
+      metadata: { owner: 'x' } as unknown as { chart: string },
+    })
+  ).toThrow(/only supports the key "chart", got "owner"/);
+  expect(() =>
+    mdCreateFlight({
+      name: 'n',
+      sourceCode: 'c',
+      metadata: { chart: 1 as unknown as string },
+    })
+  ).toThrow(/chart must be a string/);
+
+  const version: MotherDuckFlightVersionRow = {
+    version_id: '1',
+    flight_id: flightId,
+    flight_version: 1,
+    created_at: '2026-10-01T00:00:00Z',
+    access_token_name: 'token',
+    flight_secret_names: [],
+    config: null,
+    source_code: 'print(1)',
+    requirements_txt: null,
+    metadata: [{ key: 'chart', value: chart }],
+  };
+  expect(version.metadata).toEqual([{ key: 'chart', value: chart }]);
+});
+
+test('MotherDuck Flight grantee helper lists grants on a Flight', () => {
+  const dialect = new DuckDBDialect();
+  const flightId = '80000000-0000-0000-0000-000000000001';
+
+  const grantees = dialect.sqlToQuery(
+    sql`select grantee_name from ${mdListFlightGrantees(flightId)}`
+  );
+  expect(grantees.sql).toBe(
+    'select grantee_name from md_list_flight_grantees(CAST($1 AS UUID))'
+  );
+  expect(grantees.params).toEqual([flightId]);
+
+  const fromExpression = dialect.sqlToQuery(
+    sql`from ${mdListFlightGrantees(sql`'${sql.raw(flightId)}'`)}`
+  );
+  expect(fromExpression.sql).toBe(
+    `from md_list_flight_grantees(CAST('${flightId}' AS UUID))`
+  );
+
+  const row: MotherDuckFlightGranteeRow = {
+    grantee_name: null,
+    grantee_type: 'organization',
+    privilege: 'run',
+  };
+  expect(row.grantee_type).toBe('organization');
+  expectTypeOf<MotherDuckFlightGranteeRow>().toExtend<
+    Record<string, unknown>
+  >();
+});
+
+test('MotherDuck role introspection helpers are callable from SELECT', () => {
+  const dialect = new DuckDBDialect();
+
+  const query = dialect.sqlToQuery(sql`
+    select member_name from ${mdListRoleMembers('explorer')}
+    where member_type = 'user' and email = ${'alice@acme.com'}
+  `);
+  expect(query.sql).toContain('from md_list_role_members($1)');
+  expect(query.params).toEqual(['explorer', 'alice@acme.com']);
+
+  expect(dialect.sqlToQuery(sql`from ${mdListRoles()}`).sql).toBe(
+    'from md_list_roles()'
+  );
+  const toUser = dialect.sqlToQuery(
+    sql`from ${mdListRolesGrantedToUser('alice')}`
+  );
+  expect(toUser.sql).toBe('from md_list_roles_granted_to_user($1)');
+  expect(toUser.params).toEqual(['alice']);
+  const toRole = dialect.sqlToQuery(
+    sql`from ${mdListRolesGrantedToRole(sql`'hr'`)}`
+  );
+  expect(toRole.sql).toBe("from md_list_roles_granted_to_role('hr')");
+
+  const member: MotherDuckRoleMemberRow = {
+    member_type: 'role',
+    member_name: 'hr',
+    email: null,
+    is_service_account: null,
+    role_type: 'custom',
+    granted_at: '2026-10-01T00:00:00Z',
+  };
+  const granted: MotherDuckGrantedRoleRow = {
+    role_name: 'exec',
+    role_type: 'custom',
+    is_direct: false,
+    granted_at: null,
+  };
+  const role: MotherDuckRoleRow = {
+    role_name: 'hr',
+    role_type: 'custom',
+    included_roles: [],
+    created_at: '2026-10-01T00:00:00Z',
+  };
+  expect([member.member_name, granted.role_name, role.role_name]).toEqual([
+    'hr',
+    'exec',
+    'hr',
+  ]);
+  expectTypeOf<MotherDuckRoleMemberRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<MotherDuckGrantedRoleRow>().toExtend<Record<string, unknown>>();
+  expectTypeOf<MotherDuckRoleRow>().toExtend<Record<string, unknown>>();
+});
+
+test('MotherDuck Flight metadata and grantee arguments bind in DuckDB', async () => {
+  // Mirrors the MAP and UUID arguments the Flight helpers emit.
+  const db = await drizzle(':memory:');
+  try {
+    const flightId = '80000000-0000-0000-0000-000000000001';
+    const [row] = await db.execute<{
+      chart: string;
+      unchanged: string | null;
+      flight_id: string;
+    }>(sql`
+      select
+        MAP(CAST(${sql.param(['chart'])} AS VARCHAR[]), CAST(${sql.param([
+          'flowchart TD',
+        ])} AS VARCHAR[]))['chart'] as chart,
+        MAP(CAST(${sql.param(['chart'])} AS VARCHAR[]), CAST(${sql.param([
+          null,
+        ])} AS VARCHAR[]))['chart'] as unchanged,
+        CAST(CAST(${flightId} AS UUID) AS VARCHAR) as flight_id
+    `);
+    expect(row).toEqual({
+      chart: 'flowchart TD',
+      unchanged: null,
+      flight_id: flightId,
+    });
+  } finally {
+    await db.close();
+  }
 });
