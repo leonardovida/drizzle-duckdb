@@ -111,6 +111,18 @@ export type MotherDuckFlightVersionRow = {
   max_runtime_sec?: number;
   /** Returned by MotherDuck clients from 1.5.5 on. */
   instance_type?: MotherDuckFlightInstanceType | (string & {}) | null;
+  /**
+   * The version's metadata, currently only a `chart` key when the Flight has
+   * a chart. Returned by `md_get_flight_version` on current MotherDuck
+   * clients. `md_list_flight_versions` leaves it out. `db.execute` returns
+   * MAP values as key and value entries, so select `metadata['chart']` to read
+   * the chart as a string.
+   */
+  metadata?:
+    | { key: string; value: string }[]
+    | Record<string, string>
+    | Map<string, string>
+    | null;
 };
 
 export type MotherDuckFlightRunRow = {
@@ -157,6 +169,53 @@ export type MotherDuckFlightDeleteRow = {
 
 export type MotherDuckFlightCancelRunRow = {
   canceled_count: number | bigint;
+};
+
+export type MotherDuckFlightGranteeRow = {
+  /** NULL when the caller may read the Flight but not manage its grants. */
+  grantee_name: string | null;
+  grantee_type: 'user' | 'role' | 'organization' | (string & {});
+  privilege: 'run' | (string & {});
+};
+
+/** Flight metadata that `md_create_flight` and `md_update_flight` accept. */
+export type MotherDuckFlightMetadata = {
+  /**
+   * A chart of the Flight, such as Mermaid flowchart source. On update, an
+   * empty string clears the chart and NULL leaves it unchanged.
+   */
+  chart?: string | null;
+};
+
+export type MotherDuckRoleType = 'preset' | 'custom';
+
+export type MotherDuckRoleRow = {
+  role_name: string;
+  role_type: MotherDuckRoleType | (string & {});
+  included_roles: string[] | null;
+  created_at: Date | string | null;
+};
+
+/**
+ * A direct member of a role. `email` and `is_service_account` are NULL for a
+ * role member and `role_type` is NULL for a user member.
+ */
+export type MotherDuckRoleMemberRow = {
+  member_type: 'user' | 'role' | (string & {});
+  member_name: string;
+  email: string | null;
+  is_service_account: boolean | null;
+  role_type: MotherDuckRoleType | (string & {}) | null;
+  granted_at: Date | string | null;
+};
+
+/** A role held directly or through the role hierarchy. */
+export type MotherDuckGrantedRoleRow = {
+  role_name: string;
+  role_type: MotherDuckRoleType | (string & {});
+  is_direct: boolean;
+  /** When the direct grant was made. NULL for an inherited role. */
+  granted_at: Date | string | null;
 };
 
 /** @deprecated Use MotherDuckFlightSummaryRow. */
@@ -279,6 +338,7 @@ export interface MotherDuckCreateFlightOptions {
   requirementsTxt?: string | SQLWrapper | null;
   maxRuntimeSec?: number | SQLWrapper;
   instanceType?: MotherDuckFlightInstanceType | SQLWrapper;
+  metadata?: MotherDuckFlightMetadata | SQLWrapper | null;
 }
 
 export interface MotherDuckUpdateFlightOptions {
@@ -293,6 +353,8 @@ export interface MotherDuckUpdateFlightOptions {
   maxRuntimeSec?: number | SQLWrapper;
   /** A different size creates a new Flight version. */
   instanceType?: MotherDuckFlightInstanceType | SQLWrapper;
+  /** Keys left out or set to NULL keep their current value. */
+  metadata?: MotherDuckFlightMetadata | SQLWrapper | null;
 }
 
 export interface MotherDuckRunFlightOptions {
@@ -436,6 +498,41 @@ function motherDuckMapArg(
   }
 
   return sql`MAP(${sql.param(keys)}, ${sql.param(Object.values(value))})`;
+}
+
+function motherDuckFlightMetadataArg(
+  value: MotherDuckFlightMetadata | SQLWrapper | null | undefined
+): MotherDuckSqlArgument | undefined {
+  if (value === undefined || value === null || isSQLWrapper(value)) {
+    return value;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('MotherDuck Flight metadata must be an object');
+  }
+
+  const entries = Object.entries(value).filter(
+    ([, entry]) => entry !== undefined
+  );
+  for (const [key, entry] of entries) {
+    if (key !== 'chart') {
+      throw new Error(
+        `MotherDuck Flight metadata only supports the key "chart", got "${key}"`
+      );
+    }
+    if (entry !== null && typeof entry !== 'string') {
+      throw new Error('MotherDuck Flight metadata chart must be a string');
+    }
+  }
+  if (entries.length === 0) {
+    return sql`MAP {}::MAP(VARCHAR, VARCHAR)`;
+  }
+
+  // Typed lists keep a NULL-only value list bindable.
+  return sql`MAP(CAST(${sql.param(
+    entries.map(([key]) => key)
+  )} AS VARCHAR[]), CAST(${sql.param(
+    entries.map(([, entry]) => entry)
+  )} AS VARCHAR[]))`;
 }
 
 function motherDuckStringListArg(
@@ -782,6 +879,29 @@ export function mdIsRoleInSession(
   return sql<boolean | null>`is_role_in_session(${value})`;
 }
 
+/** The organization's roles, as `SHOW ALL ROLES` lists them. */
+export function mdListRoles(): SQL {
+  return sql`md_list_roles()`;
+}
+
+/**
+ * A role's direct members, users then roles, as `SHOW USERS OF ROLE` and
+ * `SHOW ROLES OF ROLE` list them. Filter on `email` to find a username.
+ */
+export function mdListRoleMembers(role: string | SQLWrapper): SQL {
+  return sql`md_list_role_members(${motherDuckArg(role)})`;
+}
+
+/** Roles a user holds, transitively, as `SHOW ROLES TO USER` lists them. */
+export function mdListRolesGrantedToUser(user: string | SQLWrapper): SQL {
+  return sql`md_list_roles_granted_to_user(${motherDuckArg(user)})`;
+}
+
+/** Roles a role inherits, transitively, as `SHOW ROLES TO ROLE` lists them. */
+export function mdListRolesGrantedToRole(role: string | SQLWrapper): SQL {
+  return sql`md_list_roles_granted_to_role(${motherDuckArg(role)})`;
+}
+
 export function mdListDives(options: MotherDuckListDivesOptions = {}): SQL {
   return motherDuckNamedFunction(
     'md_list_dives',
@@ -938,6 +1058,7 @@ export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
     { name: 'requirements_txt', value: options.requirementsTxt },
     { name: 'max_runtime_sec', value: options.maxRuntimeSec },
     { name: 'instance_type', value: options.instanceType },
+    { name: 'metadata', value: motherDuckFlightMetadataArg(options.metadata) },
   ]);
 }
 
@@ -963,6 +1084,7 @@ export function mdUpdateFlight(options: MotherDuckUpdateFlightOptions): SQL {
     },
     { name: 'max_runtime_sec', value: options.maxRuntimeSec },
     { name: 'instance_type', value: options.instanceType },
+    { name: 'metadata', value: motherDuckFlightMetadataArg(options.metadata) },
   ]);
 }
 
@@ -976,8 +1098,9 @@ export function mdDeleteFlight(flightId: string | SQLWrapper): SQL {
 /**
  * Start a run of a Flight you own or hold `run` access on. The run uses the
  * owner's settings, secrets and token. `config` can only override keys the
- * Flight already defines. Run access alone does not allow reading the Flight's
- * runs or logs unless you are an organization admin.
+ * Flight already defines. With run access alone, `mdGetFlightRun` reads the
+ * runs you started, while listing runs and reading logs stay limited to the
+ * owner and organization admins.
  */
 export function mdRunFlight(
   flightId: string | SQLWrapper,
@@ -1080,6 +1203,15 @@ export function mdGetFlightVersion(
     'md_get_flight_version',
     motherDuckIdVersionParams('flight_id', flightId, versionNumber)
   );
+}
+
+/**
+ * Who holds which privilege on a Flight, as `SHOW GRANTS ON FLIGHT` lists it.
+ * Grant and revoke access with `GRANT RUN ON FLIGHT` and `REVOKE RUN ON
+ * FLIGHT`.
+ */
+export function mdListFlightGrantees(flightId: string | SQLWrapper): SQL {
+  return sql`md_list_flight_grantees(CAST(${motherDuckArg(flightId)} AS UUID))`;
 }
 
 /** @deprecated Use mdListFlights. */

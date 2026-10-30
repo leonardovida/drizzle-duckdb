@@ -28,10 +28,30 @@ export interface MotherDuckJevImage {
   format?: MotherDuckJevImageFormat;
 }
 
-/** A text value or expression, or a list of named images. */
+/**
+ * One image. Without `name` or `format` it is sent as a bare BLOB that the
+ * instructions call `image`. With either, it is sent as a single named image
+ * whose name defaults to `image`.
+ */
+export interface MotherDuckJevSingleImage {
+  /** Image bytes, or a SQL expression that yields a BLOB. */
+  image: Uint8Array | SQLWrapper;
+  /** Name the instructions use to refer to the image. Defaults to `image`. */
+  name?: string;
+  /** Still image encoding. MotherDuck assumes `jpg` when omitted. */
+  format?: MotherDuckJevImageFormat;
+}
+
+/**
+ * A text value or expression, image bytes, one image, or a list of named
+ * images. A SQL expression is sent as text. Wrap it as `{ image: expr }` to
+ * send it as an image.
+ */
 export type MotherDuckJevInput =
   | string
   | SQLWrapper
+  | Uint8Array
+  | MotherDuckJevSingleImage
   | readonly MotherDuckJevImage[];
 
 export type MotherDuckJevQuestion =
@@ -256,10 +276,71 @@ function constantQuestions(
   return sql`{${sql.join(fields, sql`, `)}}`;
 }
 
-function isImageInput(
-  input: MotherDuckJevInput
-): input is readonly MotherDuckJevImage[] {
-  return Array.isArray(input);
+const DEFAULT_IMAGE_NAME = 'image';
+
+function imageBytes(bytes: unknown, name: string): SQL {
+  if (bytes instanceof Uint8Array) {
+    return sql`CAST(${bytes} AS BLOB)`;
+  }
+  if (bytes != null && isSQLWrapper(bytes)) {
+    return sql`${bytes}`;
+  }
+  throw new Error(
+    `prompt_jev image "${name}" must be a Uint8Array or SQL expression`
+  );
+}
+
+function imageFormat(format: string, name: string): SQL {
+  if (!imageFormats.has(format)) {
+    throw new Error(
+      `prompt_jev image "${name}" format must be one of png, jpg or jpeg`
+    );
+  }
+  return constant(format);
+}
+
+function singleImageInput(image: MotherDuckJevSingleImage): SQL {
+  if (image.name === undefined && image.format === undefined) {
+    // A bare BLOB is image input only when its type is BLOB, so cast SQL
+    // expressions too rather than let a VARCHAR one be read as text.
+    const bytes = imageBytes(image.image, DEFAULT_IMAGE_NAME);
+    return image.image instanceof Uint8Array
+      ? bytes
+      : sql`CAST(${bytes} AS BLOB)`;
+  }
+
+  const name =
+    image.name === undefined
+      ? DEFAULT_IMAGE_NAME
+      : requireText(image.name, 'image name');
+  // The single-image STRUCT names its bytes `content`, unlike list items.
+  const fields = [
+    sql`name: ${constant(name)}`,
+    sql`content: ${imageBytes(image.image, name)}`,
+  ];
+  if (image.format !== undefined) {
+    fields.push(sql`format: ${imageFormat(image.format, name)}`);
+  }
+  return sql`{${sql.join(fields, sql`, `)}}`;
+}
+
+function textOrImageInput(input: MotherDuckJevInput): {
+  expression: SQL;
+  imageInput: boolean;
+} {
+  if (Array.isArray(input)) {
+    return { expression: imageListInput(input), imageInput: true };
+  }
+  if (input instanceof Uint8Array) {
+    return { expression: sql`CAST(${input} AS BLOB)`, imageInput: true };
+  }
+  if (input !== null && typeof input === 'object' && !isSQLWrapper(input)) {
+    return {
+      expression: singleImageInput(input as MotherDuckJevSingleImage),
+      imageInput: true,
+    };
+  }
+  return { expression: sql`CAST(${input} AS VARCHAR)`, imageInput: false };
 }
 
 function imageListInput(images: readonly MotherDuckJevImage[]): SQL {
@@ -281,27 +362,12 @@ function imageListInput(images: readonly MotherDuckJevImage[]): SQL {
     }
     names.add(name);
 
-    const bytes = image.image;
-    let value: SQL;
-    if (bytes instanceof Uint8Array) {
-      value = sql`CAST(${bytes} AS BLOB)`;
-    } else if (bytes != null && isSQLWrapper(bytes)) {
-      value = sql`${bytes}`;
-    } else {
-      throw new Error(
-        `prompt_jev image "${name}" must be a Uint8Array or SQL expression`
-      );
-    }
-
-    const fields = [sql`name: ${constant(name)}`, sql`image: ${value}`];
+    const fields = [
+      sql`name: ${constant(name)}`,
+      sql`image: ${imageBytes(image.image, name)}`,
+    ];
     if (withFormat) {
-      const format = image.format ?? 'jpg';
-      if (!imageFormats.has(format)) {
-        throw new Error(
-          `prompt_jev image "${name}" format must be one of png, jpg or jpeg`
-        );
-      }
-      fields.push(sql`format: ${constant(format)}`);
+      fields.push(sql`format: ${imageFormat(image.format ?? 'jpg', name)}`);
     }
     return sql`{${sql.join(fields, sql`, `)}}`;
   });
@@ -327,8 +393,9 @@ function batchSizeArg(
 
 /**
  * Build prompt_jev with literal question metadata required by MotherDuck's
- * binder. The input remains a bound value or SQL expression. Pass a list of
- * named images to classify images or to locate a region with `box`.
+ * binder. The input remains a bound value or SQL expression. Pass image
+ * bytes, one image or a list of named images to classify images or to locate
+ * a region with `box`.
  */
 export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
   input: MotherDuckJevInput,
@@ -352,10 +419,7 @@ export function mdPromptJev<O extends MotherDuckPromptJevOptions>(
     throw new Error('prompt_jev question modes cannot be combined');
   }
 
-  const imageInput = isImageInput(input);
-  const inputExpression = imageInput
-    ? imageListInput(input)
-    : sql`CAST(${input} AS VARCHAR)`;
+  const { expression: inputExpression, imageInput } = textOrImageInput(input);
   const batchSize = batchSizeArg(options.batchSize, imageInput);
 
   if (options.questions !== undefined) {
