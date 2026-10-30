@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
@@ -501,6 +501,38 @@ describe('parameter binding', () => {
     expect(
       await db.execute(sql`select ${JSON.stringify({})}::json::varchar as v`)
     ).toEqual([{ v: '{}' }]);
+  });
+
+  test('empty pg-core arrays bind as typed empty lists', async () => {
+    const rows = pgTable('sweep2_pg_arrays', {
+      id: integer('id'),
+      tags: text('tags').array(),
+      nums: integer('nums').array(),
+    });
+    await db.execute(
+      sql`create table sweep2_pg_arrays (id integer, tags text[], nums integer[])`
+    );
+    await db.insert(rows).values({ id: 1, tags: [], nums: [] });
+    await db
+      .insert(rows)
+      .values({
+        id: 2,
+        tags: sql.placeholder('tags'),
+        nums: sql.placeholder('nums'),
+      })
+      .prepare('insert_empty_arrays')
+      .execute({ tags: [], nums: [] });
+    await db.update(rows).set({ nums: [] }).where(eq(rows.id, 2));
+    expect(
+      await db
+        .select({ id: rows.id, tags: rows.tags, nums: rows.nums })
+        .from(rows)
+        .where(eq(rows.nums, []))
+        .orderBy(rows.id)
+    ).toEqual([
+      { id: 1, tags: [], nums: [] },
+      { id: 2, tags: [], nums: [] },
+    ]);
   });
 
   test('lists mixing numbers and bigints bind', async () => {

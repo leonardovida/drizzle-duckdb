@@ -39,6 +39,7 @@ import {
 } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
 import type { DuckDBDialect } from './dialect.ts';
+import { DUCKDB_ARRAY_COLUMN_TYPING } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
@@ -238,8 +239,8 @@ function warnTransactionConfigIgnored(): void {
 /**
  * Params bound to a non-array column must keep their string value even when
  * it looks like a Postgres array literal, for example `{}` in a text column
- * or a braced UUID in a uuid column. The dialect types array columns and
- * untyped params as 'none', so every other typing marks a scalar column.
+ * or a braced UUID in a uuid column. The dialect types untyped params as
+ * 'none', so every typing except an array column marks a scalar column.
  */
 function getScalarParamIndexes(
   params: unknown[],
@@ -250,7 +251,9 @@ function getScalarParamIndexes(
     const param = params[index];
     const typing = typings?.[index];
     const isScalar =
-      (typing !== undefined && typing !== 'none') ||
+      (typing !== undefined &&
+        typing !== 'none' &&
+        typing !== DUCKDB_ARRAY_COLUMN_TYPING) ||
       (is(param, Param) &&
         is(param.value, Placeholder) &&
         is(param.encoder, Column) &&
@@ -261,6 +264,31 @@ function getScalarParamIndexes(
     }
   }
   return indexes;
+}
+
+/**
+ * Drizzle encodes an empty pg-core array as '{}', which has no item type to
+ * bind a list with. DuckDB casts the string '[]' to an empty list of the
+ * column type instead. `source` holds the built params, whose placeholders
+ * are still Param objects with their column encoder.
+ */
+function bindEmptyArrays(
+  source: unknown[],
+  values: unknown[],
+  typings?: QueryWithTypings['typings']
+): unknown[] {
+  let result = values;
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] !== '{}') continue;
+    const param = source[index];
+    const isArrayParam =
+      typings?.[index] === DUCKDB_ARRAY_COLUMN_TYPING ||
+      (is(param, Param) && is(param.encoder, PgArray));
+    if (!isArrayParam) continue;
+    if (result === values) result = values.slice();
+    result[index] = '[]';
+  }
+  return result;
 }
 
 function isNumericColumn(decoder: unknown): boolean {
@@ -460,7 +488,10 @@ export class DuckDBPreparedQuery<
     const filled = inlineSqlParams(
       this.dialect,
       this.queryString,
-      fillPlaceholders(this.params, placeholderValues),
+      bindEmptyArrays(
+        this.params,
+        fillPlaceholders(this.params, placeholderValues)
+      ),
       this.scalarParamIndexes
     );
     const queryString = filled.queryString;
@@ -582,7 +613,11 @@ export class DuckDBSession<
       this.client,
       this.dialect,
       query.sql,
-      query.params,
+      bindEmptyArrays(
+        query.params,
+        query.params,
+        (query as QueryWithTypings).typings
+      ),
       this.logger,
       fields,
       isResponseInArrayMode,
@@ -790,7 +825,11 @@ export class DuckDBSession<
     const params = prepareQueryParams({
       logger: this.logger,
       queryString: builtQuery.sql,
-      params: builtQuery.params,
+      params: bindEmptyArrays(
+        builtQuery.params,
+        builtQuery.params,
+        builtQuery.typings
+      ),
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
       scalarParamIndexes: getScalarParamIndexes(

@@ -307,7 +307,8 @@ export function prepareParams(
       const trimmed = param.trim();
 
       // An empty list has no item type to bind with, and '{}' is far more
-      // often an empty JSON object, so it stays text.
+      // often an empty JSON object, so it stays text. The session binds an
+      // empty pg-core array column value as '[]' before this point.
       if (trimmed && isPgArrayLiteral(trimmed) && !/^\{\s*\}$/.test(trimmed)) {
         if (options.rejectStringArrayLiterals) {
           throw new Error(
