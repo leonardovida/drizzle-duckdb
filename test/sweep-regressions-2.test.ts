@@ -380,6 +380,27 @@ describe('transactions on one shared connection', () => {
     }
   });
 
+  test('a db stream left open inside the callback is closed before commit', async () => {
+    const db = await setup();
+    try {
+      const stream = await db.transaction(async (tx) => {
+        await tx.insert(items).values({ id: 1 });
+        const batches = db.executeBatches(
+          sql`select * from range(300000) r(x)`,
+          { rowsPerChunk: 1000 }
+        );
+        await batches.next();
+        return batches;
+      });
+      await expect(stream.next()).rejects.toThrow(/transaction ended/);
+      expect(
+        await db.execute(sql`select id from sweep2_items order by id`)
+      ).toEqual([{ id: 1 }, { id: 999 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
   test('concurrent transactions run one after another', async () => {
     const db = await setup();
     try {

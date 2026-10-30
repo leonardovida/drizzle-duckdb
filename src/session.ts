@@ -80,6 +80,9 @@ type TransactionScopeEntry = {
   // callback left behind keep this async context, but must then queue.
   active: boolean;
   recordFailure: (error: unknown) => void;
+  // The transaction's open streams, so streams opened through `db` inside
+  // the callback are closed before COMMIT or ROLLBACK too.
+  openStreams?: Set<() => Promise<void>>;
 };
 
 // Maps each client with a transaction open in this async context to that
@@ -645,6 +648,7 @@ export class DuckDBSession<
     const scopeEntry = pool ? undefined : activeScopeEntry(this.client);
     if (scopeEntry) {
       scopeEntry.recordFailure = session.recordStatementFailure;
+      scopeEntry.openStreams = session.openStreams;
     }
 
     const tx = new DuckDBTransaction<TFullSchema, TSchema>(
@@ -801,7 +805,11 @@ export class DuckDBSession<
     stream: AsyncGenerator<T, void, void>
   ): AsyncGenerator<T, void, void> {
     const session = this;
-    const openStreams = this.openStreams;
+    const openStreams =
+      this.openStreams ??
+      (this.waitsForTransactions()
+        ? activeScopeEntry(this.client)?.openStreams
+        : undefined);
     let endedWithTransaction = false;
     const close = async () => {
       endedWithTransaction = true;
