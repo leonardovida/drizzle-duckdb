@@ -281,14 +281,14 @@ Generated MAP helpers opt into `{ mode: 'object' }` so their `Record<string, T>`
 
 ### String and Other Scalar Types
 
-| DuckDB Type             | Drizzle Builder                                 |
-| ----------------------- | ----------------------------------------------- |
-| `VARCHAR` (also `TEXT`) | `varchar()`                                     |
-| `CHAR(n)`               | `char({ length: n })`                           |
-| `BOOLEAN`               | `boolean()`                                     |
-| `UUID`                  | `uuid()`                                        |
-| `ENUM(...)`             | `text()` with a comment                         |
-| `UNION(...)`            | `text().$type<{ tag, value }>()` with a comment |
+| DuckDB Type             | Drizzle Builder                 |
+| ----------------------- | ------------------------------- |
+| `VARCHAR` (also `TEXT`) | `varchar()`                     |
+| `CHAR(n)`               | `char({ length: n })`           |
+| `BOOLEAN`               | `boolean()`                     |
+| `UUID`                  | `uuid()`                        |
+| `ENUM(...)`             | `text()` with a comment         |
+| `UNION(...)`            | `duckDbUnion<{ tag, value }>()` |
 
 DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARCHAR(n)` length, so they come back as `varchar()` without a length.
 
@@ -319,7 +319,7 @@ DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARC
 
 The generated `duckDbMap` always has the value type. A non-string key type is emitted as `{ keyType }`, for example `duckDbMap("counts", "VARCHAR", { keyType: "INTEGER" })`. String keys (`VARCHAR`) leave out the option because `VARCHAR` is the default.
 
-DuckDB returns a `UNION` value as an object such as `{ tag: "num", value: 1 }`, so the generated column type is a union of one `{ tag; value }` shape per member.
+DuckDB returns a `UNION` value as an object such as `{ tag: "num", value: 1 }`, so the generated column type is a union of one `{ tag; value }` shape per member. `duckDbUnion` writes the same shape back with `union_value()`, so inserts and updates accept it too.
 
 Unrecognized types, such as `BIT`, `BIGNUM`, `VARIANT` and `GEOMETRY`, fall back to `text().$type<unknown>()` with a `/* unsupported DuckDB type: ... */` comment. DuckDB returns these values as buffers, bigints, numbers or objects rather than strings, so the column is typed `unknown`.
 

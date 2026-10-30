@@ -303,6 +303,21 @@ describe('DuckLake catalog spellings', () => {
     };
     expect(wrapped.stats?.()).toBe(stats);
   });
+
+  test('wrapDuckLakePool forwards discard to the pool', async () => {
+    const discarded: unknown[] = [];
+    const pool = {
+      acquire: async () => ({}) as never,
+      release: () => {},
+      async discard(connection: unknown) {
+        if (this === pool) discarded.push(connection);
+      },
+    };
+    const wrapped = wrapDuckLakePool(pool, { catalog: 'md:meta_db' });
+    const connection = {} as never;
+    await wrapped.discard?.(connection);
+    expect(discarded).toEqual([connection]);
+  });
 });
 
 describe('duckLakeMergeAdjacentFiles', () => {

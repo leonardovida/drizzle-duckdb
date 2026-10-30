@@ -10,6 +10,7 @@ import {
   duckDbMap,
   duckDbStruct,
   duckDbTimestamp,
+  duckDbUnion,
 } from '../src/columns.ts';
 import { drizzle, type DuckDBDatabase } from '../src/driver.ts';
 import { wrapList } from '../src/value-wrappers.ts';
@@ -127,6 +128,45 @@ describe('column literals', () => {
       .from(values)
       .where(sql`${values.id} = 1`);
     expect(row!.byDay).toEqual({ '2024-01-02': 1 });
+  });
+});
+
+describe('UNION columns', () => {
+  const shapes = pgTable('sweep2_unions', {
+    id: integer('id'),
+    value: duckDbUnion<
+      { tag: 'num'; value: number } | { tag: 'label'; value: string }
+    >('value', { num: 'INTEGER', label: 'VARCHAR' }),
+  });
+
+  test('write and read { tag, value } objects, also through placeholders', async () => {
+    const db = await drizzle(':memory:', { pool: false });
+    try {
+      await db.execute(
+        sql`create table sweep2_unions (id integer, value union(num integer, label varchar))`
+      );
+      await db.insert(shapes).values([
+        { id: 1, value: { tag: 'num', value: 5 } },
+        { id: 2, value: { tag: 'label', value: "it's" } },
+      ]);
+      await db
+        .insert(shapes)
+        .values({ id: 3, value: sql.placeholder('value') })
+        .prepare('sweep2_union_insert')
+        .execute({ value: { tag: 'label', value: 'x' } });
+      expect(await db.select().from(shapes).orderBy(shapes.id)).toEqual([
+        { id: 1, value: { tag: 'num', value: 5 } },
+        { id: 2, value: { tag: 'label', value: "it's" } },
+        { id: 3, value: { tag: 'label', value: 'x' } },
+      ]);
+      await expect(
+        db
+          .insert(shapes)
+          .values({ id: 4, value: { tag: 'other', value: 1 } as never })
+      ).rejects.toThrow(/has no member "other"/);
+    } finally {
+      await db.close();
+    }
   });
 });
 

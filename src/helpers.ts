@@ -5,6 +5,7 @@ export {
   duckDbArray,
   duckDbMap,
   duckDbStruct,
+  duckDbUnion,
   duckDbJson,
   duckDbBlob,
   duckDbInet,

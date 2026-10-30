@@ -1483,14 +1483,22 @@ function mapDuckDbType(
   }
 
   if (upper.startsWith('UNION')) {
-    imports.pgCore.add('text');
-    const unionLiteral = raw.replace(/^UNION\s*/i, '').trim();
-    // DuckDB returns a UNION value as { tag, value }. String literals still
-    // become SQL defaults, since they do not match that type.
+    imports.local.add('duckDbUnion');
+    // DuckDB reads a UNION value as { tag, value }, and duckDbUnion writes
+    // that shape back. String literal defaults become SQL defaults, since
+    // they do not match that type.
+    const members = parseStructFields(
+      raw.replace(/^UNION\s*\(/i, '').replace(/\)\s*$/, '')
+    );
+    const memberTypes = members
+      .map(
+        ({ name, type }) => `${JSON.stringify(name)}: ${JSON.stringify(type)}`
+      )
+      .join(', ');
     return {
-      builder: `text(${columnName(column.name)}).$type<${unionValueType(
-        upper
-      )}>() /* UNION ${escapeBlockComment(unionLiteral)} */`,
+      builder: `duckDbUnion<${unionValueType(upper)}>(${columnName(
+        column.name
+      )}, { ${memberTypes} })`,
     };
   }
 

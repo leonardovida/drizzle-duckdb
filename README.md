@@ -186,7 +186,7 @@ const db = await drizzle(':memory:', {
 
 ## DuckDB Types
 
-DuckDB-specific column helpers: `duckDbList`, `duckDbArray`, `duckDbStruct`, `duckDbMap`, `duckDbJson`, `duckDbBlob`, `duckDbInet`, `duckDbInterval`, `duckDbTimestamp`, `duckDbDate` and `duckDbTime`.
+DuckDB-specific column helpers: `duckDbList`, `duckDbArray`, `duckDbStruct`, `duckDbUnion`, `duckDbMap`, `duckDbJson`, `duckDbBlob`, `duckDbInet`, `duckDbInterval`, `duckDbTimestamp`, `duckDbDate` and `duckDbTime`.
 
 - `duckDbTimestamp` and `duckDbTime` can keep storage variants such as `TIMESTAMP_NS`, `TIMESTAMP_MS`, `TIMESTAMP_S`, `TIME_NS` and `TIME WITH TIME ZONE` through the `duckDbType` and `withTimezone` options.
 - Postgres `json` and `jsonb` columns are rejected. Use `duckDbJson()`.

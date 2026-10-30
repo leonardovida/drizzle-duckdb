@@ -455,6 +455,48 @@ export const duckDbStruct = <TData extends Record<string, any>>(
     },
   })(name);
 
+/** A UNION value as DuckDB returns it: the member name and its value. */
+export interface DuckDbUnionValue<TTag extends string = string> {
+  tag: TTag;
+  value: unknown;
+}
+
+/**
+ * UNION column. Values are `{ tag, value }` objects, the shape DuckDB reads
+ * back, and are written with `union_value(tag := value)` cast to the member
+ * type.
+ */
+export const duckDbUnion = <TData extends DuckDbUnionValue = DuckDbUnionValue>(
+  name: string,
+  members: Record<string, DuckDbTypeName<Primitive>>
+) =>
+  customType<{ data: TData; driverData: TData }>({
+    dataType() {
+      const fields = Object.entries(members).map(
+        ([tag, type]) => `"${tag.replace(/"/g, '""')}" ${type}`
+      );
+      return `UNION (${fields.join(', ')})`;
+    },
+    toDriver(value: TData): SQL {
+      const memberType = Object.hasOwn(members, value.tag)
+        ? members[value.tag]
+        : undefined;
+      if (memberType === undefined) {
+        throw new Error(
+          `UNION column "${name}" has no member "${String(value.tag)}". Members: ${Object.keys(members).join(', ')}`
+        );
+      }
+      const tag = sql.raw(`"${value.tag.replace(/"/g, '""')}"`);
+      return sql`union_value(${tag} := CAST(${valueToSqlLiteral(
+        value.value,
+        memberType
+      )} AS ${sql.raw(memberType)}))`;
+    },
+    fromDriver(value: TData): TData {
+      return value;
+    },
+  })(name);
+
 /**
  * JSON column type that wraps values and delays JSON.stringify() to binding time.
  * This ensures consistent handling with other wrapped types.

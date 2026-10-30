@@ -418,7 +418,7 @@ describe('public schema and untyped DuckDB values', () => {
 
   test('types UNION and unsupported columns by their runtime values', async () => {
     expect(generated).toContain(
-      'u: text("u").$type<{ tag: "num"; value: number | null } | { tag: "s*/x"; value: string | null }>() /* UNION (num INTEGER, "s*\\/x" VARCHAR) */'
+      'u: duckDbUnion<{ tag: "num"; value: number | null } | { tag: "s*/x"; value: string | null }>("u", { "num": "INTEGER", "s*/x": "VARCHAR" })'
     );
     expect(generated).toContain(
       'b: text("b").$type<unknown>() /* unsupported DuckDB type: BIT */'
@@ -427,6 +427,16 @@ describe('public schema and untyped DuckDB values', () => {
       .select()
       .from(schemaModule.shapes!)) as Array<Record<string, unknown>>;
     expect(row!.u).toEqual({ tag: 'num', value: 1 });
+
+    // The advertised { tag, value } shape is also what inserts accept.
+    const db = drizzle(conn);
+    await db
+      .insert(schemaModule.shapes!)
+      .values({ u: { tag: 's*/x', value: "it's" } } as never);
+    const unions = await db.execute<{ t: string; v: string }>(
+      sql`select union_tag(u) as t, u::varchar as v from main.shapes where b is null`
+    );
+    expect(unions).toEqual([{ t: 's*/x', v: "it's" }]);
     // VARIANT is left out: DuckDB 1.4 rejects the column type and node-api
     // 1.5.0-r.1 to 1.5.3-r.1 cannot read it, both inside the peer range.
     expect(typeof row!.n).toBe('bigint');

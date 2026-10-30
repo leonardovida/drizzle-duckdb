@@ -411,6 +411,12 @@ export function wrapDuckLakePool(
     close: pool.close?.bind(pool),
   };
 
+  // A transaction discards a connection whose ROLLBACK failed. Without this,
+  // it would fall back to release() and hand the connection to a new caller.
+  if (pool.discard) {
+    wrapped.discard = pool.discard.bind(pool);
+  }
+
   // Keep the pool's counters, such as stats() from createDuckDBConnectionPool.
   const stats = (pool as { stats?: unknown }).stats;
   if (typeof stats === 'function') {

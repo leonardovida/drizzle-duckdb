@@ -92,6 +92,7 @@ import {
   duckDbList,
   duckDbArray,
   duckDbStruct,
+  duckDbUnion,
   duckDbMap,
   duckDbJson,
   duckDbTimestamp,
@@ -198,6 +199,23 @@ await db.insert(users).values({
 
 const user = await db.select().from(users).where(eq(users.id, 1));
 console.log(user[0].address.city); // 'Portland'
+```
+
+### Union
+
+`duckDbUnion` stores DuckDB `UNION` values. Values are `{ tag, value }` objects, the shape DuckDB returns, and are written with `union_value()` cast to the member type. A tag that is not a member throws.
+
+```typescript
+import { duckDbUnion } from '@duckdbfan/drizzle-duckdb';
+
+const readings = pgTable('readings', {
+  id: integer('id').primaryKey(),
+  value: duckDbUnion<
+    { tag: 'num'; value: number } | { tag: 'label'; value: string }
+  >('value', { num: 'INTEGER', label: 'VARCHAR' }),
+});
+
+await db.insert(readings).values({ id: 1, value: { tag: 'num', value: 42 } });
 ```
 
 ### Map
