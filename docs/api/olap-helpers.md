@@ -39,6 +39,8 @@ await db
   .from(orders);
 ```
 
+DuckDB keeps a DECIMAL input's scale in `percentile_cont`, so the median of `1.10` and `2.25` would be `1.67`. When the argument is a DECIMAL or NUMERIC column, the helpers read it as `DOUBLE` and return `1.675`, as Postgres does. Other inputs pass through unchanged, so TIMESTAMP and DATE columns still work. Cast a DECIMAL SQL expression yourself, as in ``percentileCont(0.9, sql`(${orders.total} * 1.2)::DOUBLE`)``.
+
 ## Window functions
 
 ```typescript

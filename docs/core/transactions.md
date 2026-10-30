@@ -32,6 +32,8 @@ If any operation fails, all changes are rolled back.
 
 When you create a database with connection pooling (`drizzle(':memory:', { pool: { size: 4 } })` or the async connection-string form), transactions **pin a single pooled connection** for their entire lifetime. `BEGIN`, all queries in the callback, and `COMMIT`/`ROLLBACK` run on that one connection to keep the transaction atomic. No extra configuration is required. Non-transactional queries still use the pool. A `pg.Pool` passed to `drizzle()` for pg_duckdb works the same way, with one pooled client per transaction.
 
+Without a pool (`pool: false`, or a single connection or `pg.Client` passed to `drizzle()`), the database and its transactions share one connection. While a transaction is open, other `db` queries wait until it commits or rolls back, so they cannot join it, abort it or be rolled back with it. Concurrent `db.transaction()` calls run one after another. Queries through `db` from inside the transaction callback run immediately and take part in the transaction.
+
 ## Streaming Inside a Transaction
 
 `tx.executeBatches()` streams on the transaction's connection. Until the loop finishes or breaks, any other query on `tx` throws `This connection is streaming a result from executeBatches()`, because DuckDB would end the open result early. Collect what you need inside the loop and write after it:
@@ -51,6 +53,8 @@ await db.transaction(async (tx) => {
     .where(inArray(orders.id, ids));
 });
 ```
+
+A stream that is still open when the callback returns is closed before `COMMIT` or `ROLLBACK`. Reading it afterwards throws instead of silently ending early.
 
 ## With Return Value
 
@@ -157,7 +161,7 @@ If `COMMIT` itself fails, `db.transaction()` rejects with the commit error.
 ### What Happens with Nested Transactions
 
 - The nested callback's writes belong to the outer transaction. They commit or roll back with it.
-- If the nested callback throws, including through `innerTx.rollback()`, the outer transaction is marked for rollback. Catching the error in the outer callback does not help: `db.transaction()` rolls back and rejects with Drizzle's `TransactionRollbackError`.
+- If the nested callback throws, including through `innerTx.rollback()`, the outer transaction is marked for rollback. Catching the error in the outer callback does not help: `db.transaction()` rolls back and rejects with Drizzle's `TransactionRollbackError`, whose message says that DuckDB has no savepoints and whose `cause` is the nested error.
 
 ```typescript
 await db.transaction(async (tx) => {

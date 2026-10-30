@@ -10,13 +10,38 @@
  */
 
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/;
-const DOLLAR_TAG = /^\$[A-Za-z_]*\$/;
+// A tag is empty or an identifier, so $1 parameters never match.
+const DOLLAR_TAG = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/;
+
+/** The dollar-quote tag at `index`, such as `$$` or `$a1$`. */
+export function dollarTagAt(query: string, index: number): string | undefined {
+  if (query[index] !== '$') return undefined;
+  return DOLLAR_TAG.exec(query.slice(index, index + 64))?.[0];
+}
+
+/**
+ * True when the quote at `index` opens an E'...' string, where a backslash
+ * escapes the next character (E'it\'s').
+ */
+export function isEscapeStringAt(query: string, index: number): boolean {
+  const prefix = query[index - 1];
+  return (
+    query[index] === "'" &&
+    (prefix === 'E' || prefix === 'e') &&
+    !IDENTIFIER_CHAR.test(query[index - 2] ?? '')
+  );
+}
 
 /** Index just past a string, quoted identifier or comment at `index`. */
-function skipQuotedOrComment(query: string, index: number): number {
+export function skipQuotedOrComment(query: string, index: number): number {
   const char = query[index];
   if (char === "'" || char === '"') {
+    const backslashEscapes = isEscapeStringAt(query, index);
     for (let i = index + 1; i < query.length; i += 1) {
+      if (backslashEscapes && query[i] === '\\') {
+        i += 1;
+        continue;
+      }
       if (query[i] === char) {
         if (query[i + 1] === char) {
           i += 1;
@@ -35,13 +60,10 @@ function skipQuotedOrComment(query: string, index: number): number {
     const end = query.indexOf('*/', index + 2);
     return end === -1 ? query.length : end + 2;
   }
-  if (char === '$') {
-    // $1 parameters do not match: a dollar-quote tag cannot start with a digit.
-    const tag = DOLLAR_TAG.exec(query.slice(index, index + 64))?.[0];
-    if (tag) {
-      const end = query.indexOf(tag, index + tag.length);
-      return end === -1 ? query.length : end + tag.length;
-    }
+  const tag = dollarTagAt(query, index);
+  if (tag) {
+    const end = query.indexOf(tag, index + tag.length);
+    return end === -1 ? query.length : end + tag.length;
   }
   return index;
 }
@@ -122,8 +144,15 @@ export function rewriteArrayBoundsText(query: string): string {
 
     let open = end;
     while (open < query.length && /\s/.test(query[open]!)) open += 1;
-    const call = query[open] === '(' ? readArguments(query, open) : undefined;
-    if (!call || call.args.length !== 2 || call.args[1]!.trim() !== '1') {
+    if (query[open] !== '(') {
+      i = end;
+      continue;
+    }
+    const call = readArguments(query, open);
+    // Unbalanced parentheses run to the end of the statement, and so would
+    // every later call. Stop here instead of rescanning the rest per call.
+    if (!call) break;
+    if (call.args.length !== 2 || call.args[1]!.trim() !== '1') {
       i = end;
       continue;
     }

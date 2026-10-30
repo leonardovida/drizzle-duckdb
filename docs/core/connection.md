@@ -269,8 +269,11 @@ Auto-created pools support the same tuning options through `drizzle('path', { po
 
 - `acquireTimeout` (ms, default 30_000): fail if a connection isn't available in time. `0` or `Infinity` waits without a timeout. Values above the `setTimeout` limit of about 24.8 days are capped to it. Negative values and `NaN` throw
 - `maxWaitingRequests` (default 100): cap queued acquires. Further acquires throw when the queue is full. It must be a non-negative integer or `Infinity`. `0` allows no waiting and `Infinity` removes the cap
-- `maxLifetimeMs`: recycle connections after this age
-- `idleTimeoutMs`: recycle idle connections after this idle period
+- `size` (default 4): maximum number of connections. Fractions round down. Values below 1, `NaN` and `Infinity` throw
+- `maxLifetimeMs`: recycle connections after this age. `0` recycles a connection after every use and `Infinity` disables the limit. Negative values and `NaN` throw
+- `idleTimeoutMs`: recycle idle connections after this idle period. `0` discards every idle connection on the next acquire and `Infinity` disables the limit. Negative values and `NaN` throw
+
+The pool checks both limits on every acquire and release, for all idle connections. It does not run a timer, so a pool that receives no traffic keeps its idle connections until the next acquire, release or `close()`. A connection that fails to close during recycling does not fail the query that released it. The pool counts the failure in `stats().closeErrors`.
 
 ```typescript
 const pool = createDuckDBConnectionPool(instance, {

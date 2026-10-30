@@ -1,7 +1,13 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
-import { integer, pgTable, text } from 'drizzle-orm/pg-core';
+import {
+  integer,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import {
   anyValue,
@@ -459,4 +465,51 @@ test('OlapBuilder throws when measures() not called', () => {
   expect(() => olap(db).from(numbers).groupBy([numbers.id]).build()).toThrow(
     'olap: .measures() is required'
   );
+});
+
+test('OlapBuilder rejects measures and non-aggregates that reuse a field name', () => {
+  expect(() =>
+    olap(db)
+      .from(sales)
+      .groupBy([sql`${sales.region}`.as('region')])
+      .measures({ region: sumN(sales.qty) })
+      .build()
+  ).toThrow('olap: measure "region" has the same name as group key "region"');
+
+  expect(() =>
+    olap(db)
+      .from(sales)
+      .groupBy([sales.region])
+      .selectNonAggregates({ 'olap_sales.region': sales.product })
+      .measures({ total: sumN(sales.qty) })
+      .build()
+  ).toThrow(
+    'olap: non-aggregate "olap_sales.region" has the same name as group key "olap_sales.region"'
+  );
+});
+
+test('percentileCont interpolates DECIMAL columns and keeps timestamps', async () => {
+  const prices = pgTable('olap_prices', {
+    price: numeric('price', { precision: 18, scale: 2 }).notNull(),
+    seenAt: timestamp('seen_at').notNull(),
+  });
+  await db.execute(sql`
+    create or replace table ${prices} (price decimal(18, 2) not null, seen_at timestamp not null)
+  `);
+  await db.execute(sql`
+    insert into ${prices} values (1.10, '2024-01-01'), (2.25, '2024-01-03')
+  `);
+
+  const [row] = await db
+    .select({
+      med: median(prices.price),
+      p25: percentileCont(0.25, prices.price),
+      seen: median(prices.seenAt),
+    })
+    .from(prices);
+
+  // DuckDB alone keeps DECIMAL(18,2) and returns 1.67.
+  expect(row.med).toBe(1.675);
+  expect(row.p25).toBeCloseTo(1.3875);
+  expect(row.seen).toBe(Date.UTC(2024, 0, 2));
 });

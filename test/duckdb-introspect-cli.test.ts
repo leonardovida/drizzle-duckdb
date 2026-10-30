@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { CliUsageError, parseArgs } from '../src/bin/duckdb-introspect-args.ts';
+import {
+  CliUsageError,
+  isLocalDatabasePath,
+  parseArgs,
+} from '../src/bin/duckdb-introspect-args.ts';
 import { closeDuckDbInstance } from '../src/client.ts';
 
 const binPath = path.join(process.cwd(), 'src/bin/duckdb-introspect.ts');
@@ -149,6 +153,80 @@ describe('duckdb-introspect parseArgs', () => {
     );
   });
 
+  test('accepts --flag=value', () => {
+    const options = parseArgs([
+      '--url=:memory:',
+      '--schema=a,b',
+      '--out=out/schema.ts',
+      '--ducklake-catalog=lake.duckdb',
+      '--ducklake-meta-parameter=type=duckdb',
+    ]);
+    expect(options).toMatchObject({
+      url: ':memory:',
+      schemas: ['a', 'b'],
+      outFile: path.resolve(process.cwd(), 'out/schema.ts'),
+    });
+    expect(options.ducklake).toEqual({
+      catalog: 'lake.duckdb',
+      attachOptions: { metaParameters: { type: 'duckdb' } },
+    });
+    expect(() => parseArgs(['--url='])).toThrow(
+      new CliUsageError('Missing value for --url')
+    );
+    expect(() =>
+      parseArgs(['--url', ':memory:', '--include-views=false'])
+    ).toThrow(new CliUsageError('--include-views does not take a value'));
+  });
+
+  test('returns help even after an invalid argument', () => {
+    expect(parseArgs(['--bogus', '--help']).help).toBe(true);
+    expect(parseArgs(['--url', '-h']).help).toBe(true);
+  });
+
+  test('rejects a --schema value without schema names', () => {
+    for (const value of ['', ',', ' , ']) {
+      expect(() => parseArgs(['--url', ':memory:', '--schema', value])).toThrow(
+        new CliUsageError('--schema needs at least one schema name')
+      );
+    }
+    expect(() => parseArgs(['--url', ':memory:', '--schemas='])).toThrow(
+      'Missing value for --schemas'
+    );
+  });
+
+  test('merges repeated --schema flags', () => {
+    const options = parseArgs([
+      '--schema',
+      'a,b',
+      '--schemas',
+      'b',
+      '--schema=c',
+    ]);
+    expect(options.schemas).toEqual(['a', 'b', 'c']);
+  });
+
+  test('treats only plain paths as local database files', () => {
+    for (const url of [
+      'app.duckdb',
+      './db/app.duckdb',
+      '/tmp/app',
+      'C:\\db\\app.duckdb',
+    ]) {
+      expect(isLocalDatabasePath(url)).toBe(true);
+    }
+    for (const url of [
+      ':memory:',
+      ':memory:named',
+      'md:',
+      'md:my_db',
+      'motherduck:my_db',
+      's3://bucket/app.duckdb',
+      'https://example.com/app.duckdb',
+    ]) {
+      expect(isLocalDatabasePath(url)).toBe(false);
+    }
+  });
+
   test('rejects DuckLake options without a catalog', () => {
     expect(() => parseArgs(['--url', ':memory:', '--ducklake-load'])).toThrow(
       'DuckLake requires --ducklake-catalog'
@@ -190,8 +268,26 @@ describe('duckdb-introspect binary targets', () => {
   test('fails without writing when the database does not exist', () => {
     const result = run('--database', 'app_typo');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Database "app_typo" not found');
+    expect(result.stderr).toContain(
+      'Database "app_typo" not found. Attached databases: "app"\n'
+    );
     expect(result.schemaTs).toBe(handWritten);
+  }, 30_000);
+
+  test('fails without creating a missing local database file', () => {
+    const result = run('--url', 'app_typo.duckdb');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `Database file ${JSON.stringify(path.join(fs.realpathSync(cwd), 'app_typo.duckdb'))} does not exist`
+    );
+    expect(result.schemaTs).toBe(handWritten);
+    expect(fs.existsSync(path.join(cwd, 'app_typo.duckdb'))).toBe(false);
+  }, 30_000);
+
+  test('accepts --flag=value on the command line', () => {
+    const result = run('--url=app.duckdb', '--schema=main');
+    expect(result.status).toBe(0);
+    expect(result.schemaTs).toContain('mainSchema.table("users"');
   }, 30_000);
 
   test('validates an explicit database even with all-databases', () => {

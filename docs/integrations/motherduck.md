@@ -213,12 +213,14 @@ const rows = await db.execute(sql`
     multipleChoice: [
       { label: 'sso', description: 'Single sign-on' },
       { label: 'api', description: 'Programmatic access' },
-      'billing',
+      { label: 'billing' },
     ],
   })} as features
   from support_messages
 `);
 ```
+
+Criteria are plain strings or `{ label, description }` objects. A list that mixes both sends each string as a label without a description, because a SQL list holds one type.
 
 To classify images, pass a list of named images as the input. Each image is a `Uint8Array` or a SQL expression that yields a BLOB, with an optional `format` of `png`, `jpg` or `jpeg` (MotherDuck assumes `jpg`). Refer to images by name in backticks. `box` locates a region and needs image input:
 

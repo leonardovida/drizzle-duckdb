@@ -162,8 +162,9 @@ describe('introspection kitchen sink', () => {
     expect(customSchemaTs).toContain(
       `/* ENUM ('happy', 'x *\\/ + (globalThis.__ksPwned = 1) + /* y') */`
     );
+    // Member names are JSON string literals, so `*/` cannot end a comment.
     expect(customSchemaTs).toContain(
-      `/* UNION (num INTEGER, "s*\\/x" VARCHAR) */`
+      'un: duckDbUnion<{ tag: "num"; value: number | null } | { tag: "s*/x"; value: string | null }>("un", { "num": "INTEGER", "s*/x": "VARCHAR" })'
     );
     expect(customSchemaTs).toContain(
       's1: integer("s1").default(sql`nextval(\'ks."seq\\${globalThis.__ksPwned = 2}"\')`)'

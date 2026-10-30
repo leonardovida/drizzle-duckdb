@@ -353,3 +353,134 @@ test('does not import pgSchema when nothing matched', async () => {
     conn.closeSync();
   }
 });
+
+describe('public schema and untyped DuckDB values', () => {
+  const dir = path.join(process.cwd(), 'test/.tmp/introspect-public-schema');
+  let conn: DuckDBConnection;
+  let generated: string;
+  let schemaModule: Record<string, PgTable>;
+
+  beforeAll(async () => {
+    const instance = await DuckDBInstance.create(':memory:');
+    conn = await instance.connect();
+    for (const statement of [
+      `create schema public`,
+      `create table public.users (id integer primary key, name varchar)`,
+      `insert into public.users values (7, 'ada')`,
+      `create table main.users (id integer)`,
+      `insert into main.users values (1)`,
+      `create table main.shapes (
+        u union(num integer, "s*/x" varchar),
+        b bit,
+        n bignum
+      )`,
+      `insert into main.shapes values
+        (union_value(num := 1), '101', 12345678901234567890123)`,
+    ]) {
+      await conn.run(statement);
+    }
+
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    generated = (
+      await introspect(drizzle(conn), {
+        importBasePath: path.relative(dir, helpersPath),
+      })
+    ).files.schemaTs;
+    fs.writeFileSync(path.join(dir, 'schema.ts'), generated);
+    schemaModule = (await import(path.join(dir, 'schema.ts'))) as Record<
+      string,
+      PgTable
+    >;
+  });
+
+  afterAll(() => {
+    conn?.closeSync();
+  });
+
+  test('declares public with the PgSchema constructor', () => {
+    expect(generated).toContain(
+      'export const publicSchema = new PgSchema("public");'
+    );
+    expect(generated).toContain('export const mainSchema = pgSchema("main");');
+    expect(generated).toMatch(/import \{[^}]*\bPgSchema\b[^}]*\bpgSchema\b/);
+  });
+
+  test('imports the generated module and queries the public table', async () => {
+    const db = drizzle(conn);
+    expect(await db.select().from(schemaModule.publicUsers!)).toEqual([
+      { id: 7, name: 'ada' },
+    ]);
+    expect(await db.select().from(schemaModule.mainUsers!)).toEqual([
+      { id: 1 },
+    ]);
+  });
+
+  test('types UNION and unsupported columns by their runtime values', async () => {
+    expect(generated).toContain(
+      'u: duckDbUnion<{ tag: "num"; value: number | null } | { tag: "s*/x"; value: string | null }>("u", { "num": "INTEGER", "s*/x": "VARCHAR" })'
+    );
+    expect(generated).toContain(
+      'b: text("b").$type<unknown>() /* unsupported DuckDB type: BIT */'
+    );
+    const [row] = (await drizzle(conn)
+      .select()
+      .from(schemaModule.shapes!)) as Array<Record<string, unknown>>;
+    expect(row!.u).toEqual({ tag: 'num', value: 1 });
+
+    // The advertised { tag, value } shape is also what inserts accept.
+    const db = drizzle(conn);
+    await db
+      .insert(schemaModule.shapes!)
+      .values({ u: { tag: 's*/x', value: "it's" } } as never);
+    const unions = await db.execute<{ t: string; v: string }>(
+      sql`select union_tag(u) as t, u::varchar as v from main.shapes where b is null`
+    );
+    expect(unions).toEqual([{ t: 's*/x', v: "it's" }]);
+    // VARIANT is left out: DuckDB 1.4 rejects the column type and node-api
+    // 1.5.0-r.1 to 1.5.3-r.1 cannot read it, both inside the peer range.
+    expect(typeof row!.n).toBe('bigint');
+  });
+
+  test('generated module type-checks and rejects string reads', () => {
+    fs.writeFileSync(
+      path.join(dir, 'usage.ts'),
+      [
+        `import { shapes } from './schema.ts';`,
+        `type Row = typeof shapes.$inferSelect;`,
+        `export const union: Row['u'] = { tag: 'num', value: 1 };`,
+        `// @ts-expect-error A UNION value is not a string.`,
+        `export const unionString: Row['u'] = 'x';`,
+        `declare const row: Row;`,
+        `// @ts-expect-error BIT values are not typed as strings.`,
+        `export const bit: string = row.b;`,
+        '',
+      ].join('\n')
+    );
+    const tsconfigPath = path.join(dir, 'tsconfig.json');
+    fs.writeFileSync(
+      tsconfigPath,
+      JSON.stringify({
+        extends: path.relative(dir, path.join(process.cwd(), 'tsconfig.json')),
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          allowImportingTsExtensions: true,
+        },
+        files: ['schema.ts', 'usage.ts'],
+      })
+    );
+    const tscPath = path.join(process.cwd(), 'node_modules', '.bin', 'tsc');
+    try {
+      execFileSync(tscPath, ['--pretty', 'false', '--project', tsconfigPath], {
+        stdio: 'pipe',
+      });
+    } catch (error) {
+      const err = error as { stdout?: Buffer; message: string };
+      throw new Error(
+        `tsc failed on generated schema:\n${err.stdout?.toString() ?? err.message}`
+      );
+    }
+  }, 60_000);
+});

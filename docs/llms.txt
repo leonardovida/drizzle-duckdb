@@ -72,6 +72,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - duckDbList: variable length arrays (LIST)
 - duckDbArray: fixed length arrays (ARRAY)
 - duckDbStruct: named field structures (STRUCT)
+- duckDbUnion: tagged values (UNION). Values are `{ tag, value }` objects for both reads and writes.
 - duckDbMap: key-value pairs (MAP). Reads return `[{ key, value }]` entries at runtime even though the TypeScript type is a Record. Use `Object.fromEntries` to convert.
 - duckDbJson: JSON data (use instead of pg json/jsonb). A JS string is sent as raw JSON text, so pass `JSON.stringify('hello')` to store a JSON string.
 - duckDbTimestamp: timestamps. Binds natively on Node.js. Uses SQL literals on Bun, when DRIZZLE_DUCKDB_FORCE_LITERAL_TIMESTAMPS is set, or with `bindMode: 'literal'`. Both paths store the same value: strings without an offset are UTC, and a naive TIMESTAMP string with an offset is converted to UTC. `mode: 'string'` returns DuckDB text, '2024-01-15 10:30:00' for TIMESTAMP (no offset) and '2024-01-15 10:30:00+00' for TIMESTAMPTZ (UTC).

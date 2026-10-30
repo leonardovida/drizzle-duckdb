@@ -257,13 +257,13 @@ const db = await drizzle('md:', {
 
 Pool object options:
 
-| Option               | Default  | Values                                                                                                                                       |
-| -------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `size`               | `4`      | Number of connections                                                                                                                        |
-| `acquireTimeout`     | `30_000` | Queue wait in milliseconds, excluding connection creation and setup. `0` or `Infinity` disables the queue deadline. Negative and `NaN` throw |
-| `maxWaitingRequests` | `100`    | Queued acquires before new ones throw. A non-negative integer or `Infinity`. `0` allows no waiting                                           |
-| `maxLifetimeMs`      | none     | Recycle connections after this age                                                                                                           |
-| `idleTimeoutMs`      | none     | Recycle connections after this idle period                                                                                                   |
+| Option               | Default  | Values                                                                                                                                                              |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `size`               | `4`      | Number of connections. Fractions round down. Values below 1, `NaN` and `Infinity` throw                                                                             |
+| `acquireTimeout`     | `30_000` | Queue wait in milliseconds, excluding connection creation and setup. `0` or `Infinity` disables the queue deadline. Negative and `NaN` throw                        |
+| `maxWaitingRequests` | `100`    | Queued acquires before new ones throw. A non-negative integer or `Infinity`. `0` allows no waiting                                                                  |
+| `maxLifetimeMs`      | none     | Recycle connections after this age. `0` recycles after every use and `Infinity` disables it. Negative and `NaN` throw. Checked on acquire and release               |
+| `idleTimeoutMs`      | none     | Recycle connections after this idle period. `0` discards every idle connection and `Infinity` disables it. Negative and `NaN` throw. Checked on acquire and release |
 
 Build the pool manually when you need the `setup` hook or want to share one pool across several `drizzle()` instances:
 

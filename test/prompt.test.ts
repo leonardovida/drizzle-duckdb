@@ -25,7 +25,7 @@ test('prompt binds the input and inlines its settings', () => {
     sql`select ${mdPrompt('Summarize DuckDB', { temperature: 0.5 })}`
   );
   expect(plain.sql).toContain(
-    'prompt(CAST($1 AS VARCHAR), temperature := 0.5)'
+    'prompt(CAST($1 AS VARCHAR), temperature := 0.5::DOUBLE)'
   );
   expect(plain.params).toEqual(['Summarize DuckDB']);
 });
@@ -79,4 +79,16 @@ test('prompt rejects settings MotherDuck would refuse', () => {
     /model must be a non-empty string/
   );
   expect(() => mdPrompt('x', { model: "gpt-5'\0" })).toThrow(/NULL byte/);
+});
+
+test('prompt sends temperature as a DOUBLE constant', () => {
+  for (const [temperature, literal] of [
+    [0, '0::DOUBLE'],
+    [1, '1::DOUBLE'],
+    [1e-7, '1e-7::DOUBLE'],
+  ] as const) {
+    expect(
+      dialect.sqlToQuery(sql`select ${mdPrompt('x', { temperature })}`).sql
+    ).toContain(`temperature := ${literal})`);
+  }
 });

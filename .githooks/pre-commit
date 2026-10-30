@@ -13,6 +13,6 @@ echo "Checking formatting with Prettier..."
 bunx prettier --check --ignore-unknown .
 
 echo "Running TypeScript type check..."
-bunx tsc --noEmit --project tsconfig.check.json
+bun run typecheck
 
 echo "Pre-commit checks passed!"

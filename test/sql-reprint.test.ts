@@ -124,6 +124,85 @@ describe('AST re-print guard', () => {
   });
 });
 
+describe('re-print guard for DuckDB syntax the parser misreads', () => {
+  test('an ANTI JOIN is not re-printed as an INNER JOIN', async () => {
+    clearTransformCache();
+    await db.execute(
+      sql`create table anti_orders as select * from (values (1, 1, [1, 2]), (2, 3, [7])) v(id, customer_id, tags)`
+    );
+    await db.execute(
+      sql`create table anti_customers as select * from (values (1)) v(id)`
+    );
+    const rows = await db.execute(
+      sql`select customer_id, array_upper(tags, 1) as n from anti_orders anti join anti_customers c on customer_id = c.id`
+    );
+    // Re-printed as an INNER JOIN, this returned customer 1 instead.
+    expect(rows).toEqual([{ customer_id: 3, n: 1n }]);
+
+    // A quoted identifier spelled like the modifier must not hide it.
+    clearTransformCache();
+    const quoted = await db.execute(
+      sql`select customer_id, id as "anti", array_upper(tags, 1) as n from anti_orders anti join anti_customers c on customer_id = c.id`
+    );
+    expect(quoted).toEqual([{ customer_id: 3, anti: 2, n: 1n }]);
+  });
+
+  test.each([
+    'select array_upper(tags, 1) from t semi join u on t.id = u.id',
+    'select array_upper(tags, 1) from t asof join u using (id, ts)',
+    'select gs from t cross join generate_series(1, 3) gs',
+    'select gs from t natural join generate_series(1, 3) gs',
+    'select gs from t positional join generate_series(1, 3) gs',
+  ])('keeps the join type: %s', (query) => {
+    clearTransformCache();
+    const result = transformSQL(query);
+    expect(result.sql).not.toMatch(
+      /AS "(?:semi|asof|cross|natural|positional)"/i
+    );
+    expect(result.sql.toLowerCase()).toMatch(
+      /(?:semi|asof|cross|natural|positional) join/
+    );
+  });
+
+  test('a CROSS JOIN after an aliased table is still rewritten', () => {
+    clearTransformCache();
+    const result = transformSQL(
+      'select gs from t x cross join generate_series(1, 3) gs'
+    );
+    expect(result.transformed).toBe(true);
+    expect(result.sql).toContain('CROSS JOIN');
+  });
+
+  test('negative numbers past 2^53 keep every digit', async () => {
+    clearTransformCache();
+    const query =
+      'select gs.generate_series as v from generate_series(1, 1) gs where -9007199254740993 < -9007199254740992 and gs = 1';
+    expect(transformSQL(query)).toEqual({ sql: query, transformed: false });
+    clearTransformCache();
+    expect(
+      transformSQL(
+        'select gs, -1.123456789012345678 as d from generate_series(1, 1) gs'
+      ).transformed
+    ).toBe(false);
+  });
+
+  test('`- -x` is not re-printed as the comment `--x`', () => {
+    clearTransformCache();
+    const query = 'select 1 as k, - -gs as n from generate_series(1, 2) gs';
+    expect(transformSQL(query)).toEqual({ sql: query, transformed: false });
+  });
+
+  test('numbers the printer only respells are still rewritten', () => {
+    clearTransformCache();
+    const result = transformSQL(
+      'select gs, .5 as half, 1.50 as d, 12345678901234567890 as big from generate_series(1, 1) gs'
+    );
+    expect(result.transformed).toBe(true);
+    expect(result.sql).toContain('0.5');
+    expect(result.sql).toContain('12345678901234567890');
+  });
+});
+
 describe('join column qualification', () => {
   test('an unqualified column is not assigned to the table already on the other side', async () => {
     const rows = await db.execute(

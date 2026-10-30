@@ -173,9 +173,11 @@ describe('Pool recycling and resilience', () => {
     const first = await pool.acquire();
     const pendingAcquire = pool.acquire();
 
-    await expect(pool.release(first)).rejects.toThrow('close failed');
+    // The pool owns the close failure. release() resolves and counts it.
+    await expect(pool.release(first)).resolves.toBeUndefined();
     const replacement = await pendingAcquire;
     expect(replacement).toBe(conn2);
+    expect(pool.stats()).toMatchObject({ closeErrors: 1, recycled: 1 });
 
     await pool.release(replacement);
     await pool.close();
@@ -204,9 +206,14 @@ describe('Pool recycling and resilience', () => {
     const first = await pool.acquire();
     await pool.release(first);
 
-    await expect(pool.acquire()).rejects.toThrow('close failed');
+    // The stale connection's close failure does not fail this acquire.
     const replacement = await pool.acquire();
     expect(replacement).toBe(conn2);
+    expect(pool.stats()).toMatchObject({
+      closeErrors: 1,
+      recycled: 1,
+      total: 1,
+    });
 
     await pool.release(replacement);
     await pool.close();

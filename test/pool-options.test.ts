@@ -74,6 +74,58 @@ describe('pool option validation', () => {
     }
   );
 
+  test.each([0, 0.5, -1, NaN, Infinity, -Infinity, '4' as unknown as number])(
+    'size %s is rejected',
+    (size) => {
+      expect(() => createDuckDBConnectionPool(instance, { size })).toThrow(
+        /Pool size must be a finite number of at least 1/
+      );
+    }
+  );
+
+  test('size floors fractional values and defaults to 4', async () => {
+    const fractional = createDuckDBConnectionPool(instance, { size: 2.7 });
+    expect(fractional.size).toBe(2);
+    await fractional.close();
+    const defaulted = createDuckDBConnectionPool(instance);
+    expect(defaulted.size).toBe(4);
+    await defaulted.close();
+  });
+
+  test.each(['maxLifetimeMs', 'idleTimeoutMs'] as const)(
+    '%s rejects negative and NaN values',
+    (name) => {
+      for (const value of [-1, NaN, -Infinity]) {
+        expect(() =>
+          createDuckDBConnectionPool(instance, { [name]: value })
+        ).toThrow(
+          new RegExp(
+            `${name} must be a non-negative number of milliseconds or Infinity`
+          )
+        );
+      }
+    }
+  );
+
+  test.each(['maxLifetimeMs', 'idleTimeoutMs'] as const)(
+    '%s accepts 0 and Infinity',
+    async (name) => {
+      for (const value of [0, Infinity]) {
+        const pool = createDuckDBConnectionPool(instance, {
+          size: 1,
+          [name]: value,
+        });
+        const connection = await pool.acquire();
+        await pool.release(connection);
+        const next = await pool.acquire();
+        // 0 recycles the connection, Infinity keeps it.
+        expect(next === connection).toBe(value === Infinity);
+        await pool.release(next);
+        await pool.close();
+      }
+    }
+  );
+
   test('maxWaitingRequests accepts Infinity and 0', async () => {
     const unlimited = createDuckDBConnectionPool(instance, {
       size: 1,

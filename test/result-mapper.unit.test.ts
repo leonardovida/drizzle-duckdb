@@ -1,5 +1,9 @@
+import { sql } from 'drizzle-orm';
+import { inet, pgTable } from 'drizzle-orm/pg-core';
 import { describe, expect, test } from 'vitest';
+import { duckDbInet, duckDbStruct } from '../src/columns.ts';
 import {
+  compileResultMapper,
   normalizeInet,
   normalizeTimestamp,
   normalizeTimestampString,
@@ -67,6 +71,38 @@ describe('normalizeInet', () => {
     expect(normalizeInet(null)).toBe(null);
     expect(normalizeInet(undefined)).toBe(undefined);
     expect(normalizeInet(12345)).toBe(12345);
+  });
+});
+
+describe('INET normalisation in result rows', () => {
+  const nets = pgTable('nets', {
+    pg: inet('pg'),
+    duck: duckDbInet('duck'),
+    shaped: duckDbStruct<{ ip_type: number; address: number; mask: number }>(
+      'shaped',
+      { ip_type: 'INTEGER', address: 'BIGINT', mask: 'INTEGER' }
+    ),
+  });
+  const value = () => ({ ip_type: 1 as const, address: 3232235777, mask: 24 });
+
+  test('converts INET columns and untyped SQL', () => {
+    const map = compileResultMapper<Record<string, unknown>>([
+      { path: ['pg'], field: nets.pg },
+      { path: ['duck'], field: nets.duck },
+      { path: ['raw'], field: sql`ip` },
+    ]);
+    expect(map([value(), value(), value()])).toEqual({
+      pg: '192.168.1.1/24',
+      duck: '192.168.1.1/24',
+      raw: '192.168.1.1/24',
+    });
+  });
+
+  test('leaves a typed STRUCT column with the same fields alone', () => {
+    const map = compileResultMapper<Record<string, unknown>>([
+      { path: ['shaped'], field: nets.shaped },
+    ]);
+    expect(map([value()])).toEqual({ shaped: value() });
   });
 });
 

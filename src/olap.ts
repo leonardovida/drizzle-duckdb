@@ -19,10 +19,22 @@ export const avgN = (expr: SQLWrapper) =>
 export const sumDistinctN = (expr: SQLWrapper) =>
   sql<number>`sum(distinct ${expr})`.mapWith(Number);
 
+/** Drizzle column types whose SQL type is DECIMAL or NUMERIC. */
+function isDecimalColumn(expr: SQLWrapper): boolean {
+  if (!is(expr, Column)) return false;
+  return /^\s*(?:numeric|decimal)\b/i.test(expr.getSQLType());
+}
+
+/**
+ * DuckDB keeps a DECIMAL column's scale in PERCENTILE_CONT, so the median of
+ * 1.10 and 2.25 is 1.67. DECIMAL columns are read as DOUBLE to interpolate
+ * like Postgres. Other expressions pass through, because DuckDB cannot cast
+ * TIMESTAMP or DATE to DOUBLE. Cast a DECIMAL SQL expression yourself.
+ */
 export const percentileCont = (p: number, expr: SQLWrapper) =>
-  sql<number>`percentile_cont(${p}) within group (order by ${expr})`.mapWith(
-    Number
-  );
+  sql<number>`percentile_cont(${p}) within group (order by ${
+    isDecimalColumn(expr) ? sql`CAST(${expr} AS DOUBLE)` : expr
+  })`.mapWith(Number);
 
 export const median = (expr: SQLWrapper) => percentileCont(0.5, expr);
 
@@ -286,17 +298,35 @@ export class OlapBuilder {
     }
 
     const selection: Record<string, ValueExpr> = {};
+    const owners = new Map<string, string>();
+    // A repeated name would silently replace an earlier field, for example a
+    // measure named like a group key would drop the key from the result.
+    const add = (alias: string, expr: ValueExpr, owner: string) => {
+      const previous = owners.get(alias);
+      if (previous !== undefined) {
+        throw new Error(
+          `olap: ${owner} "${alias}" has the same name as ${previous}. Give it a different name.`
+        );
+      }
+      owners.set(alias, `${owner} "${alias}"`);
+      selection[alias] = expr;
+    };
 
     this.keys.forEach((key, idx) => {
-      const alias = keyAlias(key, `key_${idx}`);
-      selection[alias] = key;
+      add(keyAlias(key, `key_${idx}`), key, 'group key');
     });
 
     Object.entries(this.nonAggregates).forEach(([alias, expr]) => {
-      selection[alias] = this.wrapNonAggWithAnyValue ? anyValue(expr) : expr;
+      add(
+        alias,
+        this.wrapNonAggWithAnyValue ? anyValue(expr) : expr,
+        'non-aggregate'
+      );
     });
 
-    Object.assign(selection, this.measureMap);
+    Object.entries(this.measureMap).forEach(([alias, expr]) => {
+      add(alias, expr, 'measure');
+    });
 
     // $dynamic() only widens the builder type so orderBy can be applied
     // conditionally. It returns the same builder at runtime.

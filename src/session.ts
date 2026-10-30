@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { NoopLogger } from 'drizzle-orm/logger';
@@ -31,12 +32,14 @@ import {
 import type { WithSubquery } from 'drizzle-orm/subquery';
 import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
+import { skipQuotedOrComment } from './sql/array-bounds-text.ts';
 import {
   compileResultMapper,
   resolveFieldDecoder,
 } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
 import type { DuckDBDialect } from './dialect.ts';
+import { DUCKDB_ARRAY_COLUMN_TYPING } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
@@ -62,6 +65,106 @@ import {
 } from './select-builder.ts';
 
 export type { DuckDBClientLike, RowData } from './client.ts';
+
+/**
+ * A connection has one transaction, and every statement sent to it joins that
+ * transaction. Without a pool, `db` and `db.transaction()` share the
+ * connection, so an unrelated statement would join an open transaction: its
+ * failure would abort it, and its writes would roll back with it. Queue such
+ * statements until the transaction ends. Statements issued while the
+ * transaction callback runs, even through `db`, keep running immediately so
+ * that they cannot deadlock.
+ */
+const openTransactions = new WeakMap<object, Promise<void>>();
+type TransactionScopeEntry = {
+  // Cleared when the transaction ends. Timers and promise continuations the
+  // callback left behind keep this async context, but must then queue.
+  active: boolean;
+  recordFailure: (error: unknown) => void;
+  // The transaction's open streams, so streams opened through `db` inside
+  // the callback are closed before COMMIT or ROLLBACK too.
+  openStreams?: Set<() => Promise<void>>;
+};
+
+// Maps each client with a transaction open in this async context to that
+// transaction.
+const transactionScope = new AsyncLocalStorage<
+  Map<object, TransactionScopeEntry>
+>();
+
+function activeScopeEntry(client: object): TransactionScopeEntry | undefined {
+  const entry = transactionScope.getStore()?.get(client);
+  return entry?.active ? entry : undefined;
+}
+
+function insideTransactionOn(client: object): boolean {
+  return activeScopeEntry(client) !== undefined;
+}
+
+async function waitForOpenTransaction(client: object): Promise<void> {
+  for (
+    let open = openTransactions.get(client);
+    open && !insideTransactionOn(client);
+    open = openTransactions.get(client)
+  ) {
+    await open;
+  }
+}
+
+async function acquireTransactionSlot(client: object): Promise<() => void> {
+  await waitForOpenTransaction(client);
+  // Check and claim in one tick, so two waiters cannot both claim the slot.
+  while (openTransactions.has(client) && !insideTransactionOn(client)) {
+    await waitForOpenTransaction(client);
+  }
+  let release!: () => void;
+  const previous = openTransactions.get(client);
+  openTransactions.set(
+    client,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    })
+  );
+  return () => {
+    if (previous) {
+      openTransactions.set(client, previous);
+    } else {
+      openTransactions.delete(client);
+    }
+    release();
+  };
+}
+
+async function runInTransactionScope<T>(
+  client: object,
+  run: () => Promise<T>
+): Promise<T> {
+  const entry: TransactionScopeEntry = {
+    active: true,
+    recordFailure: () => undefined,
+  };
+  const scope = new Map(transactionScope.getStore());
+  scope.set(client, entry);
+  try {
+    return await transactionScope.run(scope, run);
+  } finally {
+    entry.active = false;
+  }
+}
+
+/**
+ * A statement through `db` inside the callback runs in the transaction, so
+ * its failure can abort it. Record it there, so COMMIT is probed first.
+ */
+function recordInTransactionScope(client: object, error: unknown): void {
+  activeScopeEntry(client)?.recordFailure(error);
+}
+
+function isNoActiveTransactionError(error: unknown): boolean {
+  return (
+    error instanceof Error && /no transaction is active/i.test(error.message)
+  );
+}
 
 type QueryMetadata = {
   type: 'select' | 'update' | 'delete' | 'insert';
@@ -136,8 +239,8 @@ function warnTransactionConfigIgnored(): void {
 /**
  * Params bound to a non-array column must keep their string value even when
  * it looks like a Postgres array literal, for example `{}` in a text column
- * or a braced UUID in a uuid column. The dialect types array columns and
- * untyped params as 'none', so every other typing marks a scalar column.
+ * or a braced UUID in a uuid column. The dialect types untyped params as
+ * 'none', so every typing except an array column marks a scalar column.
  */
 function getScalarParamIndexes(
   params: unknown[],
@@ -148,7 +251,9 @@ function getScalarParamIndexes(
     const param = params[index];
     const typing = typings?.[index];
     const isScalar =
-      (typing !== undefined && typing !== 'none') ||
+      (typing !== undefined &&
+        typing !== 'none' &&
+        typing !== DUCKDB_ARRAY_COLUMN_TYPING) ||
       (is(param, Param) &&
         is(param.value, Placeholder) &&
         is(param.encoder, Column) &&
@@ -159,6 +264,31 @@ function getScalarParamIndexes(
     }
   }
   return indexes;
+}
+
+/**
+ * Drizzle encodes an empty pg-core array as '{}', which has no item type to
+ * bind a list with. DuckDB casts the string '[]' to an empty list of the
+ * column type instead. `source` holds the built params, whose placeholders
+ * are still Param objects with their column encoder.
+ */
+function bindEmptyArrays(
+  source: unknown[],
+  values: unknown[],
+  typings?: QueryWithTypings['typings']
+): unknown[] {
+  let result = values;
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] !== '{}') continue;
+    const param = source[index];
+    const isArrayParam =
+      typings?.[index] === DUCKDB_ARRAY_COLUMN_TYPING ||
+      (is(param, Param) && is(param.encoder, PgArray));
+    if (!isArrayParam) continue;
+    if (result === values) result = values.slice();
+    result[index] = '[]';
+  }
+  return result;
 }
 
 function isNumericColumn(decoder: unknown): boolean {
@@ -226,6 +356,81 @@ function prepareQueryParams({
   return preparedParams;
 }
 
+/**
+ * Column encoders such as `duckDbStruct` return SQL literals, because node-api
+ * cannot bind those values. Drizzle inlines them when it builds a query, but
+ * values filled in for `sql.placeholder()` arrive after that. Splice such
+ * values into the statement text and renumber the remaining parameters.
+ */
+function inlineSqlParams(
+  dialect: DuckDBDialect,
+  queryString: string,
+  params: unknown[],
+  scalarParamIndexes: ReadonlySet<number> | undefined
+): {
+  queryString: string;
+  params: unknown[];
+  scalarParamIndexes: ReadonlySet<number> | undefined;
+} {
+  if (!params.some((param) => is(param, SQL))) {
+    return { queryString, params, scalarParamIndexes };
+  }
+
+  const inlined = params.map((param) => {
+    if (!is(param, SQL)) return undefined;
+    const rendered = dialect.sqlToQuery(param);
+    if (rendered.params.length > 0) {
+      throw new Error(
+        'A sql.placeholder() value was encoded to SQL with its own parameters, which cannot be inlined. Pass the value directly instead of through a placeholder.'
+      );
+    }
+    return rendered.sql;
+  });
+  const remaining: unknown[] = [];
+  const newIndexes = params.map((param, index) => {
+    if (inlined[index] !== undefined) return -1;
+    remaining.push(param);
+    return remaining.length - 1;
+  });
+
+  let text = '';
+  for (let i = 0; i < queryString.length; ) {
+    const skipped = skipQuotedOrComment(queryString, i);
+    if (skipped !== i) {
+      text += queryString.slice(i, skipped);
+      i = skipped;
+      continue;
+    }
+    const match =
+      queryString[i] === '$' ? /^\$(\d+)/.exec(queryString.slice(i)) : null;
+    if (!match) {
+      text += queryString[i];
+      i += 1;
+      continue;
+    }
+    const index = Number(match[1]) - 1;
+    const literal = inlined[index];
+    text +=
+      literal !== undefined
+        ? `(${literal})`
+        : `$${(newIndexes[index] ?? index) + 1}`;
+    i += match[0].length;
+  }
+
+  const remappedScalars = scalarParamIndexes
+    ? new Set(
+        [...scalarParamIndexes]
+          .map((index) => newIndexes[index] ?? -1)
+          .filter((index) => index >= 0)
+      )
+    : undefined;
+  return {
+    queryString: text,
+    params: remaining,
+    scalarParamIndexes: remappedScalars,
+  };
+}
+
 export class DuckDBPreparedQuery<
   T extends PreparedQueryConfig,
 > extends PgPreparedQuery<T> {
@@ -250,7 +455,8 @@ export class DuckDBPreparedQuery<
     private warnOnStringArrayLiteral?: (sql: string) => void,
     private scalarParamIndexes?: ReadonlySet<number>,
     private onStatementError?: (error: unknown) => void,
-    private decimalMode: 'number' | 'string' = 'number'
+    private decimalMode: 'number' | 'string' = 'number',
+    private waitForTransactions = false
   ) {
     super(
       ...([
@@ -276,13 +482,26 @@ export class DuckDBPreparedQuery<
   private async executeQuery(
     placeholderValues: Record<string, unknown>
   ): Promise<T['execute']> {
+    if (this.waitForTransactions) {
+      await waitForOpenTransaction(this.client);
+    }
+    const filled = inlineSqlParams(
+      this.dialect,
+      this.queryString,
+      bindEmptyArrays(
+        this.params,
+        fillPlaceholders(this.params, placeholderValues)
+      ),
+      this.scalarParamIndexes
+    );
+    const queryString = filled.queryString;
     const params = prepareQueryParams({
       logger: this.logger,
-      queryString: this.queryString,
-      params: fillPlaceholders(this.params, placeholderValues),
+      queryString,
+      params: filled.params,
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
-      scalarParamIndexes: this.scalarParamIndexes,
+      scalarParamIndexes: filled.scalarParamIndexes,
     });
 
     const { fields, joinsNotNullableMap, customResultMapper } =
@@ -291,19 +510,17 @@ export class DuckDBPreparedQuery<
     // Match PgPreparedQuery: relational queries pass a result mapper without
     // fields and expect array rows, including for empty results.
     if (!fields && !customResultMapper) {
-      const rows = await executeOnClient(
-        this.client,
-        this.queryString,
-        params,
-        { prepareCache: this.prepareCache, decimalMode: this.decimalMode }
-      );
+      const rows = await executeOnClient(this.client, queryString, params, {
+        prepareCache: this.prepareCache,
+        decimalMode: this.decimalMode,
+      });
 
       return rows as T['execute'];
     }
 
     const { rows, exactDecimalColumns } = await executeArraysOnClient(
       this.client,
-      this.queryString,
+      queryString,
       params,
       {
         prepareCache: this.prepareCache,
@@ -358,6 +575,9 @@ export class DuckDBSession<
   private prepareCache: PreparedStatementCacheConfig | undefined;
   private hasWarnedArrayLiteral = false;
   private rollbackOnly = false;
+  private rollbackOnlyCause: unknown;
+  // Streams opened through a transaction session, closed when it ends.
+  private openStreams: Set<() => Promise<void>> | undefined;
   // Set on sessions that run a transaction. DuckDB aborts the transaction when
   // a statement fails during execution, and a later COMMIT silently rolls back.
   private statementFailures: unknown[] | undefined;
@@ -393,7 +613,11 @@ export class DuckDBSession<
       this.client,
       this.dialect,
       query.sql,
-      query.params,
+      bindEmptyArrays(
+        query.params,
+        query.params,
+        (query as QueryWithTypings).typings
+      ),
       this.logger,
       fields,
       isResponseInArrayMode,
@@ -406,9 +630,17 @@ export class DuckDBSession<
         ? undefined
         : this.warnOnStringArrayLiteral,
       getScalarParamIndexes(query.params, (query as QueryWithTypings).typings),
-      this.statementFailures ? this.recordStatementFailure : undefined,
-      this.options.decimalMode
+      this.statementFailures || this.waitsForTransactions()
+        ? this.recordStatementFailure
+        : undefined,
+      this.options.decimalMode,
+      this.waitsForTransactions()
     );
+  }
+
+  /** Root sessions on one shared connection queue behind its transaction. */
+  private waitsForTransactions(): boolean {
+    return !this.statementFailures && !isPool(this.client);
   }
 
   override async transaction<T>(
@@ -419,23 +651,40 @@ export class DuckDBSession<
       warnTransactionConfigIgnored();
     }
 
-    let pinnedConnection: DuckDBExecutionClient | undefined;
-    let pool: DuckDBConnectionPool | undefined;
-
-    let clientForTx: DuckDBClientLike = this.client;
     if (isPool(this.client)) {
-      pool = this.client;
-      pinnedConnection = await pool.acquire();
-      clientForTx = pinnedConnection;
+      return this.runTransaction(transaction, this.client);
     }
 
+    const client = this.client;
+    const release = await acquireTransactionSlot(client);
+    try {
+      return await runInTransactionScope(client, () =>
+        this.runTransaction(transaction)
+      );
+    } finally {
+      release();
+    }
+  }
+
+  private async runTransaction<T>(
+    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
+    pool?: DuckDBConnectionPool
+  ): Promise<T> {
+    const pinnedConnection = pool ? await pool.acquire() : undefined;
+
     const session = new DuckDBSession<TFullSchema, TSchema>(
-      clientForTx,
+      pinnedConnection ?? this.client,
       this.dialect,
       this.schema,
       this.options
     );
     session.statementFailures = [];
+    session.openStreams = new Set();
+    const scopeEntry = pool ? undefined : activeScopeEntry(this.client);
+    if (scopeEntry) {
+      scopeEntry.recordFailure = session.recordStatementFailure;
+      scopeEntry.openStreams = session.openStreams;
+    }
 
     const tx = new DuckDBTransaction<TFullSchema, TSchema>(
       this.dialect,
@@ -443,18 +692,23 @@ export class DuckDBSession<
       this.schema
     );
 
+    // A connection whose ROLLBACK failed may still be inside the transaction
+    // and must not serve other callers.
+    let connectionClean = true;
     try {
       await tx.execute(sql`BEGIN TRANSACTION;`);
 
       let result: T;
       try {
         result = await transaction(tx);
+        await session.closeOpenStreams();
         if (session.isRollbackOnly()) {
-          throw new TransactionRollbackError();
+          throw session.rollbackOnlyError();
         }
         await session.assertTransactionNotAborted();
       } catch (error) {
-        await session.rollbackQuietly();
+        await session.closeOpenStreams();
+        connectionClean = await session.rollbackQuietly();
         throw error;
       }
 
@@ -463,13 +717,17 @@ export class DuckDBSession<
       } catch (error) {
         // A failed COMMIT usually ends the transaction already. Roll back in
         // case it did not, but surface the commit error.
-        await session.rollbackQuietly();
+        connectionClean = await session.rollbackQuietly();
         throw error;
       }
       return result;
     } finally {
       if (pinnedConnection && pool) {
-        await pool.release(pinnedConnection);
+        if (!connectionClean && pool.discard) {
+          await pool.discard(pinnedConnection);
+        } else {
+          await pool.release(pinnedConnection);
+        }
       }
     }
   }
@@ -490,7 +748,11 @@ export class DuckDBSession<
   };
 
   private recordStatementFailure = (error: unknown) => {
-    this.statementFailures?.push(error);
+    if (this.statementFailures) {
+      this.statementFailures.push(error);
+    } else if (this.waitsForTransactions()) {
+      recordInTransactionScope(this.client, error);
+    }
   };
 
   /**
@@ -518,13 +780,41 @@ export class DuckDBSession<
     }
   }
 
-  private async rollbackQuietly(): Promise<void> {
+  /**
+   * Roll back and report whether the connection is out of the transaction.
+   * DuckDB reports "no transaction is active" when a failed statement or
+   * COMMIT already ended it. Any other failure keeps the original error.
+   */
+  private async rollbackQuietly(): Promise<boolean> {
     try {
       await this.execute(sql`rollback`);
-    } catch {
-      // Keep the original error. DuckDB reports "no transaction is active"
-      // when a failed statement or COMMIT already ended the transaction.
+      return true;
+    } catch (error) {
+      return isNoActiveTransactionError(error);
     }
+  }
+
+  /**
+   * A stream left open by the callback keeps the connection busy, so COMMIT
+   * and ROLLBACK would fail. Close it, and make further reads throw instead
+   * of ending early.
+   */
+  private async closeOpenStreams(): Promise<void> {
+    const streams = [...(this.openStreams ?? [])];
+    this.openStreams?.clear();
+    for (const close of streams) {
+      await close();
+    }
+  }
+
+  private rollbackOnlyError(): TransactionRollbackError {
+    const error = new TransactionRollbackError();
+    if (this.rollbackOnlyCause !== undefined) {
+      error.message =
+        'A nested transaction failed. DuckDB has no savepoints, so the outer transaction was rolled back.';
+      (error as Error & { cause?: unknown }).cause = this.rollbackOnlyCause;
+    }
+    return error;
   }
 
   private prepareQueryExecution(query: SQL): {
@@ -535,7 +825,11 @@ export class DuckDBSession<
     const params = prepareQueryParams({
       logger: this.logger,
       queryString: builtQuery.sql,
-      params: builtQuery.params,
+      params: bindEmptyArrays(
+        builtQuery.params,
+        builtQuery.params,
+        builtQuery.typings
+      ),
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
       scalarParamIndexes: getScalarParamIndexes(
@@ -546,15 +840,52 @@ export class DuckDBSession<
     return { sql: builtQuery.sql, params };
   }
 
-  private async *trackStreamFailures<T>(
+  private trackStreamFailures<T>(
     stream: AsyncGenerator<T, void, void>
   ): AsyncGenerator<T, void, void> {
-    try {
-      yield* stream;
-    } catch (error) {
-      this.recordStatementFailure(error);
-      throw error;
+    const session = this;
+    const openStreams =
+      this.openStreams ??
+      (this.waitsForTransactions()
+        ? activeScopeEntry(this.client)?.openStreams
+        : undefined);
+    let endedWithTransaction = false;
+    const close = async () => {
+      endedWithTransaction = true;
+      await stream.return(undefined);
+    };
+    openStreams?.add(close);
+
+    return (async function* () {
+      try {
+        yield* stream;
+        if (endedWithTransaction) {
+          throw new Error(
+            'The transaction ended before this stream was read to the end. Read transaction streams fully inside the transaction callback.'
+          );
+        }
+      } catch (error) {
+        if (!endedWithTransaction) {
+          session.recordStatementFailure(error);
+        }
+        throw error;
+      } finally {
+        openStreams?.delete(close);
+      }
+    })();
+  }
+
+  private afterOpenTransaction<T>(
+    stream: AsyncGenerator<T, void, void>
+  ): AsyncGenerator<T, void, void> {
+    if (!this.waitsForTransactions()) {
+      return stream;
     }
+    const client = this.client;
+    return (async function* () {
+      await waitForOpenTransaction(client);
+      yield* stream;
+    })();
   }
 
   executeBatches<T extends RowData = RowData>(
@@ -564,10 +895,12 @@ export class DuckDBSession<
     const { sql: queryString, params } = this.prepareQueryExecution(query);
 
     return this.trackStreamFailures(
-      executeInBatches(this.client, queryString, params, {
-        decimalMode: this.options.decimalMode,
-        ...options,
-      })
+      this.afterOpenTransaction(
+        executeInBatches(this.client, queryString, params, {
+          decimalMode: this.options.decimalMode,
+          ...options,
+        })
+      )
     ) as AsyncGenerator<GenericRowData<T>[], void, void>;
   }
 
@@ -577,15 +910,20 @@ export class DuckDBSession<
   ): AsyncGenerator<ExecuteBatchesRawChunk, void, void> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
     return this.trackStreamFailures(
-      executeInBatchesRaw(this.client, queryString, params, {
-        decimalMode: this.options.decimalMode,
-        ...options,
-      })
+      this.afterOpenTransaction(
+        executeInBatchesRaw(this.client, queryString, params, {
+          decimalMode: this.options.decimalMode,
+          ...options,
+        })
+      )
     );
   }
 
   async executeArrow(query: SQL): Promise<unknown> {
     const { sql: queryString, params } = this.prepareQueryExecution(query);
+    if (this.waitsForTransactions()) {
+      await waitForOpenTransaction(this.client);
+    }
     try {
       return await executeArrowOnClient(this.client, queryString, params, {
         decimalMode: this.options.decimalMode,
@@ -596,8 +934,9 @@ export class DuckDBSession<
     }
   }
 
-  markRollbackOnly(): void {
+  markRollbackOnly(cause?: unknown): void {
     this.rollbackOnly = true;
+    this.rollbackOnlyCause ??= cause;
   }
 
   isRollbackOnly(): boolean {
@@ -644,8 +983,8 @@ export class DuckDBTransaction<
     >;
   }
 
-  private markRollbackOnly(): void {
-    this.getInternals().session.markRollbackOnly();
+  private markRollbackOnly(cause?: unknown): void {
+    this.getInternals().session.markRollbackOnly(cause);
   }
 
   private selectMethods(withList?: WithSubquery[]) {
@@ -834,7 +1173,7 @@ export class DuckDBTransaction<
     nestedTx: DuckDBTransaction<TFullSchema, TSchema>
   ): Promise<T> {
     return transaction(nestedTx).catch((error) => {
-      this.markRollbackOnly();
+      this.markRollbackOnly(error);
       throw error;
     });
   }

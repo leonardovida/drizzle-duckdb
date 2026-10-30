@@ -58,6 +58,8 @@ export interface DuckLakePoolResolution {
 
 const DEFAULT_ALIAS = 'ducklake';
 const DUCKLAKE_PREFIX = 'ducklake:';
+// DuckDB matches the scheme without regard to case, as in 'DUCKLAKE:meta.db'.
+const DUCKLAKE_PREFIX_PATTERN = /^ducklake:/i;
 const DUCKLAKE_ATTACH_OPTION_NAMES = {
   createIfNotExists: 'CREATE_IF_NOT_EXISTS',
   dataInliningRowLimit: 'DATA_INLINING_ROW_LIMIT',
@@ -85,7 +87,7 @@ function quoteIdentifier(value: string): string {
 }
 
 function isDuckLakeUri(catalog: string): boolean {
-  return catalog.startsWith(DUCKLAKE_PREFIX);
+  return DUCKLAKE_PREFIX_PATTERN.test(catalog);
 }
 
 function stripDuckLakePrefix(catalog: string): string {
@@ -93,6 +95,21 @@ function stripDuckLakePrefix(catalog: string): string {
   return isDuckLakeUri(trimmed)
     ? trimmed.slice(DUCKLAKE_PREFIX.length).trim()
     : trimmed;
+}
+
+/**
+ * DuckDB drops `file://` from a path but does not decode it, so a URL with
+ * `%20` names a file that does not exist. Send the decoded local path.
+ */
+function fileUrlToLocalPath(catalog: string): string {
+  if (!/^file:/i.test(catalog)) {
+    return catalog;
+  }
+  try {
+    return fileURLToPath(catalog);
+  } catch {
+    return catalog;
+  }
 }
 
 export function normalizeDuckLakeConfig(
@@ -103,7 +120,9 @@ export function normalizeDuckLakeConfig(
   }
 
   return {
-    catalog: `${DUCKLAKE_PREFIX}${stripDuckLakePrefix(config.catalog)}`,
+    catalog: `${DUCKLAKE_PREFIX}${fileUrlToLocalPath(
+      stripDuckLakePrefix(config.catalog)
+    )}`,
     alias: config.alias?.trim() || DEFAULT_ALIAS,
     use: config.use ?? true,
     install: config.install ?? false,
@@ -392,6 +411,18 @@ export function wrapDuckLakePool(
     close: pool.close?.bind(pool),
   };
 
+  // A transaction discards a connection whose ROLLBACK failed. Without this,
+  // it would fall back to release() and hand the connection to a new caller.
+  if (pool.discard) {
+    wrapped.discard = pool.discard.bind(pool);
+  }
+
+  // Keep the pool's counters, such as stats() from createDuckDBConnectionPool.
+  const stats = (pool as { stats?: unknown }).stats;
+  if (typeof stats === 'function') {
+    (wrapped as { stats?: unknown }).stats = stats.bind(pool);
+  }
+
   if (size !== undefined) {
     wrapped.size = size;
   }
@@ -488,12 +519,18 @@ function fileSizeArg(
   return sql`CAST(${sql.param(value)} AS UBIGINT)`;
 }
 
-/** Only instants with an explicit zone compare the same in JS and DuckDB. */
+/**
+ * Only instants with an explicit zone compare the same in JS and DuckDB. The
+ * zone must follow a time, so the day in a date-only string such as
+ * '2024-01-01' is not read as a UTC offset.
+ */
 function comparableInstant(value: Date | string): number | undefined {
   if (value instanceof Date) {
     return value.getTime();
   }
-  return /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(value.trim())
+  return /\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(
+    value.trim()
+  )
     ? new Date(value).getTime()
     : undefined;
 }

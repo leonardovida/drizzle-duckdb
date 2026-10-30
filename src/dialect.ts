@@ -50,6 +50,14 @@ const PG_JSON_UNSUPPORTED_MESSAGE =
 export const DUCKDB_SCALAR_COLUMN_TYPING =
   'duckdb:scalar' as unknown as QueryTypingsValue;
 
+/**
+ * Query typing for params bound to a pg-core array column, so sessions can
+ * bind its empty array as an empty list.
+ * @internal
+ */
+export const DUCKDB_ARRAY_COLUMN_TYPING =
+  'duckdb:array' as unknown as QueryTypingsValue;
+
 const MIGRATION_CONFLICT_MAX_ATTEMPTS = 10;
 const MIGRATION_RETRY_BASE_DELAY_MS = 20;
 const MIGRATION_RETRY_MAX_DELAY_MS = 1000;
@@ -70,6 +78,13 @@ function errorMessages(error: unknown): string[] {
     current = current instanceof Error ? current.cause : undefined;
   }
   return messages;
+}
+
+function isDuplicateKeyIndexError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /contains duplicates on indexed column/i.test(error.message)
+  );
 }
 
 function isTransactionConflictError(error: unknown): boolean {
@@ -319,11 +334,19 @@ export class DuckDBDialect extends PgDialect {
       await session.execute(migrationTableCreate);
 
       // Concurrent migrators must not commit the same migration twice.
-      await session.execute(
-        sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
-          `${migrationsTableName}_created_at_unique`
-        )} ON ${migrationTable} (created_at)`
-      );
+      // Journals written before this index existed can already hold such
+      // duplicates. They still migrate correctly, just without the guard.
+      try {
+        await session.execute(
+          sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
+            `${migrationsTableName}_created_at_unique`
+          )} ON ${migrationTable} (created_at)`
+        );
+      } catch (error) {
+        if (!isDuplicateKeyIndexError(error)) {
+          throw error;
+        }
+      }
     };
 
     const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;
@@ -409,7 +432,7 @@ export class DuckDBDialect extends PgDialect {
     if (is(encoder, PgJsonb) || is(encoder, PgJson)) {
       throw new Error(PG_JSON_UNSUPPORTED_MESSAGE);
     } else if (is(encoder, PgArray)) {
-      return 'none';
+      return DUCKDB_ARRAY_COLUMN_TYPING;
     } else if (is(encoder, PgNumeric)) {
       return 'decimal';
     } else if (is(encoder, PgTime)) {

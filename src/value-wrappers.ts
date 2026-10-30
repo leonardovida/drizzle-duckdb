@@ -350,7 +350,9 @@ function numberType(value: number): DuckDBType {
 const NUMBER_TYPE_RANK: Partial<Record<DuckDBTypeId, number>> = {
   [DuckDBTypeId.INTEGER]: 1,
   [DuckDBTypeId.BIGINT]: 2,
-  [DuckDBTypeId.DOUBLE]: 3,
+  // JS bigint items, which may mix with numbers in one list.
+  [DuckDBTypeId.HUGEINT]: 3,
+  [DuckDBTypeId.DOUBLE]: 4,
 };
 
 /** Declared types that accept every item of an inferred number type. */
@@ -580,6 +582,18 @@ function alignValueToType(value: DuckDBValue, type: DuckDBType): DuckDBValue {
     return BIGINT_TYPE_IDS.has(type.typeId) && Number.isInteger(value)
       ? BigInt(value)
       : value;
+  }
+  if (typeof value === 'bigint') {
+    if (type.typeId !== DuckDBTypeId.DOUBLE) return value;
+    // A bigint listed with fractional numbers binds as DOUBLE, which must
+    // not round it.
+    const double = Number(value);
+    if (BigInt(double) !== value) {
+      throw new Error(
+        `Cannot bind ${value} in a list with fractional numbers: a DOUBLE would round it. Use a typed list such as duckDbList(name, 'DECIMAL(38, 10)'), or convert the values first.`
+      );
+    }
+    return double;
   }
 
   switch (type.typeId) {

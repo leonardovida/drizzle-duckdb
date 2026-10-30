@@ -17,7 +17,7 @@ Run these before opening a pull request. CI runs the same commands.
 
 ```sh
 bun run test                                      # Vitest suite
-bunx tsc --noEmit --project tsconfig.check.json   # type check
+bun run typecheck                                 # type check (source and tests)
 bunx prettier --check .                           # formatting
 bun run build                                     # build dist/
 ```

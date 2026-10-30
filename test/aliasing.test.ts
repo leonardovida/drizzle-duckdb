@@ -110,8 +110,9 @@ test('duplicate column aliases preserve ordering', async () => {
   expect(rows).toEqual([{ first: 1, second: 2 }]);
 });
 
-test('raw duplicate aliases avoid generated name collisions', async () => {
+test('raw duplicate aliases keep explicitly selected names', async () => {
   const rows = await ctx.db.execute(sql`select 1 as a, 2 as a, 3 as a_1`);
 
-  expect(rows).toEqual([{ a: 1, a_1: 2, a_1_1: 3 }]);
+  // The explicit a_1 keeps its name and the duplicate a takes a_2.
+  expect(rows).toEqual([{ a: 1, a_2: 2, a_1: 3 }]);
 });

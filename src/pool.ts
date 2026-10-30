@@ -1,6 +1,9 @@
 import { DuckDBConnection, DuckDBInstance } from '@duckdb/node-api';
-import { closeClientConnection, type DuckDBConnectionPool } from './client.ts';
-import { normalizePositiveInteger } from './options.ts';
+import {
+  closeClientConnection,
+  type DuckDBConnectionPool,
+  type DuckDBExecutionClient,
+} from './client.ts';
 
 /** Pool size presets for different MotherDuck instance types */
 export type PoolPreset =
@@ -26,15 +29,21 @@ export const POOL_PRESETS: Record<PoolPreset, number> = {
 const DEFAULT_POOL_SIZE = 4;
 
 export interface DuckDBPoolConfig {
-  /** Maximum concurrent connections. Defaults to 4. */
+  /** Maximum concurrent connections, at least 1. Defaults to 4. */
   size?: number;
   /** Queue wait timeout in ms, excluding connection creation/setup. Defaults to 30000. */
   acquireTimeout?: number;
   /** Maximum number of requests waiting for a connection. Defaults to 100. */
   maxWaitingRequests?: number;
-  /** Max time (ms) a connection may live before being recycled. */
+  /**
+   * Max time (ms) a connection may live before being recycled. `0` recycles a
+   * connection after every use. Checked on acquire and release.
+   */
   maxLifetimeMs?: number;
-  /** Max idle time (ms) before an idle connection is discarded. */
+  /**
+   * Max idle time (ms) before an idle connection is discarded. `0` discards
+   * every idle connection. Checked on acquire and release, not by a timer.
+   */
   idleTimeoutMs?: number;
 }
 
@@ -48,7 +57,9 @@ export function resolvePoolSize(
   if (pool === false) return false;
   if (pool === undefined) return DEFAULT_POOL_SIZE;
   if (typeof pool === 'string') return POOL_PRESETS[pool] ?? DEFAULT_POOL_SIZE;
-  return normalizePositiveInteger(pool.size, DEFAULT_POOL_SIZE);
+  // Validate here too, so drizzle(path, { pool: { size } }) rejects the same
+  // sizes createDuckDBConnectionPool() does instead of using the default.
+  return resolveSize(pool.size);
 }
 
 export interface DuckDBConnectionPoolOptions extends DuckDBPoolConfig {
@@ -106,21 +117,46 @@ function resolveMaxWaitingRequests(value: number | undefined): number {
   return value;
 }
 
+function resolveSize(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_POOL_SIZE;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
+    throw new Error(
+      `Pool size must be a finite number of at least 1. Received ${String(value)}`
+    );
+  }
+  return Math.floor(value);
+}
+
+/** maxLifetimeMs and idleTimeoutMs: a non-negative number or Infinity. */
+function resolveDuration(
+  name: 'maxLifetimeMs' | 'idleTimeoutMs',
+  value: number | undefined
+): number | undefined {
+  if (value === undefined || value === Infinity) return undefined;
+  if (typeof value !== 'number' || Number.isNaN(value) || value < 0) {
+    throw new Error(
+      `${name} must be a non-negative number of milliseconds or Infinity. Received ${String(value)}`
+    );
+  }
+  return value;
+}
+
 export function createDuckDBConnectionPool(
   instance: DuckDBInstance,
   options: DuckDBConnectionPoolOptions = {}
 ): DuckDBConnectionPool & {
   size: number;
   close(): Promise<void>;
+  discard(connection: DuckDBExecutionClient): Promise<void>;
   stats(): DuckDBPoolStats;
 } {
-  const size = normalizePositiveInteger(options.size, DEFAULT_POOL_SIZE);
+  const size = resolveSize(options.size);
   const acquireTimeout = resolveAcquireTimeout(options.acquireTimeout);
   const maxWaitingRequests = resolveMaxWaitingRequests(
     options.maxWaitingRequests
   );
-  const maxLifetimeMs = options.maxLifetimeMs;
-  const idleTimeoutMs = options.idleTimeoutMs;
+  const maxLifetimeMs = resolveDuration('maxLifetimeMs', options.maxLifetimeMs);
+  const idleTimeoutMs = resolveDuration('idleTimeoutMs', options.idleTimeoutMs);
   const setup = options.setup;
   const metadata = new WeakMap<DuckDBConnection, ConnectionMetadata>();
 
@@ -133,9 +169,14 @@ export function createDuckDBConnectionPool(
   let pendingAcquires = 0;
   let created = 0;
   let recycled = 0;
+  let discarded = 0;
+  let closeErrors = 0;
   let queued = 0;
   let queueWaitMs = 0;
   let timedOut = 0;
+  // Counts connections acquire() hands out or slots it reserves, so
+  // serveWaiters() can tell whether a replacement acquire got capacity.
+  let grants = 0;
 
   const decrementTotal = (): void => {
     total = Math.max(0, total - 1);
@@ -164,11 +205,22 @@ export function createDuckDBConnectionPool(
     return nextMeta;
   };
 
-  const dropConnection = async (
+  const closeQuietly = async (connection: DuckDBConnection): Promise<void> => {
+    try {
+      await closeClientConnection(connection);
+    } catch {
+      // The pool owns connections it closes. A close failure must not fail
+      // the caller that released or acquired, so it is only counted.
+      closeErrors += 1;
+    }
+  };
+
+  /** Close a connection the pool owns and free its slot. Never rejects. */
+  const discardConnection = async (
     connection: DuckDBConnection
   ): Promise<void> => {
     try {
-      await closeClientConnection(connection);
+      await closeQuietly(connection);
     } finally {
       decrementTotal();
       metadata.delete(connection);
@@ -249,27 +301,57 @@ export function createDuckDBConnectionPool(
       (error) => rejectWaiter(waiter, toError(error))
     );
 
-  const retryNextWaiter = (): void => {
-    if (closed) return;
-
-    const waiter = takeWaiter();
-    if (!waiter) return;
-
-    void acquireForWaiter(waiter);
+  /**
+   * Hand free capacity to queued waiters in arrival order. Each replacement
+   * runs on its own, so the caller that freed the slot does not wait for
+   * another caller's connection creation or setup.
+   */
+  const serveWaiters = (): void => {
+    while (!closed && waiting.length > 0 && total < size) {
+      const waiter = takeWaiter();
+      if (!waiter) return;
+      const grantsBefore = grants;
+      void acquireForWaiter(waiter);
+      // acquire() takes an idle connection or reserves a slot synchronously.
+      // If it did neither, it is closing expired connections first, and the
+      // next waiter must not overtake it.
+      if (grants === grantsBefore) return;
+    }
   };
 
-  // Both idle acquire and expired release own their close failure. Freeing
-  // that slot must still let the oldest waiter try a replacement.
-  const recycleConnection = async (
-    connection: DuckDBConnection
-  ): Promise<void> => {
-    recycled += 1;
-    try {
-      await dropConnection(connection);
-    } catch (error) {
-      retryNextWaiter();
-      throw error;
+  /**
+   * Take every idle connection past maxLifetimeMs or idleTimeoutMs out of the
+   * idle list, not only the one acquire() would pick next. Synchronous, so an
+   * acquire with nothing to discard still reserves its slot without waiting.
+   */
+  const takeExpiredIdle = (): DuckDBConnection[] => {
+    if (
+      idle.length === 0 ||
+      (maxLifetimeMs === undefined && idleTimeoutMs === undefined)
+    ) {
+      return [];
     }
+
+    const now = Date.now();
+    const expired: DuckDBConnection[] = [];
+    let kept = 0;
+    for (const pooled of idle) {
+      if (shouldRecycleIdleConnection(pooled, now)) {
+        expired.push(pooled.connection);
+      } else {
+        idle[kept] = pooled;
+        kept += 1;
+      }
+    }
+    idle.length = kept;
+    recycled += expired.length;
+    return expired;
+  };
+
+  const discardConnections = async (
+    connections: DuckDBConnection[]
+  ): Promise<void> => {
+    await Promise.all(connections.map(discardConnection));
   };
 
   const acquire = async (): Promise<DuckDBConnection> => {
@@ -277,21 +359,31 @@ export function createDuckDBConnectionPool(
       throw new Error(POOL_CLOSED_MESSAGE);
     }
 
-    while (idle.length > 0) {
-      const pooled = idle.pop() as PooledConnection;
-      const now = Date.now();
-      if (shouldRecycleIdleConnection(pooled, now)) {
-        await recycleConnection(pooled.connection);
-        continue;
+    const expired = takeExpiredIdle();
+    const freed = expired.length;
+    if (freed > 0) {
+      await discardConnections(expired);
+      if (closed) {
+        throw new Error(POOL_CLOSED_MESSAGE);
       }
-      markConnectionUsed(pooled.connection, pooled, now);
+    }
+
+    const pooled = idle.pop();
+    if (pooled) {
+      grants += 1;
+      markConnectionUsed(pooled.connection, pooled, Date.now());
       leased.add(pooled.connection);
+      if (freed > 0) serveWaiters();
       return pooled.connection;
     }
 
     if (total < size) {
       pendingAcquires += 1;
       total += 1;
+      grants += 1;
+      // This caller keeps the first freed slot. Waiters that queued while
+      // expired connections were closing get the rest.
+      if (freed > 0) serveWaiters();
       let slotReleased = false;
       try {
         const connection = await DuckDBConnection.create(instance);
@@ -300,13 +392,13 @@ export function createDuckDBConnectionPool(
           try {
             await setup(connection);
           } catch (error) {
-            await closeClientConnection(connection);
+            await closeQuietly(connection);
             throw error;
           }
         }
         // Check if pool was closed during async connection creation
         if (closed) {
-          await dropConnection(connection);
+          await discardConnection(connection);
           slotReleased = true;
           throw new Error(POOL_CLOSED_MESSAGE);
         }
@@ -317,7 +409,7 @@ export function createDuckDBConnectionPool(
       } catch (error) {
         if (!slotReleased) {
           decrementTotal();
-          retryNextWaiter();
+          serveWaiters();
         }
         throw error;
       } finally {
@@ -370,17 +462,14 @@ export function createDuckDBConnectionPool(
     const meta = readMetadata(connection, now);
 
     if (closed) {
-      await dropConnection(connection);
+      await discardConnection(connection);
       return;
     }
 
     if (hasExceededMaxLifetime(meta, now)) {
-      await recycleConnection(connection);
-
-      const waiter = takeWaiter();
-      if (waiter) {
-        await acquireForWaiter(waiter);
-      }
+      recycled += 1;
+      await discardConnection(connection);
+      serveWaiters();
       return;
     }
 
@@ -392,8 +481,42 @@ export function createDuckDBConnectionPool(
       return;
     }
 
+    // Sweep the other idle connections before adding this one, so a
+    // connection released just now is first checked by the next acquire.
+    const expired = takeExpiredIdle();
+
+    // With idleTimeoutMs 0 a connection must not wait idle for a later
+    // acquire or release to close it.
+    if (idleTimeoutMs === 0) {
+      recycled += 1;
+      await discardConnections([...expired, connection]);
+      serveWaiters();
+      return;
+    }
+
     const existingMeta = markConnectionUsed(connection, meta, now);
     idle.push(toPooledConnection(connection, existingMeta));
+
+    if (expired.length > 0) {
+      await discardConnections(expired);
+      serveWaiters();
+    }
+  };
+
+  /**
+   * Close a leased connection instead of returning it to the pool, for
+   * example when it may still hold an open transaction. Its slot goes to the
+   * next waiter. Close failures are counted in stats().closeErrors.
+   */
+  const discard = async (connection: DuckDBExecutionClient): Promise<void> => {
+    const nodeConnection = connection as DuckDBConnection;
+    if (!leased.delete(nodeConnection)) {
+      return;
+    }
+
+    discarded += 1;
+    await discardConnection(nodeConnection);
+    serveWaiters();
   };
 
   const close = async (): Promise<void> => {
@@ -436,6 +559,7 @@ export function createDuckDBConnectionPool(
   return {
     acquire,
     release,
+    discard,
     close,
     size,
     stats: () => ({
@@ -447,6 +571,8 @@ export function createDuckDBConnectionPool(
       pending: pendingAcquires,
       created,
       recycled,
+      discarded,
+      closeErrors,
       queued,
       queueWaitMs,
       timedOut,
@@ -464,6 +590,10 @@ export interface DuckDBPoolStats {
   pending: number;
   created: number;
   recycled: number;
+  /** Connections closed through discard(). */
+  discarded: number;
+  /** Failures while closing recycled or discarded connections. */
+  closeErrors: number;
   queued: number;
   queueWaitMs: number;
   timedOut: number;

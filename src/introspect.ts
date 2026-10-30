@@ -639,7 +639,9 @@ function emitSchema(
   if (!catalog.length) {
     return '/* No tables matched the introspection filters. */\nexport {};\n';
   }
-  imports.pgCore.add('pgSchema');
+  for (const schema of uniqueSchemas(catalog)) {
+    imports.pgCore.add(schemaFactory(schema).importName);
+  }
 
   const sorted = [...catalog].sort(
     (a, b) =>
@@ -702,7 +704,7 @@ function emitSchema(
   for (const schema of uniqueSchemas(sorted)) {
     const schemaVar = schemaIdentifiers.get(schema)!;
     lines.push(
-      `export const ${schemaVar} = pgSchema(${JSON.stringify(schema)});`,
+      `export const ${schemaVar} = ${schemaFactory(schema).call}(${JSON.stringify(schema)});`,
       ''
     );
 
@@ -730,6 +732,18 @@ function emitSchema(
 
   const importsBlock = renderImports(imports, options.importBasePath);
   return [importsBlock, ...lines].join('\n').trim() + '\n';
+}
+
+/**
+ * pgSchema() throws for "public" because Postgres tables there are unqualified.
+ * DuckDB resolves unqualified names against `main`, so a DuckDB schema named
+ * public (for example in an attached Postgres database) must stay qualified.
+ * The PgSchema constructor skips that check.
+ */
+function schemaFactory(schema: string): { importName: string; call: string } {
+  return schema === 'public'
+    ? { importName: 'PgSchema', call: 'new PgSchema' }
+    : { importName: 'pgSchema', call: 'pgSchema' };
 }
 
 function emitOtherDatabaseHeader(
@@ -1469,13 +1483,22 @@ function mapDuckDbType(
   }
 
   if (upper.startsWith('UNION')) {
-    imports.pgCore.add('text');
-    const unionLiteral = raw.replace(/^UNION\s*/i, '').trim();
+    imports.local.add('duckDbUnion');
+    // DuckDB reads a UNION value as { tag, value }, and duckDbUnion writes
+    // that shape back. String literal defaults become SQL defaults, since
+    // they do not match that type.
+    const members = parseStructFields(
+      raw.replace(/^UNION\s*\(/i, '').replace(/\)\s*$/, '')
+    );
+    const memberTypes = members
+      .map(
+        ({ name, type }) => `${JSON.stringify(name)}: ${JSON.stringify(type)}`
+      )
+      .join(', ');
     return {
-      builder: `text(${columnName(column.name)}) /* UNION ${escapeBlockComment(
-        unionLiteral
-      )} */`,
-      defaultLiterals: STRING_DEFAULTS,
+      builder: `duckDbUnion<${unionValueType(upper)}>(${columnName(
+        column.name
+      )}, { ${memberTypes} })`,
     };
   }
 
@@ -1622,15 +1645,35 @@ function mapDuckDbType(
     };
   }
 
-  // Fallback: keep as text to avoid runtime failures.
-  // Unknown types are mapped to text with a comment indicating the original type.
+  // Fallback: keep as text to avoid runtime failures, with a comment naming
+  // the original type. DuckDB returns these values as buffers, bigints,
+  // numbers or objects (BIT, BIGNUM, VARIANT, GEOMETRY), so the value type is
+  // unknown rather than string.
   imports.pgCore.add('text');
   return {
     builder: `text(${columnName(
       column.name
-    )}) /* unsupported DuckDB type: ${escapeBlockComment(upper)} */`,
+    )}).$type<unknown>() /* unsupported DuckDB type: ${escapeBlockComment(
+      upper
+    )} */`,
     defaultLiterals: STRING_DEFAULTS,
   };
+}
+
+/** TypeScript type of a UNION value: one { tag, value } shape per member. */
+function unionValueType(type: string): string {
+  const members = parseStructFields(
+    type.replace(/^UNION\s*\(/i, '').replace(/\)$/, '')
+  );
+  if (!members.length) {
+    return '{ tag: string; value: unknown }';
+  }
+  return members
+    .map(
+      ({ name, type: memberType }) =>
+        `{ tag: ${JSON.stringify(name)}; value: ${nestedValueType(memberType)} | null }`
+    )
+    .join(' | ');
 }
 
 export function parseStructFields(

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -11,6 +12,7 @@ import { configureDuckLake } from '../ducklake.ts';
 import { introspect } from '../introspect.ts';
 import {
   CliUsageError,
+  isLocalDatabasePath,
   parseArgs,
   type CliOptions,
 } from './duckdb-introspect-args.ts';
@@ -21,17 +23,25 @@ function printHelp(): void {
 Usage:
   bun x duckdb-introspect --url <duckdb path|md:> [--schema my_schema] [--out ./drizzle/schema.ts]
 
+Value options accept either --flag value or --flag=value.
+
 Options:
-  --url            DuckDB database path (e.g. :memory:, ./local.duckdb, md:)
+  --url            DuckDB database path (e.g. :memory:, ./local.duckdb, md:).
+                   A local file must already exist. It is never created.
   --database, --db Database/catalog to introspect (default: current database)
   --all-databases  Introspect all attached databases (not just current)
-  --bigint-mode   bigint (default, exact) or number (may round large values)
-  --schema         Comma separated schema list (defaults to all non-system schemas)
-  --out            Output file (default: ./drizzle/schema.ts)
-  --json           Optional JSON metadata output file (e.g. ./drizzle/schema.meta.json)
-  --include-views  Include views in the generated schema
+  --bigint-mode    bigint (default, exact) or number (may round large values)
+  --schema, --schemas
+                   Comma separated schema list (defaults to all non-system schemas).
+                   Repeat the flag to add more schemas
+  --out, --outFile Output file (default: ./drizzle/schema.ts)
+  --json, --out-json, --outJson
+                   Optional JSON metadata output file (e.g. ./drizzle/schema.meta.json)
+  --include-views, --includeViews
+                   Include views in the generated schema
   --use-pg-time    Use pg-core timestamp/date/time instead of DuckDB custom helpers
   --import-base    Override import path for duckdb helpers (default: @duckdbfan/drizzle-duckdb/helpers)
+  --help, -h       Show this help
   --ducklake-catalog           DuckLake catalog value after the ducklake: prefix
   --ducklake-alias             Alias for attached DuckLake database
   --ducklake-no-use            Do not run USE after attach
@@ -83,6 +93,10 @@ async function checkTargetsExist(
     sql`SELECT catalog_name, schema_name FROM information_schema.schemata`
   );
   const databases = [...new Set(rows.map((row) => row.catalog_name))];
+  // DuckDB's own catalogs, which introspection never targets.
+  const userDatabases = databases.filter(
+    (name) => name !== 'system' && name !== 'temp'
+  );
 
   let database: string | undefined;
   if (options.database !== undefined || !options.allDatabases) {
@@ -96,7 +110,7 @@ async function checkTargetsExist(
     }
     if (database !== undefined && !databases.includes(database)) {
       throw new Error(
-        `Database ${JSON.stringify(database)} not found. Attached databases: ${formatNames(databases)}`
+        `Database ${JSON.stringify(database)} not found. Attached databases: ${formatNames(userDatabases)}`
       );
     }
   }
@@ -141,6 +155,14 @@ async function main() {
   if (!options.url) {
     printHelp();
     throw new CliUsageError('Missing required --url');
+  }
+
+  // DuckDB creates a missing file, so a mistyped path would otherwise
+  // replace the output with an empty schema and leave a stray database.
+  if (isLocalDatabasePath(options.url) && !existsSync(options.url)) {
+    throw new Error(
+      `Database file ${JSON.stringify(path.resolve(options.url))} does not exist. duckdb-introspect does not create databases. Check the --url path.`
+    );
   }
 
   const instanceOptions =
