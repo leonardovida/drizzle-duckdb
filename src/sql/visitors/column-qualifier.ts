@@ -8,6 +8,12 @@
  * source unless the qualified side already is that source. When that cannot
  * be decided, the reference is left as it is.
  *
+ * This is a guess made without the catalog. When the unqualified column
+ * actually belongs to the other source, as in `ON u.id = tid` with `tid` a
+ * column of `u`, the rewrite names a column that does not exist and a query
+ * DuckDB would have accepted fails to bind. That is why it only runs when
+ * qualifyRawJoinColumns is enabled.
+ *
  * Other unqualified references to the same name in SELECT, WHERE, GROUP BY,
  * HAVING and ORDER BY get the qualifier chosen in the ON clause. Names that
  * were given different qualifiers, and USING columns, are left unqualified.

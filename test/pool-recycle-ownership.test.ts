@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 test.each(['idle acquire', 'expired release'] as const)(
-  '%s keeps the closing slot until failure, then serves waiters in order',
+  '%s keeps the closing slot until close settles, then serves waiters in order',
   async (trigger) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -54,7 +54,22 @@ test.each(['idle acquire', 'expired release'] as const)(
       });
 
       rejectClose(failure);
-      expect(await recycling).toBe(failure);
+      if (trigger === 'expired release') {
+        // The pool owns the close failure, so release() still resolves.
+        expect(await recycling).toBeUndefined();
+      } else {
+        // The acquire that found the stale connection keeps the freed slot,
+        // and its close failure does not fail it.
+        expect(await recycling).toBe(replacement);
+        expect(pool.stats()).toMatchObject({
+          total: 1,
+          leased: 1,
+          waiting: 2,
+          created: 2,
+          closeErrors: 1,
+        });
+        await pool.release(replacement as unknown as DuckDBConnection);
+      }
       const next = await first;
       expect(next).toBe(replacement);
       expect(pool.stats()).toMatchObject({
@@ -64,6 +79,7 @@ test.each(['idle acquire', 'expired release'] as const)(
         pending: 0,
         created: 2,
         recycled: 1,
+        closeErrors: 1,
         queued: 2,
         timedOut: 0,
       });
@@ -122,7 +138,13 @@ test.each(['idle acquire', 'expired release'] as const)(
       );
       expect(vi.getTimerCount()).toBe(0);
       rejectClose(failure);
-      expect(await recycling).toBe(failure);
+      if (trigger === 'expired release') {
+        expect(await recycling).toBeUndefined();
+      } else {
+        expect(await recycling).toEqual(
+          new Error('DuckDB connection pool is closed')
+        );
+      }
       expect(create).toHaveBeenCalledTimes(1);
       expect(original.close).toHaveBeenCalledTimes(1);
       expect(pool.stats()).toMatchObject({
@@ -133,6 +155,7 @@ test.each(['idle acquire', 'expired release'] as const)(
         pending: 0,
         created: 1,
         recycled: 1,
+        closeErrors: 1,
         closed: true,
       });
     } finally {

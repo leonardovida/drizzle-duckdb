@@ -57,7 +57,7 @@ test.each(['failed acquire', 'expired release'] as const)(
   }
 );
 
-test('recycling cancels only the first waiter timer and release awaits setup', async () => {
+test('recycling cancels only the first waiter timer and release does not await its setup', async () => {
   vi.useFakeTimers();
   const original = { closeSync: vi.fn() } as unknown as DuckDBConnection;
   const replacement = { closeSync: vi.fn() } as unknown as DuckDBConnection;
@@ -97,16 +97,17 @@ test('recycling cancels only the first waiter timer and release awaits setup', a
     });
 
     await setupStarted;
+    // The releasing caller is done once its own connection is closed. The
+    // waiter's replacement setup runs on its own.
+    await releasing;
+    expect(releaseSettled).toBe(true);
     await vi.advanceTimersByTimeAsync(11);
     expect(firstSettled).toBe(false);
-    expect(releaseSettled).toBe(false);
     expect(((await secondWaiter) as Error).message).toBe(
       'DuckDB connection pool acquire timeout after 10ms'
     );
     finishSetup();
     expect(await firstWaiter).toBe(replacement);
-    await releasing;
-    expect(releaseSettled).toBe(true);
     await pool.release(replacement);
   } finally {
     finishSetup();

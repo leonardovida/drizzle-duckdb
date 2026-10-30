@@ -418,7 +418,7 @@ describe('executeOnClient', () => {
 
     const rows = await executeOnClient(client, 'select', []);
 
-    expect(rows).toEqual([{ id: 1, id_1: 2, id_1_1: 3 }]);
+    expect(rows).toEqual([{ id: 1, id_2: 2, id_1: 3 }]);
   });
 
   test('uses JSON materialization for precise time families', async () => {
@@ -590,7 +590,7 @@ describe('executeInBatchesRaw', () => {
     }
 
     expect(chunks).toEqual([
-      { columns: ['id', 'id_1', 'id_1_1'], rows: [[1, 2, 3]] },
+      { columns: ['id', 'id_2', 'id_1'], rows: [[1, 2, 3]] },
     ]);
   });
 
@@ -664,10 +664,11 @@ describe('consumed node-api results', () => {
           rowCount: rows.length,
           convertRows: (converter: unknown) => {
             // Any converter other than the JS one reads ts_ns as a string.
-            if (
-              (converter !== JSDuckDBValueConverter && options.jsonFails) ||
-              (converter === JSDuckDBValueConverter && options.jsFails)
-            ) {
+            // The driver wraps node-api's JS converter to floor timestamps.
+            const isJs =
+              converter === JSDuckDBValueConverter ||
+              (converter as { name?: string }).name === 'JSValueConverter';
+            if ((!isJs && options.jsonFails) || (isJs && options.jsFails)) {
               throw new Error('Unexpected type id: 0');
             }
             return rows;

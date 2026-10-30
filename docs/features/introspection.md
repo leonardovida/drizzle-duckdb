@@ -19,10 +19,10 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 
 | Option                                | Description                                                                                                                        | Default                             |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `--url`                               | DuckDB database path (`:memory:`, `./file.duckdb`, `md:`)                                                                          | Required                            |
+| `--url`                               | DuckDB database path (`:memory:`, `./file.duckdb`, `md:`). A local file must already exist                                         | Required                            |
 | `--database`, `--db`                  | Database/catalog to introspect                                                                                                     | Current database                    |
 | `--all-databases`                     | Introspect all attached databases                                                                                                  | `false`                             |
-| `--schema`, `--schemas`               | Comma-separated schema names, such as `--schema main,analytics`. Not a repeatable flag                                             | All non-system schemas              |
+| `--schema`, `--schemas`               | Comma-separated schema names, such as `--schema main,analytics`. Repeatable, and repeated values are merged                        | All non-system schemas              |
 | `--out`, `--outFile`                  | Output file path                                                                                                                   | `./drizzle/schema.ts`               |
 | `--json`, `--out-json`, `--outJson`   | Also write table metadata as JSON to this path                                                                                     | Not written                         |
 | `--include-views`, `--includeViews`   | Include views in generated schema                                                                                                  | `false`                             |
@@ -46,7 +46,11 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 
 To pass metadata catalog options such as `META_TYPE`, use `--ducklake-meta-parameter type=duckdb`. It maps to `ducklake.attachOptions.metaParameters` in the programmatic API.
 
-The CLI exits with code 2 on invalid usage: a missing `--url` (which also prints the help text), a flag without its value, an unknown option, a stray positional argument, or an invalid `--ducklake-data-inlining-row-limit`. Other failures exit with code 1.
+Value options accept either `--flag value` or `--flag=value`. `--help` prints the help text and exits with code 0 even when other arguments are invalid.
+
+The CLI exits with code 2 on invalid usage: a missing `--url` (which also prints the help text), a flag without its value, a value given to a flag that takes none (such as `--include-views=true`), a `--schema` value with no schema names, an unknown option, a stray positional argument, or an invalid `--ducklake-data-inlining-row-limit`. Other failures exit with code 1.
+
+When `--url` names a local file that does not exist, the CLI exits with code 1 without creating the file or writing any output. DuckDB would otherwise create an empty database, so a mistyped path would replace the schema file with an empty module. `:memory:` and URLs with a scheme, such as `md:` or `motherduck:`, are not checked.
 
 Before writing anything, the CLI checks that the `--database` and every `--schema` exist. If one is missing it exits with code 1, names the missing database or schema and lists the available ones, and leaves the output file untouched. A schema that exists but has no tables still writes an empty module and prints a warning.
 
@@ -188,7 +192,7 @@ interface IntrospectResult {
 The introspector generates Drizzle schema files with:
 
 1. **Imports** from `drizzle-orm`, `drizzle-orm/pg-core`, and DuckDB helpers
-2. **Schema declarations** for each database schema
+2. **Schema declarations** for each database schema. A schema named `public` is declared as `new PgSchema("public")`, because `pgSchema("public")` throws and an unqualified `pgTable()` would resolve against DuckDB's `main` schema
 3. **Table definitions** with columns, primary keys, unique constraints and foreign keys
 4. **View definitions** (with `--include-views`) as `schema.view(name, { ...columns }).existing()`, which Drizzle treats as read-only and drizzle-kit does not try to create
 5. **Comments** for CHECK constraints and `CREATE INDEX` indexes, which are not emitted as Drizzle config
@@ -277,13 +281,14 @@ Generated MAP helpers opt into `{ mode: 'object' }` so their `Record<string, T>`
 
 ### String and Other Scalar Types
 
-| DuckDB Type               | Drizzle Builder         |
-| ------------------------- | ----------------------- |
-| `VARCHAR` (also `TEXT`)   | `varchar()`             |
-| `CHAR(n)`                 | `char({ length: n })`   |
-| `BOOLEAN`                 | `boolean()`             |
-| `UUID`                    | `uuid()`                |
-| `ENUM(...)`, `UNION(...)` | `text()` with a comment |
+| DuckDB Type             | Drizzle Builder                                 |
+| ----------------------- | ----------------------------------------------- |
+| `VARCHAR` (also `TEXT`) | `varchar()`                                     |
+| `CHAR(n)`               | `char({ length: n })`                           |
+| `BOOLEAN`               | `boolean()`                                     |
+| `UUID`                  | `uuid()`                                        |
+| `ENUM(...)`             | `text()` with a comment                         |
+| `UNION(...)`            | `text().$type<{ tag, value }>()` with a comment |
 
 DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARCHAR(n)` length, so they come back as `varchar()` without a length.
 
@@ -314,7 +319,9 @@ DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARC
 
 The generated `duckDbMap` always has the value type. A non-string key type is emitted as `{ keyType }`, for example `duckDbMap("counts", "VARCHAR", { keyType: "INTEGER" })`. String keys (`VARCHAR`) leave out the option because `VARCHAR` is the default.
 
-Unrecognized types fall back to `text()` with a `/* unsupported DuckDB type: ... */` comment.
+DuckDB returns a `UNION` value as an object such as `{ tag: "num", value: 1 }`, so the generated column type is a union of one `{ tag; value }` shape per member.
+
+Unrecognized types, such as `BIT`, `BIGNUM`, `VARIANT` and `GEOMETRY`, fall back to `text().$type<unknown>()` with a `/* unsupported DuckDB type: ... */` comment. DuckDB returns these values as buffers, bigints, numbers or objects rather than strings, so the column is typed `unknown`.
 
 ## Constraints
 

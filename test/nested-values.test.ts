@@ -84,15 +84,15 @@ describe('Dates and bytes inside nested literals', () => {
     const dialect = new DuckDBDialect();
     expect(
       dialect.sqlToQuery(buildListLiteral([instant], 'TIMESTAMP')).sql
-    ).toBe("list_value(TIMESTAMP '2024-01-01 00:00:00.123')");
+    ).toBe("list_value(TIMESTAMP '2024-01-01 00:00:00.123')::TIMESTAMP[]");
     expect(
       dialect.sqlToQuery(buildMapLiteral({ a: instant }, 'TIMESTAMPTZ')).sql
     ).toBe(
-      "map(list_value('a'), list_value(TIMESTAMPTZ '2024-01-01 00:00:00.123+00'))"
+      "map(list_value('a')::TEXT[], list_value(TIMESTAMPTZ '2024-01-01 00:00:00.123+00')::TIMESTAMPTZ[])"
     );
     expect(
       dialect.sqlToQuery(buildListLiteral([Buffer.from("'")], 'BLOB')).sql
-    ).toBe("list_value(from_hex('27'))");
+    ).toBe("list_value(from_hex('27'))::BLOB[]");
   });
 
   test('array predicates take Date values typed from the column', async () => {

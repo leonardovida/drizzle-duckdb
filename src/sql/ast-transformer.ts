@@ -9,9 +9,11 @@
  * Postgres array operators (@>, <@, &&) are native in DuckDB and pass through.
  *
  * Re-printing the AST is lossy (node-sql-parser applies backslash escapes to
- * string literals and misreads IS DISTINCT FROM $1), so the rewritten SQL is
- * only used when its literals, parameters and quoted identifiers match the
- * original query.
+ * string literals, misreads IS DISTINCT FROM $1, rounds large negative
+ * numbers, prints `- -x` as the comment `--x` and reads ANTI or ASOF as a
+ * table alias), so the rewritten SQL is only used when its literals,
+ * parameters, numbers and quoted identifiers match the original query and it
+ * has no comments.
  *
  * Performance optimizations:
  * - LRU cache for transformed queries (avoids re-parsing identical queries)
@@ -23,7 +25,11 @@ import nodeSqlParser from 'node-sql-parser';
 const { Parser } = nodeSqlParser;
 import type { AST } from 'node-sql-parser';
 
-import { rewriteArrayBoundsText } from './array-bounds-text.ts';
+import {
+  dollarTagAt,
+  isEscapeStringAt,
+  rewriteArrayBoundsText,
+} from './array-bounds-text.ts';
 import { transformArrayBounds } from './visitors/array-bounds.ts';
 import { qualifyJoinColumns } from './visitors/column-qualifier.ts';
 import { rewriteGenerateSeriesAliases } from './visitors/generate-series-alias.ts';
@@ -39,6 +45,9 @@ export type TransformResult = {
 // LRU cache for transformed SQL queries
 // Key: original SQL, Value: transformed result
 const CACHE_SIZE = 500;
+// Larger statements are transformed but not kept, so the cache cannot hold
+// hundreds of multi-megabyte strings.
+const MAX_CACHED_QUERY_LENGTH = 64 * 1024;
 const transformCache = new Map<string, TransformResult>();
 const conservativeTransformCache = new Map<string, TransformResult>();
 
@@ -56,6 +65,7 @@ function getCachedOrTransform(
   }
 
   const result = transform();
+  if (query.length > MAX_CACHED_QUERY_LENGTH) return result;
 
   // Add to cache with LRU eviction
   if (cache.size >= CACHE_SIZE) {
@@ -75,6 +85,7 @@ const DEBUG_ENV = 'DRIZZLE_DUCKDB_DEBUG_AST';
 const ARRAY_BOUNDS_PATTERN = /\barray_(?:lower|upper)\s*\(/i;
 const JOIN_PATTERN = /\bjoin\b/i;
 const UNION_PATTERN = /\bunion\b/i;
+const WITH_PATTERN = /\bwith\b/i;
 const INTERSECT_PATTERN = /\bintersect\b/i;
 const EXCEPT_PATTERN = /\bexcept\b/i;
 const GENERATE_SERIES_PATTERN = /\bgenerate_series\b/i;
@@ -88,24 +99,36 @@ type SqlTokens = {
   strings: string[];
   params: string[];
   identifiers: string[];
+  numbers: string[];
   words: Set<string>;
+  comments: number;
 };
 
+const NUMBER = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+
 /**
- * Scan SQL with DuckDB lexing rules: '' and "" escapes, no backslash escapes.
- * Returns undefined for unterminated strings, identifiers or comments.
+ * Scan SQL with DuckDB lexing rules: '' and "" escapes, backslash escapes
+ * only in E'' strings. Returns undefined for unterminated strings,
+ * identifiers or comments.
  */
 function scanSqlTokens(query: string): SqlTokens | undefined {
   const tokens: SqlTokens = {
     strings: [],
     params: [],
     identifiers: [],
+    numbers: [],
     words: new Set(),
+    comments: 0,
   };
 
   const readQuoted = (start: number, quote: string): number => {
+    const backslashEscapes = isEscapeStringAt(query, start);
     let index = start + 1;
     while (index < query.length) {
+      if (backslashEscapes && query[index] === '\\') {
+        index += 2;
+        continue;
+      }
       if (query[index] === quote) {
         if (query[index + 1] === quote) {
           index += 2;
@@ -130,23 +153,25 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
       (char === "'" ? tokens.strings : tokens.identifiers).push(text);
       index = end + 1;
     } else if (rest.startsWith('--')) {
+      tokens.comments += 1;
       const end = query.indexOf('\n', index);
       index = end === -1 ? query.length : end + 1;
     } else if (rest.startsWith('/*')) {
+      tokens.comments += 1;
       const end = query.indexOf('*/', index + 2);
       if (end === -1) return undefined;
       index = end + 2;
     } else if (char === '$') {
       const param = /^\$\d+/.exec(rest);
-      const tag = /^\$[A-Za-z_]*\$/.exec(rest);
+      const tag = dollarTagAt(query, index);
       if (param) {
         tokens.params.push(param[0]);
         index += param[0].length;
       } else if (tag) {
-        const end = query.indexOf(tag[0], index + tag[0].length);
+        const end = query.indexOf(tag, index + tag.length);
         if (end === -1) return undefined;
-        tokens.strings.push(query.slice(index, end + tag[0].length));
-        index = end + tag[0].length;
+        tokens.strings.push(query.slice(index, end + tag.length));
+        index = end + tag.length;
       } else {
         index += 1;
       }
@@ -154,6 +179,11 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
       const word = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(rest)![0];
       tokens.words.add(word);
       index += word.length;
+    } else if (NUMBER.test(rest)) {
+      const number = NUMBER.exec(rest)![0];
+      // The printer writes .5 as 0.5.
+      tokens.numbers.push(number.startsWith('.') ? `0${number}` : number);
+      index += number.length;
     } else {
       index += 1;
     }
@@ -169,9 +199,21 @@ function sameItems(left: string[], right: string[]): boolean {
   return sortedLeft.every((item, index) => item === sortedRight[index]);
 }
 
+// DuckDB join modifiers the parser reads as an alias of the table before
+// them, so `t anti join u` is re-printed as `"t" AS "anti" INNER JOIN "u"`.
+const JOIN_MODIFIERS = new Set([
+  'anti',
+  'asof',
+  'cross',
+  'natural',
+  'positional',
+  'semi',
+]);
+
 /**
- * Check that the re-printed SQL kept every string literal and parameter and
- * only uses identifiers that already appear in the original query.
+ * Check that the re-printed SQL kept every string literal, parameter and
+ * number, has no comments and only uses identifiers that already appear in
+ * the original query.
  */
 function preservesTokens(
   original: string,
@@ -184,6 +226,34 @@ function preservesTokens(
 
   if (!sameItems(before.strings, after.strings)) return false;
   if (!sameItems(before.params, after.params)) return false;
+
+  // The parser folds a unary minus into a JavaScript number, which loses
+  // precision past 2^53. The array bounds rewrite drops the dimension 1 and
+  // adds 0 and 1 of its own, so those two are not counted for it.
+  const counted = (numbers: string[]) =>
+    arrayBoundsTransformed
+      ? numbers.filter((number) => number !== '0' && number !== '1')
+      : numbers;
+  if (!sameItems(counted(before.numbers), counted(after.numbers))) {
+    return false;
+  }
+
+  // The printer emits no comments, so one in its output is an operator it
+  // ran together, such as `- -x` printed as `--x`.
+  if (after.comments > 0) return false;
+
+  const quotedBefore = new Set(
+    before.identifiers.map((identifier) => identifier.toLowerCase())
+  );
+  if (
+    after.identifiers.some(
+      (identifier) =>
+        JOIN_MODIFIERS.has(identifier.toLowerCase()) &&
+        !quotedBefore.has(identifier.toLowerCase())
+    )
+  ) {
+    return false;
+  }
 
   const known = new Set([...before.identifiers, ...before.words]);
   // Only compiler-owned aliases may be added. Literal and parameter
@@ -221,10 +291,12 @@ export function transformSQL(
   const needsJoinTransform =
     options.qualifyJoinColumns !== false &&
     (JOIN_PATTERN.test(query) || hasUpdateFrom(query));
+  // Set operations are only parsed to hoist a WITH out of an arm.
   const needsUnionTransform =
-    UNION_PATTERN.test(query) ||
-    INTERSECT_PATTERN.test(query) ||
-    EXCEPT_PATTERN.test(query);
+    WITH_PATTERN.test(query) &&
+    (UNION_PATTERN.test(query) ||
+      INTERSECT_PATTERN.test(query) ||
+      EXCEPT_PATTERN.test(query));
   const needsGenerateSeriesTransform = GENERATE_SERIES_PATTERN.test(query);
 
   if (

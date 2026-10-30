@@ -25,6 +25,8 @@ export class CliUsageError extends Error {
   }
 }
 
+const HELP_FLAGS = new Set(['--help', '-h']);
+
 export function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     help: false,
@@ -52,11 +54,27 @@ export function parseArgs(argv: string[]): CliOptions {
     return config.attachOptions;
   };
 
+  // Help wins over every other argument, including unknown options.
+  if (argv.some((arg) => HELP_FLAGS.has(arg))) {
+    options.help = true;
+    return options;
+  }
+
   for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!;
-    // Consumes the next argument, rejecting a missing value or another flag
-    // so `--url --out x.ts` does not open a database named `--out`.
+    const token = argv[i]!;
+    // `--flag=value` carries its value inline.
+    const equals = token.startsWith('--') ? token.indexOf('=') : -1;
+    const arg = equals > 0 ? token.slice(0, equals) : token;
+    const inlineValue = equals > 0 ? token.slice(equals + 1) : undefined;
+    // Consumes the value, rejecting a missing value or another flag so
+    // `--url --out x.ts` does not open a database named `--out`.
     const requireValue = (): string => {
+      if (inlineValue !== undefined) {
+        if (!inlineValue) {
+          throw new CliUsageError(`Missing value for ${arg}`);
+        }
+        return inlineValue;
+      }
       const value = argv[i + 1];
       if (
         value === undefined ||
@@ -66,6 +84,14 @@ export function parseArgs(argv: string[]): CliOptions {
       }
       i += 1;
       return value;
+    };
+    // Boolean flags take no value, so `--include-views=false` is an error
+    // rather than silently enabling the flag.
+    const flag = (): true => {
+      if (inlineValue !== undefined) {
+        throw new CliUsageError(`${arg} does not take a value`);
+      }
+      return true;
     };
 
     switch (arg) {
@@ -77,7 +103,7 @@ export function parseArgs(argv: string[]): CliOptions {
         options.database = requireValue();
         break;
       case '--all-databases':
-        options.allDatabases = true;
+        options.allDatabases = flag();
         break;
       case '--bigint-mode': {
         const mode = requireValue();
@@ -87,12 +113,20 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       }
       case '--schema':
-      case '--schemas':
-        options.schemas = requireValue()
+      case '--schemas': {
+        const schemas = requireValue()
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
+        if (!schemas.length) {
+          throw new CliUsageError(`${arg} needs at least one schema name`);
+        }
+        // Repeated flags add to the list.
+        options.schemas = [
+          ...new Set([...(options.schemas ?? []), ...schemas]),
+        ];
         break;
+      }
       case '--out':
       case '--outFile':
         options.outFile = path.resolve(process.cwd(), requireValue());
@@ -104,9 +138,10 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       case '--include-views':
       case '--includeViews':
-        options.includeViews = true;
+        options.includeViews = flag();
         break;
       case '--use-pg-time':
+        flag();
         options.useCustomTimeTypes = false;
         break;
       case '--import-base':
@@ -119,25 +154,26 @@ export function parseArgs(argv: string[]): CliOptions {
         ensureDuckLakeConfig().alias = requireValue();
         break;
       case '--ducklake-no-use':
+        flag();
         ensureDuckLakeConfig().use = false;
         break;
       case '--ducklake-install':
-        ensureDuckLakeConfig().install = true;
+        ensureDuckLakeConfig().install = flag();
         break;
       case '--ducklake-load':
-        ensureDuckLakeConfig().load = true;
+        ensureDuckLakeConfig().load = flag();
         break;
       case '--ducklake-data-path':
         ensureDuckLakeAttachOptions().dataPath = requireValue();
         break;
       case '--ducklake-read-only':
-        ensureDuckLakeAttachOptions().readOnly = true;
+        ensureDuckLakeAttachOptions().readOnly = flag();
         break;
       case '--ducklake-create-if-not-exists':
-        ensureDuckLakeAttachOptions().createIfNotExists = true;
+        ensureDuckLakeAttachOptions().createIfNotExists = flag();
         break;
       case '--ducklake-override-data-path':
-        ensureDuckLakeAttachOptions().overrideDataPath = true;
+        ensureDuckLakeAttachOptions().overrideDataPath = flag();
         break;
       case '--ducklake-data-inlining-row-limit': {
         const value = requireValue();
@@ -150,7 +186,7 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       }
       case '--ducklake-encrypted':
-        ensureDuckLakeAttachOptions().encrypted = true;
+        ensureDuckLakeAttachOptions().encrypted = flag();
         break;
       case '--ducklake-metadata-catalog':
         ensureDuckLakeAttachOptions().metadataCatalog = requireValue();
@@ -175,10 +211,6 @@ export function parseArgs(argv: string[]): CliOptions {
         throw new CliUsageError(
           `${arg} is no longer supported. Use --ducklake-meta-parameter KEY=VALUE, which emits META_<KEY> 'VALUE'.`
         );
-      case '--help':
-      case '-h':
-        options.help = true;
-        return options;
       default:
         throw new CliUsageError(
           arg.startsWith('-')
@@ -193,4 +225,19 @@ export function parseArgs(argv: string[]): CliOptions {
   }
 
   return options;
+}
+
+/**
+ * Whether `--url` names a local database file. `:memory:` and URLs with a
+ * scheme (md:, motherduck:, s3://, https://) are not local files. A Windows
+ * drive letter such as C:\ is.
+ */
+export function isLocalDatabasePath(url: string): boolean {
+  if (url === ':memory:' || url.startsWith(':memory:')) {
+    return false;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(url)) {
+    return true;
+  }
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url);
 }

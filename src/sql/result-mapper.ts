@@ -13,6 +13,7 @@ import {
   PgCustomColumn,
   PgDate,
   PgDateString,
+  PgInet,
   PgInterval,
   PgTime,
   PgTimestamp,
@@ -328,9 +329,26 @@ export function normalizeInterval(value: unknown): string | unknown {
   return value;
 }
 
+/**
+ * INET values arrive as plain objects. Only convert them for INET columns and
+ * for SQL without a column type. A typed STRUCT column with the same three
+ * fields keeps its value.
+ */
+function decodesInet(decoder: DriverValueDecoder<unknown, unknown>): boolean {
+  if (is(decoder, PgInet)) return true;
+  if (is(decoder, Column)) {
+    // 'unknown' is the stand-in column exposeSubqueryFields() gives untyped
+    // SQL fields of a subquery.
+    const type = decoder.getSQLType().trim().toUpperCase();
+    return type === 'INET' || type === 'UNKNOWN';
+  }
+  return true;
+}
+
 function compileValueMapper(
   decoder: DriverValueDecoder<unknown, unknown>
 ): (value: unknown) => unknown {
+  const inet = decodesInet(decoder) ? normalizeInet : (value: unknown) => value;
   let normalize: (value: unknown) => unknown = (value) => value;
   if (is(decoder, PgTimestampString)) {
     normalize = (value) =>
@@ -338,10 +356,7 @@ function compileValueMapper(
   } else if (is(decoder, PgTimestamp)) {
     return (value) => {
       if (value === null) return null;
-      const normalized = normalizeTimestamp(
-        normalizeInet(value),
-        decoder.withTimezone
-      );
+      const normalized = normalizeTimestamp(inet(value), decoder.withTimezone);
       return normalized instanceof Date
         ? normalized
         : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
@@ -359,7 +374,7 @@ function compileValueMapper(
     value === null
       ? null
       : decoder.mapFromDriverValue(
-          toDecoderInput(decoder, normalize(normalizeInet(value)))
+          toDecoderInput(decoder, normalize(inet(value)))
         );
 }
 

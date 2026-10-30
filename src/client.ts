@@ -42,6 +42,11 @@ export type RowData = Record<string, unknown>;
 export interface DuckDBConnectionPool {
   acquire(): Promise<DuckDBExecutionClient>;
   release(connection: DuckDBExecutionClient): void | Promise<void>;
+  /**
+   * Close a leased connection instead of returning it, for example when it
+   * may still be inside a transaction. Pools without it get `release()`.
+   */
+  discard?(connection: DuckDBExecutionClient): Promise<void> | void;
   close?(): Promise<void> | void;
 }
 
@@ -296,7 +301,9 @@ export function prepareParams(
     ) {
       const trimmed = param.trim();
 
-      if (trimmed && isPgArrayLiteral(trimmed)) {
+      // An empty list has no item type to bind with, and '{}' is far more
+      // often an empty JSON object, so it stays text.
+      if (trimmed && isPgArrayLiteral(trimmed) && !/^\{\s*\}$/.test(trimmed)) {
         if (options.rejectStringArrayLiterals) {
           throw new Error(
             'Stringified array literals are not supported. Use duckDbList()/duckDbArray() or pass native arrays.'
@@ -377,7 +384,14 @@ function toNodeApiValue(value: unknown, typeHint?: DuckDBType): DuckDBValue {
     return blobValue(value instanceof Buffer ? new Uint8Array(value) : value);
   }
 
-  // Fallback for unknown objects
+  // node-api reports plain objects as "Cannot create values of type ANY".
+  if (Object.getPrototypeOf(value) === Object.prototype) {
+    throw new Error(
+      'Cannot bind a plain object as a query parameter. Use a duckDbStruct(), duckDbMap() or duckDbJson() column, wrap it with wrapStruct() or wrapJson(), or pass JSON.stringify(value).'
+    );
+  }
+
+  // Fallback for unknown objects, such as node-api value instances
   return value as DuckDBValue;
 }
 
@@ -443,7 +457,11 @@ function wrapperToPgDuckValue(wrapper: AnyDuckDBValueWrapper): unknown {
     case 'json':
       return JSON.stringify(wrapper.data);
     case 'timestamp':
-      return wrapper.data;
+      // node-postgres sends a Date in local time with an offset, which a
+      // naive TIMESTAMP drops. ISO text in UTC matches the native path.
+      return wrapper.data instanceof Date
+        ? wrapper.data.toISOString()
+        : wrapper.data;
     case 'blob':
       return wrapper.data instanceof Buffer
         ? wrapper.data
@@ -493,17 +511,21 @@ function deduplicateColumns(columns: string[]): string[] {
   const used = new Set<string>();
   const nextSuffix = new Map<string, number>();
   let deduplicated: string[] | undefined;
+  // A suffixed name must not take a name the query selects explicitly, such
+  // as `a_1` in `select 1 as a, 2 as a, 3 as a_1`.
+  let original: Set<string> | undefined;
 
   for (let index = 0; index < columns.length; index += 1) {
     const column = columns[index] as string;
     let candidate = column;
 
     if (used.has(candidate)) {
+      original ??= new Set(columns);
       let suffix = nextSuffix.get(column) ?? 1;
       do {
         candidate = `${column}_${suffix}`;
         suffix += 1;
-      } while (used.has(candidate));
+      } while (used.has(candidate) || original.has(candidate));
 
       nextSuffix.set(column, suffix);
       deduplicated ??= columns.slice();
@@ -530,12 +552,14 @@ function normalizeDeduplicatedColumns(
       return column;
     }
 
+    // node-api names duplicates `a:1`. Restore the name and let
+    // deduplicateColumns pick a `_N` suffix no selected column uses.
     const duplicatePrefix = `${original}:`;
-    if (column.startsWith(duplicatePrefix)) {
-      const suffix = column.slice(duplicatePrefix.length);
-      if (/^\d+$/.test(suffix)) {
-        return `${original}_${suffix}`;
-      }
+    if (
+      column.startsWith(duplicatePrefix) &&
+      /^\d+$/.test(column.slice(duplicatePrefix.length))
+    ) {
+      return original as string;
     }
 
     return column;
@@ -635,6 +659,51 @@ function wrapUnsupportedNodeApiTypeError(
   return wrapped;
 }
 
+/** DuckDB stores `infinity` and `-infinity` timestamps as the int64 extremes. */
+const TIMESTAMP_INFINITY_MICROS = 9_223_372_036_854_775_807n;
+const MAX_DATE_MILLIS = 8_640_000_000_000_000n;
+
+/**
+ * node-api divides with truncation, which moves pre-1970 values with
+ * sub-millisecond digits forward, sometimes into the next year. Floor instead,
+ * and read infinite values as DuckDB's text rather than failing the query.
+ */
+function dateFromTimestampUnits(
+  units: bigint,
+  unitsPerMilli: bigint,
+  typeName: string
+): Date | string {
+  if (units === TIMESTAMP_INFINITY_MICROS) return 'infinity';
+  if (units === -TIMESTAMP_INFINITY_MICROS) return '-infinity';
+  let millis = units / unitsPerMilli;
+  if (units % unitsPerMilli < 0n) millis -= 1n;
+  if (millis < -MAX_DATE_MILLIS || millis > MAX_DATE_MILLIS) {
+    throw new Error(`${typeName} value out of range for JS Date: ${units}`);
+  }
+  return new Date(Number(millis));
+}
+
+const JSValueConverter: DuckDBValueConverter<JS> = (value, type, converter) => {
+  if (value !== null && typeof value === 'object') {
+    if (
+      (type.typeId === DuckDBTypeId.TIMESTAMP ||
+        type.typeId === DuckDBTypeId.TIMESTAMP_TZ) &&
+      'micros' in value &&
+      typeof value.micros === 'bigint'
+    ) {
+      return dateFromTimestampUnits(value.micros, 1000n, 'TIMESTAMP');
+    }
+    if (
+      type.typeId === DuckDBTypeId.TIMESTAMP_NS &&
+      'nanos' in value &&
+      typeof value.nanos === 'bigint'
+    ) {
+      return dateFromTimestampUnits(value.nanos, 1_000_000n, 'TIMESTAMP_NS');
+    }
+  }
+  return JSDuckDBValueConverter(value, type, converter);
+};
+
 /**
  * TIMESTAMP_NS, TIME_TZ and TIME_NS columns read as DuckDB strings, which keep
  * the precision a JS value would lose. Every other column keeps its JS value,
@@ -644,7 +713,7 @@ function wrapUnsupportedNodeApiTypeError(
 const PerColumnValueConverter: DuckDBValueConverter<JS> = (value, type) =>
   JSON_RESULT_TYPE_IDS.has(type.typeId)
     ? JsonDuckDBValueConverter(value, type, JsonDuckDBValueConverter)
-    : JSDuckDBValueConverter(value, type, JSDuckDBValueConverter);
+    : JSValueConverter(value, type, JSValueConverter);
 
 /**
  * Read top-level DECIMAL values as their exact text, which a double would
@@ -659,7 +728,7 @@ function withExactDecimals(
       ? value === null
         ? null
         : String(value)
-      : JSDuckDBValueConverter(value, type, nested);
+      : JSValueConverter(value, type, nested);
   return (value, type) =>
     type.typeId === DuckDBTypeId.DECIMAL
       ? value === null
@@ -722,7 +791,7 @@ function convertChunkRows(
     }
   }
 
-  return finish(JSDuckDBValueConverter);
+  return finish(JSValueConverter);
 }
 
 async function readResultChunkRows(
@@ -891,8 +960,8 @@ async function* yieldChunkRows(
 
     rows ??= chunk.convertRows(
       exactDecimals
-        ? withExactDecimals(JSDuckDBValueConverter, true)
-        : JSDuckDBValueConverter
+        ? withExactDecimals(JSValueConverter, true)
+        : JSValueConverter
     );
     yieldedRows = true;
     yield rows;
@@ -1422,7 +1491,7 @@ export async function executeArrowOnClient(
               /* Retry fetched chunks safely. */
             }
           }
-          return convert(JSDuckDBValueConverter);
+          return convert(JSValueConverter);
         } catch (error) {
           throw wrapUnsupportedNodeApiTypeError(resultMetadata, error);
         }

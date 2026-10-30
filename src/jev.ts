@@ -13,9 +13,11 @@ export interface MotherDuckJevLabel {
   description?: string | null;
 }
 
-export type MotherDuckJevCriteria =
-  | readonly string[]
-  | readonly MotherDuckJevLabel[];
+/**
+ * Plain strings and `{ label, description }` objects. When a list mixes both,
+ * strings become labels without a description, since a SQL list holds one type.
+ */
+export type MotherDuckJevCriteria = readonly (string | MotherDuckJevLabel)[];
 
 export type MotherDuckJevImageFormat = 'png' | 'jpg' | 'jpeg';
 
@@ -173,10 +175,8 @@ function constantCriteria(criteria: MotherDuckJevCriteria, name: string): SQL {
     throw new Error(`prompt_jev ${name} must be a non-empty array`);
   }
 
-  const values = criteria.map((item: string | MotherDuckJevLabel) => {
-    if (typeof item === 'string') {
-      return constant(item);
-    }
+  for (const item of criteria) {
+    if (typeof item === 'string') continue;
     if (item === null || typeof item !== 'object') {
       throw new Error(
         `prompt_jev ${name} items must be strings or { label, description } objects`
@@ -185,9 +185,20 @@ function constantCriteria(criteria: MotherDuckJevCriteria, name: string): SQL {
     if (typeof item.label !== 'string') {
       throw new Error(`prompt_jev ${name} labels must be strings`);
     }
+  }
 
-    return sql`{label: ${constant(item.label)}, description: ${
-      item.description == null ? sql.raw('NULL') : constant(item.description)
+  // A SQL list holds one type, so plain strings become labels when any item
+  // is a label object.
+  const labeled = criteria.some((item) => typeof item !== 'string');
+  const values = criteria.map((item) => {
+    if (!labeled) {
+      return constant(item as string);
+    }
+    const { label, description } =
+      typeof item === 'string' ? { label: item, description: null } : item;
+    // A bare NULL types the field as "NULL", not VARCHAR.
+    return sql`{label: ${constant(label)}, description: ${
+      description == null ? sql.raw('NULL::VARCHAR') : constant(description)
     }}`;
   });
 

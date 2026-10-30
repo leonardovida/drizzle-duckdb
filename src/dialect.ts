@@ -72,6 +72,13 @@ function errorMessages(error: unknown): string[] {
   return messages;
 }
 
+function isDuplicateKeyIndexError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /contains duplicates on indexed column/i.test(error.message)
+  );
+}
+
 function isTransactionConflictError(error: unknown): boolean {
   return errorMessages(error).some((message) =>
     TRANSACTION_CONFLICT_PATTERN.test(message)
@@ -319,11 +326,19 @@ export class DuckDBDialect extends PgDialect {
       await session.execute(migrationTableCreate);
 
       // Concurrent migrators must not commit the same migration twice.
-      await session.execute(
-        sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
-          `${migrationsTableName}_created_at_unique`
-        )} ON ${migrationTable} (created_at)`
-      );
+      // Journals written before this index existed can already hold such
+      // duplicates. They still migrate correctly, just without the guard.
+      try {
+        await session.execute(
+          sql`CREATE UNIQUE INDEX IF NOT EXISTS ${sql.identifier(
+            `${migrationsTableName}_created_at_unique`
+          )} ON ${migrationTable} (created_at)`
+        );
+      } catch (error) {
+        if (!isDuplicateKeyIndexError(error)) {
+          throw error;
+        }
+      }
     };
 
     const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;

@@ -48,7 +48,7 @@ test('prompt_jev supports score and labeled yes-no criteria', () => {
 
   expect(score.sql).toContain("score := ['low', 'medium', 'high']");
   expect(noul.sql).toContain(
-    "noul := [{label: 'true', description: 'A refund is requested'}, {label: 'false', description: NULL}]"
+    "noul := [{label: 'true', description: 'A refund is requested'}, {label: 'false', description: NULL::VARCHAR}]"
   );
   expect(score.params).toEqual([]);
   expect(noul.params).toEqual([]);
@@ -206,7 +206,7 @@ test('prompt_jev supports multiple choice criteria', () => {
   `);
 
   expect(query.sql).toContain(
-    "prompt_jev(CAST(message AS VARCHAR), 'Which features does this request?', multiple_choice := [{label: 'api', description: 'Programmatic API access'}, {label: 'sso', description: NULL}], batch_size := 8)"
+    "prompt_jev(CAST(message AS VARCHAR), 'Which features does this request?', multiple_choice := [{label: 'api', description: 'Programmatic API access'}, {label: 'sso', description: NULL::VARCHAR}], batch_size := 8)"
   );
   expect(() =>
     mdPromptJev('message', {
@@ -348,4 +348,26 @@ test('prompt_jev infers the decoded result type from its options', () => {
   expectTypeOf(mdPromptJev('x', { questions: '{}' })).toEqualTypeOf<
     SQL<Record<string, unknown> | null>
   >();
+});
+
+test('prompt_jev sends plain strings as labels when criteria mix both forms', () => {
+  const query = dialect.sqlToQuery(sql`
+    select ${mdPromptJev(sql`message`, {
+      instructions: 'Which features does this request?',
+      multipleChoice: [
+        { label: 'sso', description: 'Single sign-on' },
+        "it's billing",
+      ],
+    })}
+  `);
+
+  expect(query.sql).toContain(
+    "multiple_choice := [{label: 'sso', description: 'Single sign-on'}, {label: 'it''s billing', description: NULL::VARCHAR}]"
+  );
+  expect(() =>
+    mdPromptJev(sql`message`, {
+      instructions: 'x',
+      choice: ['a', 1 as unknown as string],
+    })
+  ).toThrow(/choice items must be strings or \{ label, description \} objects/);
 });

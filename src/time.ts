@@ -125,13 +125,30 @@ export function timestampStringFromMicros(
     seconds -= 1n;
     fraction += 1_000_000n;
   }
-  const base = new Date(Number(seconds) * 1000)
-    .toISOString()
-    .replace(/\.\d+Z$/, '')
-    .replace('T', ' ');
+  const date = new Date(Number(seconds) * 1000);
+  const time = date.toISOString().slice(11, 19);
   const digits =
     fraction === 0n ? '' : `.${pad(fraction, 6).replace(/0+$/, '')}`;
-  return `${base}${digits}${withTimezone ? '+00' : ''}`;
+  const [day, era] = splitEra(dateStringFromDate(date));
+  return `${day}${era} ${time}${digits}${withTimezone ? '+00' : ''}`;
+}
+
+function splitEra(text: string): [string, string] {
+  return text.endsWith(' (BC)') ? [text.slice(0, -5), ' (BC)'] : [text, ''];
+}
+
+/**
+ * Format a Date's UTC day the way DuckDB prints a DATE. Years past 9999 keep
+ * all their digits and years before 1 AD use the `(BC)` suffix, where
+ * `toISOString()` would print `+010000` or `-000001`.
+ */
+export function dateStringFromDate(value: Date): string {
+  const year = value.getUTCFullYear();
+  const bc = year <= 0;
+  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(value.getUTCDate()).padStart(2, '0');
+  const text = `${String(bc ? 1 - year : year).padStart(4, '0')}-${month}-${day}`;
+  return bc ? `${text} (BC)` : text;
 }
 
 function pluralUnit(value: number, unit: string): string {

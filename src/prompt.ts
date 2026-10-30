@@ -112,7 +112,8 @@ export function mdPrompt<T = string>(
     ) {
       throw new Error('prompt temperature must be a number from 0 to 1');
     }
-    args.push(sql`temperature := ${sql.raw(String(temperature))}`);
+    // Keep the literal DOUBLE, so 0 and 1 are not INTEGER constants.
+    args.push(sql`temperature := ${sql.raw(`${temperature}::DOUBLE`)}`);
   }
 
   if (options.reasoningEffort !== undefined) {

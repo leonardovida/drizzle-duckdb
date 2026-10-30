@@ -263,6 +263,48 @@ describe('DuckLake helpers', () => {
   });
 });
 
+describe('DuckLake catalog spellings', () => {
+  test('matches the ducklake: prefix without regard to case', () => {
+    expect(
+      normalizeDuckLakeConfig({ catalog: 'DuckLake:/data/meta.ducklake' })
+        .catalog
+    ).toBe('ducklake:/data/meta.ducklake');
+    expect(isDuckDbFileCatalog('DUCKLAKE:/data/meta.ducklake')).toBe(true);
+    expect(isDuckDbFileCatalog('DUCKLAKE:md:lake')).toBe(false);
+    expect(
+      resolveDuckLakePoolSize(undefined, {
+        catalog: 'DUCKLAKE:./meta.ducklake',
+      }).poolSize
+    ).toBe(1);
+  });
+
+  test('decodes file: URL catalogs to local paths before ATTACH', () => {
+    expect(
+      buildDuckLakeAttachSql({ catalog: 'file:///tmp/my%20lake/meta.ducklake' })
+    ).toBe(
+      `ATTACH IF NOT EXISTS 'ducklake:/tmp/my lake/meta.ducklake' AS "ducklake"`
+    );
+    expect(
+      buildDuckLakeAttachSql({ catalog: 'ducklake:file:///tmp/meta.ducklake' })
+    ).toBe(`ATTACH IF NOT EXISTS 'ducklake:/tmp/meta.ducklake' AS "ducklake"`);
+  });
+
+  test('wrapDuckLakePool keeps the pool stats', () => {
+    const stats = { size: 2, total: 1 };
+    const pool = {
+      acquire: vi.fn(),
+      release: vi.fn(),
+      stats() {
+        return this === pool ? stats : undefined;
+      },
+    };
+    const wrapped = wrapDuckLakePool(pool, { catalog: 'md:meta_db' }) as {
+      stats?: () => unknown;
+    };
+    expect(wrapped.stats?.()).toBe(stats);
+  });
+});
+
 describe('duckLakeMergeAdjacentFiles', () => {
   const dialect = new DuckDBDialect();
 
@@ -316,6 +358,20 @@ describe('duckLakeMergeAdjacentFiles', () => {
         olderThan: '2026-10-08 00:00:00+00',
       })
     ).not.toThrow();
+    // A date-only string follows the session TimeZone. Its day is not a
+    // UTC offset, so it is left to DuckDB too.
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', {
+        newerThan: '2024-01-01',
+        olderThan: '2024-01-01T00:00:00Z',
+      })
+    ).not.toThrow();
+    expect(() =>
+      duckLakeMergeAdjacentFiles('lake', {
+        newerThan: '2024-01-02T00:00:00-05:00',
+        olderThan: '2024-01-02T00:00:00+00:00',
+      })
+    ).toThrow(/newerThan must be earlier than olderThan/);
     expect(() =>
       duckLakeMergeAdjacentFiles('lake', { newerThan: new Date('nope') })
     ).toThrow(/newerThan must be a valid Date/);

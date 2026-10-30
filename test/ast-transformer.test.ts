@@ -257,6 +257,8 @@ describe('parse pre-checks', () => {
     'UPDATE "t" SET "x" = $1 WHERE "id" = $2 RETURNING "id"',
     'DELETE FROM "t" WHERE "id" = $1',
     'INSERT INTO "t" ("id") VALUES ($1) ON CONFLICT ("id") DO UPDATE SET "x" = excluded."x"',
+    '(SELECT "id" FROM "a") UNION ALL (SELECT "id" FROM "b")',
+    'SELECT "id" FROM "a" WHERE "id" IN ($1, $2) EXCEPT SELECT "id" FROM "b"',
   ])('does not parse queries with nothing to rewrite: %s', (sql) => {
     clearTransformCache();
     const result = transformSQL(sql);
@@ -283,9 +285,19 @@ describe('re-print guard', () => {
     `SELECT "we""ird" FROM "a" LEFT JOIN "b" ON "id" = "id"`,
     `${join} WHERE "a"."name" IS DISTINCT FROM $1`,
     `${join} WHERE "a"."name" IS NOT DISTINCT FROM $1`,
+    `${join} WHERE "a"."v" = -9007199254740993`,
+    `${join} WHERE "a"."v" = - -"a"."w"`,
+    `SELECT "id" FROM "a" ANTI JOIN "b" ON "id" = "id" LEFT JOIN "c" ON "id" = "id"`,
   ])('returns the original SQL when re-printing would change it: %s', (sql) => {
     clearTransformCache();
     expect(transformSQL(sql)).toEqual({ sql, transformed: false });
+  });
+
+  it('reads backslash escapes in E strings', () => {
+    const sql = `${join} WHERE "a"."p" = E'it\\'s' AND "a"."q" = $1`;
+    const result = transformSQL(sql);
+    expect(result.transformed).toBe(true);
+    expect(result.sql).toContain("E'it\\'s'");
   });
 
   it('keeps rewrites whose literals and parameters survive', () => {
@@ -336,6 +348,16 @@ describe('transformation cache', () => {
 
     const stats2 = getTransformCacheStats();
     expect(stats2.size).toBe(0);
+  });
+
+  it('does not keep statements over 64 KB', () => {
+    const sql = `SELECT * FROM "a" LEFT JOIN "b" ON "id" = "id" WHERE "a"."id" IN (${Array.from(
+      { length: 12_000 },
+      (_, index) => `$${index + 1}`
+    ).join(', ')})`;
+    expect(sql.length).toBeGreaterThan(64 * 1024);
+    expect(transformSQL(sql).transformed).toBe(true);
+    expect(getTransformCacheStats().size).toBe(0);
   });
 
   it('does not cache queries that do not need transformation', () => {

@@ -53,7 +53,7 @@ const db = await drizzle({
 
 A DuckLake catalog stored in a local DuckDB file supports one DuckDB process at a time. When the catalog is local and you do not set `pool`, `drizzle()` uses a pool of size 1.
 
-A catalog counts as local when it is `:memory:`, starts with `duckdb:` or `file:`, or has no scheme and looks like a file path, such as `meta.db` or `./lake/meta`. Catalogs with another scheme, such as `md:`, `s3:`, `postgres:` or `sqlite:`, do not. A bare name such as `my_lake` does not either, because DuckLake reads it as a secret name.
+A catalog counts as local when it is `:memory:`, starts with `duckdb:` or `file:`, or has no scheme and looks like a file path, such as `meta.db` or `./lake/meta`. Catalogs with another scheme, such as `md:`, `s3:`, `postgres:` or `sqlite:`, do not. A bare name such as `my_lake` does not either, because DuckLake reads it as a secret name. The `ducklake:` prefix is optional and matched without regard to case. A `file:` URL is decoded to a local path before the `ATTACH`, because DuckDB does not decode escapes such as `%20`.
 
 You can set a larger `pool`. All pooled connections share one DuckDB instance and one attached catalog. The driver runs the attach with `ATTACH IF NOT EXISTS` and sets up one connection at a time, so extra connections reuse the catalog. With a local catalog and a pool size above 1, `drizzle()` logs a `[ducklake]` warning about write conflicts.
 
@@ -126,7 +126,7 @@ const merged = await db.execute(sql`
 // [{ schema_name: 'main', table_name: 'events', files_processed: 12, files_created: 1 }]
 ```
 
-Leave out `table` to compact every table in the catalog. DuckLake for DuckDB 1.4 compacts the same way but returns no rows. `minFileSize`, `maxFileSize` and `maxCompactedFiles` must be positive integers, and `maxFileSize` must be larger than `minFileSize`. On MotherDuck DuckLake, `newerThan` and `olderThan` limit the merge to files written in a time window, for example to skip files that are still being written. The DuckLake extension that ships for DuckDB 1.5.6 rejects these two options.
+Leave out `table` to compact every table in the catalog. DuckLake for DuckDB 1.4 compacts the same way but returns no rows. `minFileSize` must be a non-negative integer, `maxFileSize` and `maxCompactedFiles` must be positive integers, and `maxFileSize` must be larger than `minFileSize`. On MotherDuck DuckLake, `newerThan` and `olderThan` limit the merge to files written in a time window, for example to skip files that are still being written. The DuckLake extension that ships for DuckDB 1.5.6 rejects these two options.
 
 ## Limitations
 

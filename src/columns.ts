@@ -18,6 +18,7 @@ import {
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
 import {
+  dateStringFromDate,
   intervalToString,
   parseTimestampString,
   timeFromMicros,
@@ -174,6 +175,16 @@ function parseStructSchema(
   return fields;
 }
 
+function parseMapType(
+  typeHint: string | undefined
+): { keyType: string; valueType: string } | undefined {
+  const match = /^MAP\s*\((.*)\)$/is.exec(typeHint?.trim() ?? '');
+  if (!match) return undefined;
+  const parts = splitTopLevel(match[1]!, ',');
+  if (parts.length !== 2) return undefined;
+  return { keyType: parts[0]!.trim(), valueType: parts[1]!.trim() };
+}
+
 function arrayElementType(typeHint: string | undefined): string | undefined {
   if (!typeHint) return undefined;
   const trimmed = typeHint.trim();
@@ -214,8 +225,10 @@ export function formatLiteral(value: unknown, typeHint?: string): string {
   }
 
   if (typeof value === 'number') {
-    // NaN and Infinity are not SQL number tokens.
-    return Number.isFinite(value) ? value.toString() : `'${value}'::DOUBLE`;
+    // NaN, Infinity and -0 are not SQL number tokens.
+    return Number.isFinite(value) && !Object.is(value, -0)
+      ? value.toString()
+      : `'${Object.is(value, -0) ? '-0' : value}'::DOUBLE`;
   }
 
   if (typeof value === 'bigint') {
@@ -245,7 +258,10 @@ export function buildListLiteral(values: unknown[], elementType?: string): SQL {
     return elementType ? sql.raw(`[]::${elementType}[]`) : sql`[]`;
   }
   const chunks = values.map((v) => valueToSqlLiteral(v, elementType));
-  return sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
+  const list = sql`list_value(${sql.join(chunks, sql.raw(', '))})`;
+  // String items would otherwise stay VARCHAR, which list functions and
+  // nested empty lists of the declared type cannot unify with.
+  return elementType ? sql`${list}::${sql.raw(elementType)}[]` : list;
 }
 
 export function normalizeArrayPredicateValue<T>(
@@ -270,7 +286,11 @@ function valueToSqlLiteral(value: unknown, typeHint?: string): SQL {
   }
 
   if (isRecord(value)) {
-    return buildStructLiteral(value, parseStructSchema(typeHint));
+    // A struct_pack per map would merge every key into one STRUCT type.
+    const mapType = parseMapType(typeHint);
+    return mapType
+      ? buildMapLiteral(value, mapType.valueType, mapType.keyType)
+      : buildStructLiteral(value, parseStructSchema(typeHint));
   }
 
   return sql.raw(formatLiteral(value, typeHint));
@@ -291,11 +311,12 @@ export function buildStructLiteral(
 
 export function buildMapLiteral(
   value: Record<string, unknown>,
-  valueType?: string
+  valueType?: string,
+  keyType = 'TEXT'
 ): SQL {
   const keys = Object.keys(value);
   const vals = Object.values(value);
-  const keyList = buildListLiteral(keys, 'TEXT');
+  const keyList = buildListLiteral(keys, keyType);
   const valList = buildListLiteral(vals, valueType);
   return sql`map(${keyList}, ${valList})`;
 }
@@ -374,7 +395,7 @@ export const duckDbMap = <TData extends Record<string, any>>(
         Object.keys(value).length === 0 ||
         Object.values(value).some(needsLiteral)
       ) {
-        return buildMapLiteral(value, valueType);
+        return buildMapLiteral(value, valueType, options.keyType);
       }
       return wrapMap(value, valueType);
     },
@@ -383,7 +404,7 @@ export const duckDbMap = <TData extends Record<string, any>>(
       if (options.mode === 'object' && Array.isArray(value)) {
         return Object.fromEntries(
           value.map((entry: { key: unknown; value: unknown }) => [
-            String(entry.key),
+            mapKeyString(entry.key, options.keyType),
             entry.value,
           ])
         ) as TData;
@@ -391,6 +412,19 @@ export const duckDbMap = <TData extends Record<string, any>>(
       return value as TData;
     },
   })(name);
+
+/**
+ * Object keys for a decoded MAP. Dates use DuckDB's text, not the host's
+ * local `Date#toString()`, so keys match what was written.
+ */
+function mapKeyString(key: unknown, keyType: string | undefined): string {
+  if (key instanceof Date) {
+    return /^DATE$/i.test(keyType?.trim() ?? '')
+      ? dateStringFromDate(key)
+      : timestampStringFromMicros(BigInt(key.getTime()) * 1000n, false);
+  }
+  return String(key);
+}
 
 export const duckDbStruct = <TData extends Record<string, any>>(
   name: string,
@@ -438,13 +472,10 @@ export const duckDbJson = <TData = unknown>(name: string) =>
       if (typeof value === 'string') {
         return value;
       }
-      // Pass through SQL objects (for raw SQL expressions)
-      if (
-        value !== null &&
-        typeof value === 'object' &&
-        'queryChunks' in (value as Record<string, unknown>)
-      ) {
-        return value as unknown as SQL;
+      // Pass through SQL expressions. A JSON document can never carry a
+      // getSQL function, so a document with a `queryChunks` key stays data.
+      if (isSQLWrapper(value)) {
+        return sql`${value}`;
       }
       // Wrap non-string values for delayed stringify at binding time
       return wrapJson(value);
@@ -778,9 +809,7 @@ export const duckDbDate = (name: string) =>
       return value;
     },
     fromDriver(value: string | Date) {
-      const str =
-        value instanceof Date ? value.toISOString().slice(0, 10) : value;
-      return str;
+      return value instanceof Date ? dateStringFromDate(value) : value;
     },
   })(name);
 
