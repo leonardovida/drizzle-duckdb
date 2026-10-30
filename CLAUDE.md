@@ -102,3 +102,4 @@ bun x duckdb-introspect --url ':memory:' --schema my_schema --out ./drizzle/sche
 - Never edit files in `dist/`. They are generated
 - Never use emojis in comments or code
 - Be concise and to the point
+- This repository is public and user-facing. Never commit files that record how the work was done, such as sweep reports, review findings, plans, session notes or agent summaries. Put that context in the PR description or commit message. Markdown in the repository is limited to user documentation (`README.md`, `docs/`, examples) and contributor guides
