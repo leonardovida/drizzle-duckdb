@@ -75,14 +75,26 @@ export type { DuckDBClientLike, RowData } from './client.ts';
  * that they cannot deadlock.
  */
 const openTransactions = new WeakMap<object, Promise<void>>();
-// Maps each client with a transaction open in this async context to the
-// transaction's failure recorder.
+type TransactionScopeEntry = {
+  // Cleared when the transaction ends. Timers and promise continuations the
+  // callback left behind keep this async context, but must then queue.
+  active: boolean;
+  recordFailure: (error: unknown) => void;
+};
+
+// Maps each client with a transaction open in this async context to that
+// transaction.
 const transactionScope = new AsyncLocalStorage<
-  Map<object, (error: unknown) => void>
+  Map<object, TransactionScopeEntry>
 >();
 
+function activeScopeEntry(client: object): TransactionScopeEntry | undefined {
+  const entry = transactionScope.getStore()?.get(client);
+  return entry?.active ? entry : undefined;
+}
+
 function insideTransactionOn(client: object): boolean {
-  return transactionScope.getStore()?.has(client) ?? false;
+  return activeScopeEntry(client) !== undefined;
 }
 
 async function waitForOpenTransaction(client: object): Promise<void> {
@@ -119,10 +131,21 @@ async function acquireTransactionSlot(client: object): Promise<() => void> {
   };
 }
 
-function runInTransactionScope<T>(client: object, run: () => T): T {
+async function runInTransactionScope<T>(
+  client: object,
+  run: () => Promise<T>
+): Promise<T> {
+  const entry: TransactionScopeEntry = {
+    active: true,
+    recordFailure: () => undefined,
+  };
   const scope = new Map(transactionScope.getStore());
-  scope.set(client, () => undefined);
-  return transactionScope.run(scope, run);
+  scope.set(client, entry);
+  try {
+    return await transactionScope.run(scope, run);
+  } finally {
+    entry.active = false;
+  }
 }
 
 /**
@@ -130,7 +153,7 @@ function runInTransactionScope<T>(client: object, run: () => T): T {
  * its failure can abort it. Record it there, so COMMIT is probed first.
  */
 function recordInTransactionScope(client: object, error: unknown): void {
-  transactionScope.getStore()?.get(client)?.(error);
+  activeScopeEntry(client)?.recordFailure(error);
 }
 
 function isNoActiveTransactionError(error: unknown): boolean {
@@ -619,10 +642,9 @@ export class DuckDBSession<
     );
     session.statementFailures = [];
     session.openStreams = new Set();
-    if (!pool) {
-      transactionScope
-        .getStore()
-        ?.set(this.client, session.recordStatementFailure);
+    const scopeEntry = pool ? undefined : activeScopeEntry(this.client);
+    if (scopeEntry) {
+      scopeEntry.recordFailure = session.recordStatementFailure;
     }
 
     const tx = new DuckDBTransaction<TFullSchema, TSchema>(

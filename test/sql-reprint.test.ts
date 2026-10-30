@@ -138,6 +138,13 @@ describe('re-print guard for DuckDB syntax the parser misreads', () => {
     );
     // Re-printed as an INNER JOIN, this returned customer 1 instead.
     expect(rows).toEqual([{ customer_id: 3, n: 1n }]);
+
+    // A quoted identifier spelled like the modifier must not hide it.
+    clearTransformCache();
+    const quoted = await db.execute(
+      sql`select customer_id, id as "anti", array_upper(tags, 1) as n from anti_orders anti join anti_customers c on customer_id = c.id`
+    );
+    expect(quoted).toEqual([{ customer_id: 3, anti: 2, n: 1n }]);
   });
 
   test.each([

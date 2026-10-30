@@ -341,6 +341,45 @@ describe('transactions on one shared connection', () => {
     }
   });
 
+  test('work left behind by a finished transaction callback queues', async () => {
+    const db = await setup();
+    try {
+      let leftBehind!: Promise<unknown>;
+      let startLeftBehind!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startLeftBehind = resolve;
+      });
+      await db.transaction(async (tx) => {
+        await tx.insert(items).values({ id: 1 });
+        // Not awaited: it runs after this transaction has committed.
+        leftBehind = started.then(() => db.insert(items).values({ id: 2 }));
+      });
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const second = db.transaction(async (tx) => {
+        await tx.insert(items).values({ id: 3 });
+        startLeftBehind();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await gate;
+        throw new Error('roll back the second transaction');
+      });
+      setTimeout(release, 20);
+      await expect(second).rejects.toThrow('roll back the second');
+      await leftBehind;
+
+      // The left-behind insert waited instead of joining the rolled-back
+      // transaction, so it was kept.
+      expect(
+        await db.execute(sql`select id from sweep2_items order by id`)
+      ).toEqual([{ id: 1 }, { id: 2 }, { id: 999 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
   test('concurrent transactions run one after another', async () => {
     const db = await setup();
     try {

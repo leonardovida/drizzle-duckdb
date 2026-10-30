@@ -101,6 +101,8 @@ type SqlTokens = {
   identifiers: string[];
   numbers: string[];
   words: Set<string>;
+  /** Unquoted words in order, lower-cased, for keyword sequences. */
+  wordSequence: string[];
   comments: number;
 };
 
@@ -118,6 +120,7 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
     identifiers: [],
     numbers: [],
     words: new Set(),
+    wordSequence: [],
     comments: 0,
   };
 
@@ -178,6 +181,7 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
     } else if (/[A-Za-z_]/.test(char)) {
       const word = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(rest)![0];
       tokens.words.add(word);
+      tokens.wordSequence.push(word.toLowerCase());
       index += word.length;
     } else if (NUMBER.test(rest)) {
       const number = NUMBER.exec(rest)![0];
@@ -199,7 +203,7 @@ function sameItems(left: string[], right: string[]): boolean {
   return sortedLeft.every((item, index) => item === sortedRight[index]);
 }
 
-// DuckDB join modifiers the parser reads as an alias of the table before
+// DuckDB join modifiers the parser can read as an alias of the table before
 // them, so `t anti join u` is re-printed as `"t" AS "anti" INNER JOIN "u"`.
 const JOIN_MODIFIERS = new Set([
   'anti',
@@ -209,6 +213,26 @@ const JOIN_MODIFIERS = new Set([
   'positional',
   'semi',
 ]);
+
+const JOIN_SIDES = new Set(['left', 'right', 'full', 'outer', 'inner']);
+
+/**
+ * Count each modifier written as a join keyword, such as `anti join` or
+ * `natural left join`. Only unquoted words count, so a quoted identifier
+ * spelled `"anti"` is not a join.
+ */
+function countJoinModifiers(words: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  words.forEach((word, index) => {
+    if (!JOIN_MODIFIERS.has(word)) return;
+    let next = index + 1;
+    while (JOIN_SIDES.has(words[next] ?? '')) next += 1;
+    if (words[next] === 'join') {
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+  });
+  return counts;
+}
 
 /**
  * Check that the re-printed SQL kept every string literal, parameter and
@@ -242,17 +266,11 @@ function preservesTokens(
   // ran together, such as `- -x` printed as `--x`.
   if (after.comments > 0) return false;
 
-  const quotedBefore = new Set(
-    before.identifiers.map((identifier) => identifier.toLowerCase())
-  );
-  if (
-    after.identifiers.some(
-      (identifier) =>
-        JOIN_MODIFIERS.has(identifier.toLowerCase()) &&
-        !quotedBefore.has(identifier.toLowerCase())
-    )
-  ) {
-    return false;
+  // A join modifier the parser read as an alias disappears from the join
+  // keywords, and the join silently becomes an INNER JOIN.
+  const joinsAfter = countJoinModifiers(after.wordSequence);
+  for (const [modifier, count] of countJoinModifiers(before.wordSequence)) {
+    if ((joinsAfter.get(modifier) ?? 0) < count) return false;
   }
 
   const known = new Set([...before.identifiers, ...before.words]);
