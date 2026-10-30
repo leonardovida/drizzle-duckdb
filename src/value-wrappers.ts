@@ -584,8 +584,16 @@ function alignValueToType(value: DuckDBValue, type: DuckDBType): DuckDBValue {
       : value;
   }
   if (typeof value === 'bigint') {
-    // A bigint listed with fractional numbers binds as DOUBLE.
-    return type.typeId === DuckDBTypeId.DOUBLE ? Number(value) : value;
+    if (type.typeId !== DuckDBTypeId.DOUBLE) return value;
+    // A bigint listed with fractional numbers binds as DOUBLE, which must
+    // not round it.
+    const double = Number(value);
+    if (BigInt(double) !== value) {
+      throw new Error(
+        `Cannot bind ${value} in a list with fractional numbers: a DOUBLE would round it. Use a typed list such as duckDbList(name, 'DECIMAL(38, 10)'), or convert the values first.`
+      );
+    }
+    return double;
   }
 
   switch (type.typeId) {

@@ -401,6 +401,15 @@ describe('parameter binding', () => {
     ]);
   });
 
+  test('lists mixing fractions and unsafe bigints do not round', async () => {
+    expect(await db.execute(sql`select ${wrapList([3n, 0.5])} as v`)).toEqual([
+      { v: [3, 0.5] },
+    ]);
+    await expect(
+      db.execute(sql`select ${wrapList([9007199254740993n, 0.5])} as v`)
+    ).rejects.toThrow(/a DOUBLE would round it/);
+  });
+
   test('plain object parameters fail with a helpful message', async () => {
     await expect(
       db.execute(sql`select ${{ a: 1 } as unknown as string} as v`)

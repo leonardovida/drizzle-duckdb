@@ -204,3 +204,18 @@ test('discard counts a close failure instead of rejecting', async () => {
     await pool.close();
   }
 });
+
+test('idleTimeoutMs 0 closes a released connection instead of keeping it idle', async () => {
+  const connection = mockConnection();
+  vi.spyOn(DuckDBConnection, 'create').mockResolvedValueOnce(connection);
+  const pool = createDuckDBConnectionPool({} as DuckDBInstance, {
+    size: 1,
+    idleTimeoutMs: 0,
+  });
+
+  await pool.release(await pool.acquire());
+
+  expect(connection.closeSync).toHaveBeenCalledTimes(1);
+  expect(pool.stats()).toMatchObject({ total: 0, idle: 0, recycled: 1 });
+  await pool.close();
+});

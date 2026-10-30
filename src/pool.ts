@@ -483,6 +483,16 @@ export function createDuckDBConnectionPool(
     // Sweep the other idle connections before adding this one, so a
     // connection released just now is first checked by the next acquire.
     const expired = takeExpiredIdle();
+
+    // With idleTimeoutMs 0 a connection must not wait idle for a later
+    // acquire or release to close it.
+    if (idleTimeoutMs === 0) {
+      recycled += 1;
+      await discardConnections([...expired, connection]);
+      serveWaiters();
+      return;
+    }
+
     const existingMeta = markConnectionUsed(connection, meta, now);
     idle.push(toPooledConnection(connection, existingMeta));
 

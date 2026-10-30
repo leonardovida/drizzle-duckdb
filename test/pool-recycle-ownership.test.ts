@@ -26,8 +26,9 @@ test.each(['idle acquire', 'expired release'] as const)(
     const pool = createDuckDBConnectionPool({} as DuckDBInstance, {
       size: 1,
       acquireTimeout: 50,
+      // The idle connection goes stale when the clock moves to 20 below.
       ...(trigger === 'idle acquire'
-        ? { idleTimeoutMs: 0 }
+        ? { idleTimeoutMs: 10 }
         : { maxLifetimeMs: 10 }),
     });
 
@@ -118,8 +119,9 @@ test.each(['idle acquire', 'expired release'] as const)(
       .mockResolvedValue(original as unknown as DuckDBConnection);
     const pool = createDuckDBConnectionPool({} as DuckDBInstance, {
       size: 1,
+      // The idle connection goes stale when the clock moves to 20 below.
       ...(trigger === 'idle acquire'
-        ? { idleTimeoutMs: 0 }
+        ? { idleTimeoutMs: 10 }
         : { maxLifetimeMs: 10 }),
     });
 
