@@ -95,6 +95,55 @@ export DUCKLAKE_MOTHERDUCK_DB=my_lake
 bun example/ducklake-motherduck.ts
 ```
 
+### [MotherDuck Read Scaling]({{ '/examples/motherduck-read-scaling' | relative_url }})
+
+A dashboard backend serving many concurrent users:
+
+- Read scaling tokens and replica Ducklings
+- A reader router that pins each user to a replica with `session_name`
+- Bounded pools per replica with latency and queue statistics
+- Read after write with `CREATE SNAPSHOT` and `REFRESH DATABASE`
+
+**Best for**: Customer-facing analytics with many readers.
+
+```bash
+export MOTHERDUCK_TOKEN=your_read_write_token
+export MOTHERDUCK_READ_SCALING_TOKEN=your_read_scaling_token
+bun example/motherduck-read-scaling.ts
+```
+
+### [MotherDuck Concurrent Writers]({{ '/examples/motherduck-concurrent-writers' | relative_url }})
+
+Several writers on one database:
+
+- Batched ingestion from many producers
+- Concurrent appends from pooled connections
+- Conflicting updates retried with backoff
+- Idempotent upserts from two services
+
+**Best for**: Ingestion services and background jobs that write to MotherDuck.
+
+```bash
+export MOTHERDUCK_TOKEN=your_read_write_token
+bun example/motherduck-concurrent-writers.ts
+```
+
+### [MotherDuck Multi-Tenant]({{ '/examples/motherduck-multi-tenant' | relative_url }})
+
+One database per customer:
+
+- The same Drizzle migrations applied to every tenant database
+- A tenant registry with lazy connections and eviction of idle tenants
+- `attach_mode=single` and `saas_mode=true` on tenant connections
+- Optional per-tenant service account tokens
+
+**Best for**: SaaS applications that isolate customer data.
+
+```bash
+export MOTHERDUCK_TOKEN=your_read_write_token
+bun example/motherduck-multi-tenant.ts
+```
+
 ## Running Examples
 
 All examples are located in the `/example` directory of the repository.
@@ -138,6 +187,12 @@ bun run example/motherduck-nyc-taxi.ts
 # Run the DuckLake MotherDuck example
 export DUCKLAKE_MOTHERDUCK_DB=my_lake
 bun run example/ducklake-motherduck.ts
+
+# Run the read scaling, concurrent writers and multi-tenant examples
+export MOTHERDUCK_READ_SCALING_TOKEN=your_read_scaling_token  # optional
+bun run example/motherduck-read-scaling.ts
+bun run example/motherduck-concurrent-writers.ts
+bun run example/motherduck-multi-tenant.ts
 ```
 
 ## Example Structure

@@ -318,19 +318,26 @@ MotherDuck caches query results. Repeated queries on the same data will be faste
 
 ### Read Scaling and Session Affinity
 
-MotherDuck can use read scaling tokens to spread reads across replicas. Set a stable `session_name` in your connection options to keep related queries on the same replica. Instance cache TTL determines how long a replica stays warm, so reuse the same `session_name` while you want cache affinity. Older integrations may still pass `session_hint`, but MotherDuck now treats `session_name` as the preferred option.
+MotherDuck can use read scaling tokens to spread reads across replicas. Set a stable session name to keep related queries on the same replica. Pass it as `session_name` in the connection string, or as `motherduck_session_name` in the options object. DuckDB rejects the unprefixed name as an option. The instance inactivity TTL (`motherduck_dbinstance_inactivity_ttl`, 15 minutes by default) determines how long a replica stays warm, so reuse the same session name while you want cache affinity. Older integrations may still pass `session_hint`, but MotherDuck now treats `session_name` as the preferred option.
 
 ```typescript
 const db = await drizzle({
   connection: {
-    path: 'md:',
+    path: 'md:my_database?attach_mode=single',
     options: {
-      motherduck_token: process.env.MOTHERDUCK_TOKEN,
-      session_name: 'analytics-dashboard',
+      motherduck_token: process.env.MOTHERDUCK_READ_SCALING_TOKEN,
+      motherduck_session_name: 'analytics-dashboard',
     },
   },
 });
 ```
+
+### Many Readers, Concurrent Writers and Tenants
+
+- **Many readers**: give readers a read scaling token. Replicas are read-only and eventually consistent. Run `CREATE SNAPSHOT OF <db>` on the writer and `REFRESH DATABASE <db>` on a reader to make new writes visible right away. One DuckDB instance per session name, each with its own pool, spreads users over replicas while keeping each user on one replica. See the [read scaling example]({{ '/examples/motherduck-read-scaling' | relative_url }}).
+- **Concurrent writers**: each database has one writer, the read/write Duckling of the owning account. Connections on it follow DuckDB's optimistic concurrency: concurrent appends commit, and concurrent updates of the same rows conflict and need a retry. Batch small writes into fewer inserts. See the [concurrent writers example]({{ '/examples/motherduck-concurrent-writers' | relative_url }}).
+- **Tenants**: keep one database per customer, connect with `attach_mode=single`, and use one service account per customer for strict isolation. See the [multi-tenant example]({{ '/examples/motherduck-multi-tenant' | relative_url }}).
+- **Instance reuse**: Node.js does not cache DuckDB instances automatically. Create one instance per configuration and reuse it, or call `DuckDBInstance.fromCache()`.
 
 ### Batch Operations
 

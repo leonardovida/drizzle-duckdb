@@ -74,6 +74,12 @@
 - Tag the commit as `v1.3.2`.
 - Create a GitHub release from the tag to trigger the publish pipeline.
 
+## Repository Content
+
+- This repository is public and user-facing. Never commit files that record how the work was done, such as sweep reports, review findings, plans, session notes or agent summaries.
+- Put that context in the PR description or commit message instead.
+- Markdown in the repository is limited to user documentation (`README.md`, `docs/`, examples) and contributor guides (`CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`, `CLAUDE.md`).
+
 ## Writing Style
 
 - Avoid em dashes and sentence dashes.
