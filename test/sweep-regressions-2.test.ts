@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, pgTable, text } from 'drizzle-orm/pg-core';
+import { integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   duckDbArrayContains,
@@ -194,6 +194,34 @@ describe('timestamp decoding', () => {
   });
 });
 
+test('infinite timestamps survive typed column decoders', async () => {
+  const db = await drizzle(':memory:', { pool: false });
+  const events = pgTable('sweep2_events', {
+    id: integer('id'),
+    at: duckDbTimestamp('ts'),
+    atText: duckDbTimestamp('ts_text', { mode: 'string' }),
+    pgAt: timestamp('pg_ts'),
+    pgAtZone: timestamp('pg_ts_zone', { withTimezone: true, mode: 'string' }),
+  });
+  try {
+    await db.execute(sql`create table sweep2_events
+      (id integer, ts timestamp, ts_text timestamp, pg_ts timestamp, pg_ts_zone timestamptz)`);
+    await db.execute(sql`insert into sweep2_events values
+      (1, 'infinity', '-infinity', 'infinity', '-infinity')`);
+    expect(await db.select().from(events)).toEqual([
+      {
+        id: 1,
+        at: 'infinity',
+        atText: '-infinity',
+        pgAt: 'infinity',
+        pgAtZone: '-infinity',
+      },
+    ]);
+  } finally {
+    await db.close();
+  }
+});
+
 describe('placeholders encoded as SQL', () => {
   test('prepared inserts bind struct, empty list and literal timestamp values', async () => {
     const db = await drizzle(':memory:', { pool: false, prepareCache: true });
@@ -288,6 +316,26 @@ describe('transactions on one shared connection', () => {
       expect(
         await db.execute(sql`select id from sweep2_items order by id`)
       ).toEqual([{ id: 1 }, { id: 5 }, { id: 999 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('a failed db statement inside the callback is not silently committed', async () => {
+    const db = await setup();
+    try {
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.insert(items).values({ id: 1 });
+          await db
+            .insert(items)
+            .values({ id: 999 })
+            .catch(() => undefined);
+        })
+      ).rejects.toThrow(/DuckDB aborted the transaction/);
+      expect(
+        await db.execute(sql`select id from sweep2_items order by id`)
+      ).toEqual([{ id: 999 }]);
     } finally {
       await db.close();
     }

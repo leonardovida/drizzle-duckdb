@@ -75,7 +75,11 @@ export type { DuckDBClientLike, RowData } from './client.ts';
  * that they cannot deadlock.
  */
 const openTransactions = new WeakMap<object, Promise<void>>();
-const transactionScope = new AsyncLocalStorage<ReadonlySet<object>>();
+// Maps each client with a transaction open in this async context to the
+// transaction's failure recorder.
+const transactionScope = new AsyncLocalStorage<
+  Map<object, (error: unknown) => void>
+>();
 
 function insideTransactionOn(client: object): boolean {
   return transactionScope.getStore()?.has(client) ?? false;
@@ -116,9 +120,17 @@ async function acquireTransactionSlot(client: object): Promise<() => void> {
 }
 
 function runInTransactionScope<T>(client: object, run: () => T): T {
-  const scope = new Set(transactionScope.getStore());
-  scope.add(client);
+  const scope = new Map(transactionScope.getStore());
+  scope.set(client, () => undefined);
   return transactionScope.run(scope, run);
+}
+
+/**
+ * A statement through `db` inside the callback runs in the transaction, so
+ * its failure can abort it. Record it there, so COMMIT is probed first.
+ */
+function recordInTransactionScope(client: object, error: unknown): void {
+  transactionScope.getStore()?.get(client)?.(error);
 }
 
 function isNoActiveTransactionError(error: unknown): boolean {
@@ -509,9 +521,6 @@ export class DuckDBSession<
   private rollbackOnlyCause: unknown;
   // Streams opened through a transaction session, closed when it ends.
   private openStreams: Set<() => Promise<void>> | undefined;
-  // Without a pool, statements through `db` inside the callback can abort
-  // the transaction without being recorded here, so always probe.
-  private alwaysProbeBeforeCommit = false;
   // Set on sessions that run a transaction. DuckDB aborts the transaction when
   // a statement fails during execution, and a later COMMIT silently rolls back.
   private statementFailures: unknown[] | undefined;
@@ -560,7 +569,9 @@ export class DuckDBSession<
         ? undefined
         : this.warnOnStringArrayLiteral,
       getScalarParamIndexes(query.params, (query as QueryWithTypings).typings),
-      this.statementFailures ? this.recordStatementFailure : undefined,
+      this.statementFailures || this.waitsForTransactions()
+        ? this.recordStatementFailure
+        : undefined,
       this.options.decimalMode,
       this.waitsForTransactions()
     );
@@ -608,7 +619,11 @@ export class DuckDBSession<
     );
     session.statementFailures = [];
     session.openStreams = new Set();
-    session.alwaysProbeBeforeCommit = !pool;
+    if (!pool) {
+      transactionScope
+        .getStore()
+        ?.set(this.client, session.recordStatementFailure);
+    }
 
     const tx = new DuckDBTransaction<TFullSchema, TSchema>(
       this.dialect,
@@ -672,7 +687,11 @@ export class DuckDBSession<
   };
 
   private recordStatementFailure = (error: unknown) => {
-    this.statementFailures?.push(error);
+    if (this.statementFailures) {
+      this.statementFailures.push(error);
+    } else if (this.waitsForTransactions()) {
+      recordInTransactionScope(this.client, error);
+    }
   };
 
   /**
@@ -681,21 +700,18 @@ export class DuckDBSession<
    * anything, so probe the transaction before committing.
    */
   private async assertTransactionNotAborted(): Promise<void> {
-    const failures = this.statementFailures ?? [];
-    if (failures.length === 0 && !this.alwaysProbeBeforeCommit) {
+    if (!this.statementFailures?.length) {
       return;
     }
 
     try {
       await this.execute(sql`select 1`);
-    } catch (probeError) {
+    } catch {
       const cause =
-        failures.find(
+        this.statementFailures.find(
           (error) =>
             !isSavepointSyntaxError(error) && !isTransactionAbortedError(error)
-        ) ??
-        failures[0] ??
-        probeError;
+        ) ?? this.statementFailures[0];
       throw new Error(
         'DuckDB aborted the transaction because a statement inside it failed. No changes were committed. Rethrow the statement error, or catch it outside db.transaction(), instead of continuing the transaction.',
         { cause }

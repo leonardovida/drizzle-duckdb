@@ -138,8 +138,6 @@ test('a nested failure rolled back to its savepoint keeps the outer transaction'
     "select 'outer'",
     'savepoint drizzle_savepoint_1',
     'rollback to savepoint drizzle_savepoint_1',
-    // One shared connection: probe for an abort before committing.
-    'select 1',
     'commit',
   ]);
 });

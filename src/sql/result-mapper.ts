@@ -237,10 +237,21 @@ export function normalizeInet(value: unknown): unknown {
   return `${formatIpv6(unsigned)}${suffix}`;
 }
 
+/**
+ * The driver reads DuckDB's infinite timestamps as these strings, since a
+ * Date cannot hold them. Decoders keep them instead of an invalid Date.
+ */
+export function isInfiniteTimestamp(value: unknown): value is string {
+  return value === 'infinity' || value === '-infinity';
+}
+
 export function normalizeTimestampString(
   value: unknown,
   withTimezone: boolean
 ): string | unknown {
+  if (isInfiniteTimestamp(value)) {
+    return value;
+  }
   if (value instanceof Date) {
     const iso = value.toISOString().replace('T', ' ');
     return withTimezone ? iso.replace('Z', '+00') : iso.replace('Z', '');
@@ -356,6 +367,7 @@ function compileValueMapper(
   } else if (is(decoder, PgTimestamp)) {
     return (value) => {
       if (value === null) return null;
+      if (isInfiniteTimestamp(value)) return value;
       const normalized = normalizeTimestamp(inet(value), decoder.withTimezone);
       return normalized instanceof Date
         ? normalized

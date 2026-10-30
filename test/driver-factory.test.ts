@@ -52,9 +52,19 @@ describe('Driver Factory Tests', () => {
       expect(resolvePoolSize({ size: 2.9 })).toBe(2);
     });
 
-    test('falls back when explicit pool sizes are not finite', () => {
-      expect(resolvePoolSize({ size: Number.POSITIVE_INFINITY })).toBe(4);
-      expect(resolvePoolSize({ size: Number.NaN })).toBe(4);
+    test('uses the default when no size is given', () => {
+      expect(resolvePoolSize({})).toBe(4);
+    });
+
+    test('rejects explicit pool sizes below 1 or not finite', async () => {
+      for (const size of [0, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+        expect(() => resolvePoolSize({ size })).toThrow(
+          /Pool size must be a finite number of at least 1/
+        );
+      }
+      await expect(drizzle(':memory:', { pool: { size: 0 } })).rejects.toThrow(
+        /Pool size must be a finite number of at least 1/
+      );
     });
   });
 

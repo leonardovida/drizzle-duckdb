@@ -10,7 +10,10 @@ import {
   type DuckDBConnection,
   type DuckDBInstance,
   type DuckDBListType,
+  type DuckDBMapType,
+  type DuckDBStructType,
   type DuckDBType,
+  type DuckDBUnionType,
   type DuckDBValue,
   type DuckDBValueConverter,
   type JS,
@@ -94,6 +97,8 @@ type ResultJsonRowsLike = {
 
 type DataChunkLike = {
   rowCount: number;
+  columnCount?: number;
+  getColumnVector?: (columnIndex: number) => { type: DuckDBType };
   convertRows: <T>(converter: DuckDBValueConverter<T>) => (T | null)[][];
   convertColumns?: <T>(converter: DuckDBValueConverter<T>) => (T | null)[][];
 };
@@ -704,6 +709,62 @@ const JSValueConverter: DuckDBValueConverter<JS> = (value, type, converter) => {
   return JSDuckDBValueConverter(value, type, converter);
 };
 
+const FLOORED_TIMESTAMP_TYPE_IDS = new Set<DuckDBTypeId>([
+  DuckDBTypeId.TIMESTAMP,
+  DuckDBTypeId.TIMESTAMP_TZ,
+  DuckDBTypeId.TIMESTAMP_NS,
+]);
+
+function containsFlooredTimestamp(type: DuckDBType): boolean {
+  if (FLOORED_TIMESTAMP_TYPE_IDS.has(type.typeId)) return true;
+  switch (type.typeId) {
+    case DuckDBTypeId.LIST:
+    case DuckDBTypeId.ARRAY:
+      return containsFlooredTimestamp(
+        (type as DuckDBListType | DuckDBArrayType).valueType
+      );
+    case DuckDBTypeId.MAP: {
+      const map = type as DuckDBMapType;
+      return (
+        containsFlooredTimestamp(map.keyType) ||
+        containsFlooredTimestamp(map.valueType)
+      );
+    }
+    case DuckDBTypeId.STRUCT:
+      return (type as DuckDBStructType).entryTypes.some(
+        containsFlooredTimestamp
+      );
+    case DuckDBTypeId.UNION:
+      return (type as DuckDBUnionType).memberTypes.some(
+        containsFlooredTimestamp
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * The JS converter for these chunks. JSValueConverter adds a call to every
+ * value, so results without timestamps keep node-api's converter. Chunks that
+ * do not expose their column types get the flooring converter.
+ */
+function jsConverterFor(chunks: DataChunkLike[]): DuckDBValueConverter<JS> {
+  const chunk = chunks[0];
+  if (
+    !chunk ||
+    typeof chunk.columnCount !== 'number' ||
+    typeof chunk.getColumnVector !== 'function'
+  ) {
+    return JSValueConverter;
+  }
+  for (let index = 0; index < chunk.columnCount; index += 1) {
+    if (containsFlooredTimestamp(chunk.getColumnVector(index).type)) {
+      return JSValueConverter;
+    }
+  }
+  return JSDuckDBValueConverter;
+}
+
 /**
  * TIMESTAMP_NS, TIME_TZ and TIME_NS columns read as DuckDB strings, which keep
  * the precision a JS value would lose. Every other column keeps its JS value,
@@ -721,14 +782,15 @@ const PerColumnValueConverter: DuckDBValueConverter<JS> = (value, type) =>
  */
 function withExactDecimals(
   converter: DuckDBValueConverter<JS>,
-  recursive = false
+  recursive = false,
+  base: DuckDBValueConverter<JS> = JSValueConverter
 ): DuckDBValueConverter<JS> {
   const nested: DuckDBValueConverter<JS> = (value, type) =>
     type.typeId === DuckDBTypeId.DECIMAL
       ? value === null
         ? null
         : String(value)
-      : JSValueConverter(value, type, nested);
+      : base(value, type, nested);
   return (value, type) =>
     type.typeId === DuckDBTypeId.DECIMAL
       ? value === null
@@ -776,10 +838,11 @@ function convertChunkRows(
     return rows;
   };
 
+  const js = jsConverterFor(chunks);
   const finish = (converter: DuckDBValueConverter<JS>) =>
     convert(
       exactDecimals || recursiveDecimals
-        ? withExactDecimals(converter, recursiveDecimals)
+        ? withExactDecimals(converter, recursiveDecimals, js)
         : converter
     );
 
@@ -791,7 +854,7 @@ function convertChunkRows(
     }
   }
 
-  return finish(JSValueConverter);
+  return finish(js);
 }
 
 async function readResultChunkRows(
@@ -958,10 +1021,9 @@ async function* yieldChunkRows(
       }
     }
 
+    const js = jsConverterFor([chunk]);
     rows ??= chunk.convertRows(
-      exactDecimals
-        ? withExactDecimals(JSValueConverter, true)
-        : JSValueConverter
+      exactDecimals ? withExactDecimals(js, true, js) : js
     );
     yieldedRows = true;
     yield rows;
@@ -1457,10 +1519,11 @@ export async function executeArrowOnClient(
       if (hasFetchAllChunks(resultMetadata)) {
         const chunks = await resultMetadata.fetchAllChunks();
         const columns = resolveResultColumns(resultMetadata);
+        const js = jsConverterFor(chunks);
         const convert = (baseConverter: DuckDBValueConverter<JS>) => {
           const converter =
             options.decimalMode === 'string'
-              ? withExactDecimals(baseConverter, true)
+              ? withExactDecimals(baseConverter, true, js)
               : baseConverter;
           const values: unknown[][] = columns.map(() => []);
           for (const chunk of chunks) {
@@ -1491,7 +1554,7 @@ export async function executeArrowOnClient(
               /* Retry fetched chunks safely. */
             }
           }
-          return convert(JSValueConverter);
+          return convert(js);
         } catch (error) {
           throw wrapUnsupportedNodeApiTypeError(resultMetadata, error);
         }

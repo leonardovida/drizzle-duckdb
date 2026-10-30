@@ -837,6 +837,10 @@ export const duckDbTimestamp = <TMode extends TimestampMode = 'date'>(
       if (value instanceof Date) {
         return value;
       }
+      // A Date cannot hold DuckDB's infinite timestamps, so keep their text.
+      if (value === 'infinity' || value === '-infinity') {
+        return value;
+      }
       const stringValue = typeof value === 'string' ? value : value.toString();
       return new Date(timestampStringToDateInput(stringValue));
     },

@@ -4,7 +4,6 @@ import {
   type DuckDBConnectionPool,
   type DuckDBExecutionClient,
 } from './client.ts';
-import { normalizePositiveInteger } from './options.ts';
 
 /** Pool size presets for different MotherDuck instance types */
 export type PoolPreset =
@@ -58,7 +57,9 @@ export function resolvePoolSize(
   if (pool === false) return false;
   if (pool === undefined) return DEFAULT_POOL_SIZE;
   if (typeof pool === 'string') return POOL_PRESETS[pool] ?? DEFAULT_POOL_SIZE;
-  return normalizePositiveInteger(pool.size, DEFAULT_POOL_SIZE);
+  // Validate here too, so drizzle(path, { pool: { size } }) rejects the same
+  // sizes createDuckDBConnectionPool() does instead of using the default.
+  return resolveSize(pool.size);
 }
 
 export interface DuckDBConnectionPoolOptions extends DuckDBPoolConfig {
