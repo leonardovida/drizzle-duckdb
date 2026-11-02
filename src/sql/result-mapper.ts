@@ -20,7 +20,11 @@ import {
   PgTimestampString,
 } from 'drizzle-orm/pg-core';
 import { assignOwnProperty } from '../own-property.ts';
-import { timeFromMicros } from '../time.ts';
+import {
+  dateSubMillisecondMicros,
+  intervalToString,
+  timeFromMicros,
+} from '../time.ts';
 
 type SQLInternal<T = unknown> = SQL<T> & {
   decoder: DriverValueDecoder<T, any>;
@@ -253,8 +257,12 @@ export function normalizeTimestampString(
     return value;
   }
   if (value instanceof Date) {
-    const iso = value.toISOString().replace('T', ' ');
-    return withTimezone ? iso.replace('Z', '+00') : iso.replace('Z', '');
+    const micros = dateSubMillisecondMicros(value);
+    const digits = micros
+      ? String(micros).padStart(3, '0').replace(/0+$/, '')
+      : '';
+    const iso = value.toISOString().replace('T', ' ').replace('Z', digits);
+    return withTimezone ? `${iso}+00` : iso;
   }
   if (typeof value === 'string') {
     const normalized = value.replace('T', ' ');
@@ -316,6 +324,11 @@ export function normalizeTime(value: unknown): string | unknown {
   return value;
 }
 
+/**
+ * DuckDB returns INTERVAL values as `{ months, days, micros }`. Format them
+ * the way DuckDB casts an INTERVAL to VARCHAR, for example
+ * `1 year 2 months 3 days 04:05:06`, which DuckDB and Postgres parse back.
+ */
 export function normalizeInterval(value: unknown): string | unknown {
   if (
     value &&
@@ -326,16 +339,9 @@ export function normalizeInterval(value: unknown): string | unknown {
     const { months, days, micros } = value as {
       months: number;
       days: number;
-      micros?: number | string;
+      micros?: number | string | bigint;
     };
-
-    if (months === 0 && days !== undefined) {
-      if (micros && Number(micros) !== 0) {
-        const seconds = Number(micros) / 1_000_000;
-        return `${days} day${days === 1 ? '' : 's'} ${seconds} seconds`.trim();
-      }
-      return `${days} day${days === 1 ? '' : 's'}`;
-    }
+    return intervalToString(Number(months), Number(days), BigInt(micros ?? 0));
   }
   return value;
 }
@@ -356,7 +362,12 @@ function decodesInet(decoder: DriverValueDecoder<unknown, unknown>): boolean {
   return true;
 }
 
-function compileValueMapper(
+/**
+ * Convert a node-api value into the input the column's decoder expects, such
+ * as DuckDB's text for TIME and INTERVAL values. Decoding stays separate, so
+ * Drizzle's relational mapper can decode the normalized value itself.
+ */
+function compileValueNormalizer(
   decoder: DriverValueDecoder<unknown, unknown>
 ): (value: unknown) => unknown {
   const inet = decodesInet(decoder) ? normalizeInet : (value: unknown) => value;
@@ -365,14 +376,10 @@ function compileValueMapper(
     normalize = (value) =>
       normalizeTimestampString(value, decoder.withTimezone);
   } else if (is(decoder, PgTimestamp)) {
-    return (value) => {
-      if (value === null) return null;
-      if (isInfiniteTimestamp(value)) return value;
-      const normalized = normalizeTimestamp(inet(value), decoder.withTimezone);
-      return normalized instanceof Date
-        ? normalized
-        : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
-    };
+    normalize = (value) =>
+      isInfiniteTimestamp(value)
+        ? value
+        : normalizeTimestamp(value, decoder.withTimezone);
   } else if (is(decoder, PgDateString)) {
     normalize = normalizeDateString;
   } else if (is(decoder, PgDate)) {
@@ -382,12 +389,58 @@ function compileValueMapper(
   } else if (is(decoder, PgInterval)) {
     normalize = normalizeInterval;
   }
-  return (value) =>
-    value === null
+  return (value) => (value === null ? null : normalize(inet(value)));
+}
+
+function compileValueMapper(
+  decoder: DriverValueDecoder<unknown, unknown>
+): (value: unknown) => unknown {
+  const normalize = compileValueNormalizer(decoder);
+  if (is(decoder, PgTimestamp)) {
+    // Dates are final, and infinite timestamps keep DuckDB's text.
+    return (value) => {
+      const normalized = normalize(value);
+      return normalized === null ||
+        normalized instanceof Date ||
+        isInfiniteTimestamp(normalized)
+        ? normalized
+        : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+    };
+  }
+  return (value) => {
+    const normalized = normalize(value);
+    return normalized === null
       ? null
-      : decoder.mapFromDriverValue(
-          toDecoderInput(decoder, normalize(inet(value)))
-        );
+      : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+  };
+}
+
+/**
+ * Normalize the top-level values of relational query rows (`db.query`) in
+ * place. Drizzle decodes them afterwards with each field's decoder, so they
+ * must arrive the way flat selects see them. JSON relation fields are left
+ * alone.
+ */
+export function compileRelationalRowNormalizer(
+  selection: readonly RelationalSelectionItem[]
+): (row: unknown[]) => void {
+  const normalizers = selection.map((item) =>
+    item.isJson
+      ? undefined
+      : compileValueNormalizer(resolveFieldDecoder(item.field))
+  );
+  return (row) => {
+    for (let index = 0; index < normalizers.length; index += 1) {
+      const normalize = normalizers[index];
+      if (normalize) row[index] = normalize(row[index]);
+    }
+  };
+}
+
+/** The part of Drizzle's relational query selection the driver reads. */
+export interface RelationalSelectionItem {
+  isJson: boolean;
+  field: unknown;
 }
 
 function assignResultPath(

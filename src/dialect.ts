@@ -32,6 +32,7 @@ import {
 
 import { normalizeMigrationConfig } from './migration-config.ts';
 import { transformSQL } from './sql/ast-transformer.ts';
+import type { RelationalSelectionItem } from './sql/result-mapper.ts';
 
 const enum SavepointSupport {
   Unknown = 0,
@@ -49,6 +50,24 @@ const PG_JSON_UNSUPPORTED_MESSAGE =
  */
 export const DUCKDB_SCALAR_COLUMN_TYPING =
   'duckdb:scalar' as unknown as QueryTypingsValue;
+
+/**
+ * Root selections of relational queries (`db.query`), keyed first by the
+ * built SQL and then by the Query that sqlToQuery() renders from it. Drizzle
+ * calls both dialect methods before it prepares the query, and the session
+ * reads the selection to normalize top-level values.
+ */
+const relationalSelections = new WeakMap<
+  object,
+  readonly RelationalSelectionItem[]
+>();
+
+/** @internal */
+export function relationalSelectionOf(
+  query: object
+): readonly RelationalSelectionItem[] | undefined {
+  return relationalSelections.get(query);
+}
 
 /**
  * Query typing for params bound to a pg-core array column, so sessions can
@@ -167,9 +186,17 @@ function rewriteRelationalJsonChunks(
         value === undefined ? undefined : RELATIONAL_JSON_CHUNKS.get(value);
       const next = chunks[index + 1] as unknown;
       if (replacement) {
-        if (exactDecimals && value === 'json_build_array(' && is(next, SQL)) {
+        if (value === 'json_build_array(' && is(next, SQL)) {
+          // JSON numbers lose DECIMAL digits. numeric() columns read exact
+          // text, as in flat selects, and decimalMode 'string' reads every
+          // DECIMAL column as text.
           const fields = next.queryChunks.map((item) => {
-            if (!is(item, Column)) return item;
+            if (
+              !is(item, Column) ||
+              (!exactDecimals && !item.columnType.startsWith('PgNumeric'))
+            ) {
+              return item;
+            }
             const originalType = item.getSQLType();
             const exactType = decimalStringType(originalType);
             return exactType === originalType
@@ -460,6 +487,7 @@ export class DuckDBDialect extends PgDialect {
         result.sql.queryChunks,
         this.options.decimalMode === 'string'
       );
+      relationalSelections.set(result.sql, result.selection);
     }
     return result;
   }
@@ -476,9 +504,12 @@ export class DuckDBDialect extends PgDialect {
       qualifyJoinColumns: this.options.qualifyRawJoinColumns === true,
     });
 
-    return {
+    const query = {
       ...result,
       sql: transformed.sql,
     };
+    const selection = relationalSelections.get(sqlObj);
+    if (selection) relationalSelections.set(query, selection);
+    return query;
   }
 }

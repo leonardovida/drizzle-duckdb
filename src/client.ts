@@ -37,6 +37,7 @@ import {
   getPreparedStatementCache,
 } from './prepared-statement-cache.ts';
 import { assignOwnProperty } from './own-property.ts';
+import { rememberDroppedMicros } from './time.ts';
 
 export type DuckDBExecutionClient = DuckDBConnection | PgDuckClient;
 export type DuckDBClientLike = DuckDBExecutionClient | DuckDBConnectionPool;
@@ -686,7 +687,12 @@ function dateFromTimestampUnits(
   if (millis < -MAX_DATE_MILLIS || millis > MAX_DATE_MILLIS) {
     throw new Error(`${typeName} value out of range for JS Date: ${units}`);
   }
-  return new Date(Number(millis));
+  const date = new Date(Number(millis));
+  if (unitsPerMilli === 1000n) {
+    const dropped = units - millis * 1000n;
+    if (dropped !== 0n) rememberDroppedMicros(date, Number(dropped));
+  }
+  return date;
 }
 
 const JSValueConverter: DuckDBValueConverter<JS> = (value, type, converter) => {

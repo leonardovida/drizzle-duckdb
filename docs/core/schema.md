@@ -88,9 +88,7 @@ const orderItems = pgTable(
     orderId: integer('order_id'),
     productId: integer('product_id'),
   },
-  (t) => ({
-    pk: primaryKey({ columns: [t.orderId, t.productId] }),
-  })
+  (t) => [primaryKey({ columns: [t.orderId, t.productId] })]
 );
 ```
 
@@ -115,9 +113,7 @@ const users = pgTable(
   {
     email: text('email'),
   },
-  (t) => ({
-    emailUnique: unique('users_email_unique').on(t.email),
-  })
+  (t) => [unique('users_email_unique').on(t.email)]
 );
 ```
 
@@ -146,13 +142,13 @@ const posts = pgTable(
     id: integer('id').primaryKey(),
     userId: integer('user_id'),
   },
-  (t) => ({
-    userFk: foreignKey({
+  (t) => [
+    foreignKey({
       columns: [t.userId],
       foreignColumns: [users.id],
       name: 'posts_user_fk',
     }),
-  })
+  ]
 );
 ```
 

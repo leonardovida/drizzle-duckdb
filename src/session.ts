@@ -34,12 +34,17 @@ import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
 import { skipQuotedOrComment } from './sql/array-bounds-text.ts';
 import {
+  compileRelationalRowNormalizer,
   compileResultMapper,
   resolveFieldDecoder,
+  type RelationalSelectionItem,
 } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
 import type { DuckDBDialect } from './dialect.ts';
-import { DUCKDB_ARRAY_COLUMN_TYPING } from './dialect.ts';
+import {
+  DUCKDB_ARRAY_COLUMN_TYPING,
+  relationalSelectionOf,
+} from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
@@ -305,7 +310,7 @@ function isNumericColumn(decoder: unknown): boolean {
  */
 function restoreNonNumericDecimals(
   rows: unknown[][],
-  fields: SelectedFieldsOrdered,
+  fields: readonly { field: unknown }[],
   decimalColumns: readonly number[]
 ): void {
   const toNumber = decimalColumns.filter(
@@ -436,6 +441,7 @@ export class DuckDBPreparedQuery<
 > extends PgPreparedQuery<T> {
   static readonly [entityKind]: string = 'DuckDBPreparedQuery';
   private resultMapper?: (row: unknown[]) => T['execute'];
+  private relationalRowNormalizer?: (row: unknown[]) => void;
 
   constructor(
     private client: DuckDBClientLike,
@@ -456,7 +462,8 @@ export class DuckDBPreparedQuery<
     private scalarParamIndexes?: ReadonlySet<number>,
     private onStatementError?: (error: unknown) => void,
     private decimalMode: 'number' | 'string' = 'number',
-    private waitForTransactions = false
+    private waitForTransactions = false,
+    private relationalSelection?: readonly RelationalSelectionItem[]
   ) {
     super(
       ...([
@@ -518,23 +525,34 @@ export class DuckDBPreparedQuery<
       return rows as T['execute'];
     }
 
+    // Relational queries without a known selection cannot tell DECIMAL
+    // columns from other DECIMAL fields, so they keep doubles.
+    const relationalSelection = customResultMapper
+      ? this.relationalSelection
+      : undefined;
     const { rows, exactDecimalColumns } = await executeArraysOnClient(
       this.client,
       queryString,
       params,
       {
         prepareCache: this.prepareCache,
-        exactDecimals: !customResultMapper,
+        exactDecimals: !customResultMapper || relationalSelection !== undefined,
         decimalMode: this.decimalMode,
       }
     );
 
-    if (customResultMapper) {
-      return customResultMapper(rows);
+    const decimalFields = relationalSelection ?? fields;
+    if (exactDecimalColumns && decimalFields && this.decimalMode !== 'string') {
+      restoreNonNumericDecimals(rows, decimalFields, exactDecimalColumns);
     }
 
-    if (exactDecimalColumns && this.decimalMode !== 'string') {
-      restoreNonNumericDecimals(rows, fields!, exactDecimalColumns);
+    if (customResultMapper) {
+      if (relationalSelection) {
+        this.relationalRowNormalizer ??=
+          compileRelationalRowNormalizer(relationalSelection);
+        for (const row of rows) this.relationalRowNormalizer(row);
+      }
+      return customResultMapper(rows);
     }
 
     this.resultMapper ??= compileResultMapper<T['execute']>(
@@ -634,7 +652,8 @@ export class DuckDBSession<
         ? this.recordStatementFailure
         : undefined,
       this.options.decimalMode,
-      this.waitsForTransactions()
+      this.waitsForTransactions(),
+      relationalSelectionOf(query)
     );
   }
 

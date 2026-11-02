@@ -19,6 +19,7 @@ import { coerceArrayString as parseArrayString } from './array-literals.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
 import {
   dateStringFromDate,
+  dateToMicros,
   intervalToString,
   parseTimestampString,
   timeFromMicros,
@@ -728,10 +729,7 @@ function timestampLiteral(value: Date | string, withTimezone: boolean): string {
  */
 function timestampModeString(value: unknown, withTimezone: boolean): string {
   if (value instanceof Date) {
-    return timestampStringFromMicros(
-      BigInt(value.getTime()) * 1000n,
-      withTimezone
-    );
+    return timestampStringFromMicros(dateToMicros(value), withTimezone);
   }
 
   if (

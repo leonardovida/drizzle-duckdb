@@ -2,7 +2,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
 import { describe, expect, test, afterEach, vi } from 'vitest';
 import { drizzle } from '../src/driver.ts';
-import { POOL_PRESETS, resolvePoolSize } from '../src/pool.ts';
+import { POOL_PRESETS, resolvePoolSize, type PoolPreset } from '../src/pool.ts';
 import { DuckDBDatabase } from '../src/driver.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 import { DuckDBSession } from '../src/session.ts';
@@ -65,6 +65,17 @@ describe('Driver Factory Tests', () => {
       await expect(drizzle(':memory:', { pool: { size: 0 } })).rejects.toThrow(
         /Pool size must be a finite number of at least 1/
       );
+    });
+
+    test('rejects unknown presets instead of using the default size', async () => {
+      for (const preset of ['Jumbo', 'constructor', 'toString']) {
+        expect(() => resolvePoolSize(preset as PoolPreset)).toThrow(
+          /Unknown pool preset .* Expected one of: pulse, standard/
+        );
+      }
+      await expect(
+        drizzle(':memory:', { pool: 'huge' as PoolPreset })
+      ).rejects.toThrow(/Unknown pool preset "huge"/);
     });
   });
 

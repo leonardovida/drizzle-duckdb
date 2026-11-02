@@ -56,7 +56,15 @@ export function resolvePoolSize(
 ): number | false {
   if (pool === false) return false;
   if (pool === undefined) return DEFAULT_POOL_SIZE;
-  if (typeof pool === 'string') return POOL_PRESETS[pool] ?? DEFAULT_POOL_SIZE;
+  if (typeof pool === 'string') {
+    // A misspelled preset would otherwise run with the default size.
+    if (!Object.hasOwn(POOL_PRESETS, pool)) {
+      throw new Error(
+        `Unknown pool preset ${JSON.stringify(pool)}. Expected one of: ${Object.keys(POOL_PRESETS).join(', ')}.`
+      );
+    }
+    return POOL_PRESETS[pool];
+  }
   // Validate here too, so drizzle(path, { pool: { size } }) rejects the same
   // sizes createDuckDBConnectionPool() does instead of using the default.
   return resolveSize(pool.size);

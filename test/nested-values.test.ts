@@ -239,9 +239,12 @@ describe('string mode timestamps and blob reads', () => {
       .select({ ts: values.ts, tz: values.tz })
       .from(values)
       .orderBy(values.id);
-    // Date values carry milliseconds only.
+    // The driver keeps the microseconds a JS Date drops.
     expect(rows).toEqual([
-      { ts: '2024-01-01 12:00:00.123', tz: '2024-01-01 12:00:00.123+00' },
+      {
+        ts: '2024-01-01 12:00:00.123456',
+        tz: '2024-01-01 12:00:00.123456+00',
+      },
       { ts: '2024-01-15 10:30:00', tz: '2024-01-15 10:30:00+00' },
     ]);
   });
@@ -252,7 +255,10 @@ describe('string mode timestamps and blob reads', () => {
       .from(values)
       .orderBy(values.id);
     expect(rows.map(({ ts, tz }) => ({ ts, tz }))).toEqual([
-      { ts: '2024-01-01 12:00:00.123', tz: '2024-01-01 12:00:00.123+00' },
+      {
+        ts: '2024-01-01 12:00:00.123456',
+        tz: '2024-01-01 12:00:00.123456+00',
+      },
       { ts: '2024-01-15 10:30:00', tz: '2024-01-15 10:30:00+00' },
     ]);
   });

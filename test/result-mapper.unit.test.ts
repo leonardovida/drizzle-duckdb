@@ -300,20 +300,19 @@ describe('normalizeInterval', () => {
     expect(result).toBe('5 days');
   });
 
-  test('formats days with micros as seconds', () => {
+  test('formats days with micros as a time of day', () => {
     const result = normalizeInterval({ months: 0, days: 2, micros: 3000000 });
-    expect(result).toBe('2 days 3 seconds');
+    expect(result).toBe('2 days 00:00:03');
   });
 
   test('formats zero days with micros', () => {
     const result = normalizeInterval({ months: 0, days: 0, micros: 5000000 });
-    expect(result).toBe('0 days 5 seconds');
+    expect(result).toBe('00:00:05');
   });
 
-  test('passes through when months is not 0', () => {
-    const interval = { months: 2, days: 5, micros: 0 };
-    const result = normalizeInterval(interval);
-    expect(result).toBe(interval);
+  test('formats months as years and months', () => {
+    const result = normalizeInterval({ months: 14, days: 5, micros: 0n });
+    expect(result).toBe('1 year 2 months 5 days');
   });
 
   test('passes through non-object values', () => {
@@ -334,7 +333,7 @@ describe('normalizeInterval', () => {
 
   test('handles string micros', () => {
     const result = normalizeInterval({ months: 0, days: 1, micros: '2000000' });
-    expect(result).toBe('1 day 2 seconds');
+    expect(result).toBe('1 day 00:00:02');
   });
 
   test('handles zero micros', () => {

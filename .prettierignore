@@ -1,1 +1,3 @@
 README.md
+# Agent worktrees hold full checkouts of this repository.
+.claude/worktrees/

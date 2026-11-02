@@ -163,7 +163,7 @@ While an `executeBatches()` loop is open, its connection cannot run other querie
 
 Each result column is converted on its own. `TIMESTAMP_NS`, `TIME WITH TIME ZONE` and `TIME_NS` columns come back as DuckDB's text, which keeps precision a JavaScript value would lose. Other columns keep their JavaScript values, whatever else the query selects: `BLOB` is a `Buffer`, `BIGINT`, `HUGEINT` and `UBIGINT` are `bigint`, and `DATE` is a `Date`.
 
-Raw `db.execute()` results use `@duckdb/node-api` values directly. `COUNT(*)` and `SUM` of an integer column return a `bigint`, `TIME` returns microseconds as a `bigint`, and `INTERVAL` returns `{ months, days, micros }`. Columns selected through the query builder use their column's decoder, for example `duckDbInterval()` returns interval text.
+Raw `db.execute()` results use `@duckdb/node-api` values directly. `COUNT(*)` and `SUM` of an integer column return a `bigint`, `TIME` returns microseconds as a `bigint`, and `INTERVAL` returns `{ months, days, micros }`. Columns selected through the query builder or relational queries use their column's decoder, for example `duckDbInterval()` and `interval()` from `drizzle-orm/pg-core` return interval text such as `'1 day 02:00:00'`.
 
 A SQL field uses its own `.mapWith()` decoder, even when it mentions a DuckDB column. ``sql`extract(hour from ${events.startTime})`.mapWith(Number)`` returns a number, not a TIME string. Only a bare ``sql`${column}` `` without `.mapWith()` uses the column's decoder.
 
@@ -232,7 +232,7 @@ duckDbTimestamp('col', { mode: 'string', withTimezone: true });
 // Returns: '2024-01-15 10:30:00+00' (always UTC)
 ```
 
-String mode usually keeps milliseconds only, because DuckDB returns timestamps to JavaScript as `Date` values. See [Timestamps, Dates, and Times]({{ '/api/columns' | relative_url }}#timestamps-dates-and-times).
+String mode keeps microseconds. Date mode and raw `db.execute()` results return JavaScript `Date` values, which keep milliseconds only. See [Timestamps, Dates, and Times]({{ '/api/columns' | relative_url }}#timestamps-dates-and-times).
 
 ## Query Transformation
 
