@@ -59,13 +59,18 @@ jobs:
         run: bun run check:package
 
   duckdb-floor:
-    name: Test (@duckdb/node-api ${{ matrix.node-api }})
+    name: Test (@duckdb/node-api ${{ matrix.node-api }}${{ matrix.drizzle && format(', drizzle-orm {0}', matrix.drizzle) || '' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # Lowest release of each DuckDB minor line in the peer range.
         node-api: ['1.4.4-r.1', '1.5.0-r.1']
+        drizzle: ['']
+        include:
+          # Both peer floors together, which neither floor job covers alone.
+          - node-api: '1.4.4-r.1'
+            drizzle: '0.40.1'
 
     steps:
       - name: Checkout repository
@@ -85,15 +90,29 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install floor @duckdb/node-api
+      - name: Install floor peers
         env:
           NODE_API_VERSION: ${{ matrix.node-api }}
+          DRIZZLE_VERSION: ${{ matrix.drizzle }}
         run: |
-          bun add --dev --no-save "@duckdb/node-api@${NODE_API_VERSION}"
+          # One install, so a later --no-save add cannot reset the other peer.
+          packages=("@duckdb/node-api@${NODE_API_VERSION}")
+          if [ -n "$DRIZZLE_VERSION" ]; then
+            packages+=("drizzle-orm@${DRIZZLE_VERSION}")
+          fi
+          bun add --dev --no-save "${packages[@]}"
           installed=$(node -p "require('@duckdb/node-api/package.json').version")
           if [ "$installed" != "$NODE_API_VERSION" ]; then
             echo "::error::Expected @duckdb/node-api ${NODE_API_VERSION}, found ${installed}"
             exit 1
+          fi
+          if [ -n "$DRIZZLE_VERSION" ]; then
+            # drizzle-orm 0.40 does not export ./package.json.
+            installed=$(node -p "require('./node_modules/drizzle-orm/package.json').version")
+            if [ "$installed" != "$DRIZZLE_VERSION" ]; then
+              echo "::error::Expected drizzle-orm ${DRIZZLE_VERSION}, found ${installed}"
+              exit 1
+            fi
           fi
 
       - name: Type check floor bindings

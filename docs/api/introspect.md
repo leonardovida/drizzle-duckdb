@@ -164,10 +164,10 @@ export const users = mainSchema.table("users", {
   tags: duckDbList("tags", "VARCHAR"),
   metadata: duckDbJson("metadata"),
   createdAt: duckDbTimestamp("created_at", { withTimezone: true }),
-}, (t) => ({
-  usersIdPkey: primaryKey({ columns: [t.id], name: "users_id_pkey" }),
-  usersEmailKey: unique("users_email_key").on(t.email),
-}));
+}, (t) => [
+  primaryKey({ columns: [t.id], name: "users_id_pkey" }),
+  unique("users_email_key").on(t.email),
+]);
 ```
 
 ## Type Mapping

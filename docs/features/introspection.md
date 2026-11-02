@@ -237,18 +237,18 @@ export const events = analyticsSchema.table("events", {
   properties: duckDbJson("properties"),
   tags: duckDbList("tags", "VARCHAR"),
   createdAt: duckDbTimestamp("created_at").default(sql`current_timestamp`),
-}, (t) => ({
-  eventsIdPkey: primaryKey({ columns: [t.id], name: "events_id_pkey" }),
-}));
+}, (t) => [
+  primaryKey({ columns: [t.id], name: "events_id_pkey" }),
+]);
 
 export const users = analyticsSchema.table("users", {
   id: integer("id").notNull(),
   email: varchar("email").notNull(),
   metadata: duckDbStruct("metadata", { "plan": "VARCHAR", "active": "BOOLEAN" }),
-}, (t) => ({
-  usersIdPkey: primaryKey({ columns: [t.id], name: "users_id_pkey" }),
-  usersEmailKey: unique("users_email_key").on(t.email),
-}));
+}, (t) => [
+  primaryKey({ columns: [t.id], name: "users_id_pkey" }),
+  unique("users_email_key").on(t.email),
+]);
 ```
 
 Things to note in the output:

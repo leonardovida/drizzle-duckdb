@@ -1,5 +1,28 @@
 const MICROS_PER_DAY = 86_400_000_000n;
 
+/**
+ * A JS Date keeps milliseconds, but DuckDB timestamps carry microseconds. The
+ * client records the digits it drops for each Date it reads, so string mode
+ * columns can print the stored value exactly.
+ */
+const droppedMicros = new WeakMap<Date, number>();
+
+export function rememberDroppedMicros(date: Date, micros: number): void {
+  droppedMicros.set(date, micros);
+}
+
+/** Microseconds below the Date's millisecond, as read from DuckDB. */
+export function dateSubMillisecondMicros(date: Date): number {
+  return droppedMicros.get(date) ?? 0;
+}
+
+/** Microseconds since the Unix epoch, including digits a Date drops. */
+export function dateToMicros(date: Date): bigint {
+  return (
+    BigInt(date.getTime()) * 1000n + BigInt(dateSubMillisecondMicros(date))
+  );
+}
+
 function pad(value: bigint, length: number): string {
   return value.toString().padStart(length, '0');
 }

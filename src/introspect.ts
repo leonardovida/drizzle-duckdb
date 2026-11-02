@@ -904,25 +904,20 @@ function emitConstraints(
       )
       .join(', ');
 
+  // The array form replaced the keyed object form in drizzle-orm 0.36. The
+  // constraint names keep the generated SQL stable.
   const entries: string[] = [];
-  const usedKeys = new Set<string>();
 
   for (const constraint of constraints) {
-    const key = allocateIdentifier(
-      toIdentifier(constraint.name || `${table.name}_constraint`),
-      usedKeys
-    );
     const name = JSON.stringify(constraint.name);
     if (constraint.type === 'PRIMARY KEY') {
       entries.push(
-        `${key}: primaryKey({ columns: [${ownColumns(
+        `primaryKey({ columns: [${ownColumns(
           constraint.columns
         )}], name: ${name} })`
       );
     } else if (constraint.type === 'UNIQUE') {
-      entries.push(
-        `${key}: unique(${name}).on(${ownColumns(constraint.columns)})`
-      );
+      entries.push(`unique(${name}).on(${ownColumns(constraint.columns)})`);
     } else {
       const target = resolveTarget(constraint);
       const targetVar = target.key === selfKey ? param : target.identifier;
@@ -935,18 +930,18 @@ function emitConstraints(
         )
         .join(', ');
       entries.push(
-        `${key}: foreignKey({ columns: [${ownColumns(
+        `foreignKey({ columns: [${ownColumns(
           constraint.columns
         )}], foreignColumns: [${foreignColumns}], name: ${name} })`
       );
     }
   }
 
-  const lines: string[] = [`(${param}) => ({`];
+  const lines: string[] = [`(${param}) => [`];
   for (const entry of entries) {
     lines.push(`  ${entry},`);
   }
-  lines.push('})');
+  lines.push(']');
   return lines.join('\n');
 }
 
