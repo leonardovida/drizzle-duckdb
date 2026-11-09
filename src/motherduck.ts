@@ -182,7 +182,8 @@ export type MotherDuckFlightGranteeRow = {
 export type MotherDuckFlightMetadata = {
   /**
    * A chart of the Flight, such as Mermaid flowchart source. On update, an
-   * empty string clears the chart and NULL leaves it unchanged.
+   * empty string clears the chart and NULL leaves it unchanged. An update
+   * needs another field when the chart is NULL.
    */
   chart?: string | null;
 };
@@ -353,7 +354,11 @@ export interface MotherDuckUpdateFlightOptions {
   maxRuntimeSec?: number | SQLWrapper;
   /** A different size creates a new Flight version. */
   instanceType?: MotherDuckFlightInstanceType | SQLWrapper;
-  /** Keys left out or set to NULL keep their current value. */
+  /**
+   * Keys left out or set to NULL keep their current value. Metadata that
+   * changes nothing does not count as an update, so MotherDuck rejects a call
+   * whose only field is `{}` or `{ chart: null }`.
+   */
   metadata?: MotherDuckFlightMetadata | SQLWrapper | null;
 }
 
@@ -407,9 +412,13 @@ type NamedParameter = {
   value: MotherDuckSqlArgument | undefined;
 };
 
+// Run parameters MotherDuck sets for every Flight run. Config cannot set them.
 const motherDuckFlightReservedConfigKeys = new Set([
   'MOTHERDUCK_TOKEN',
   'MOTHERDUCK_FLIGHTS_RUN',
+  'MOTHERDUCK_FLIGHT_ID',
+  'MOTHERDUCK_FLIGHT_RUN_ID',
+  'MOTHERDUCK_HOST',
 ]);
 
 const motherDuckTableFunctionNameList = [
