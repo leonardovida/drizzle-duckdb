@@ -133,9 +133,13 @@ interface DuckDBDrizzleConfig<TSchema> {
   // Attach a DuckLake catalog on every connection
   ducklake?: DuckLakeConfig;
 
-  // Enable a per-connection prepared statement cache (default: disabled).
-  // true uses 32 statements per connection.
+  // Deprecated and ignored, with a one-time warning. Statements are
+  // prepared on every run.
   prepareCache?: boolean | number | { size?: number };
+
+  // How a bare Date in sql`...` binds: a naive UTC TIMESTAMP (default) or
+  // a TIMESTAMPTZ instant.
+  dateParams?: 'timestamp' | 'timestamptz';
 
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals?: boolean;

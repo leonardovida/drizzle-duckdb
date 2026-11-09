@@ -21,6 +21,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { assignOwnProperty } from '../own-property.ts';
 import {
+  dateStringFromDate,
   dateSubMillisecondMicros,
   intervalToString,
   timeFromMicros,
@@ -296,16 +297,22 @@ export function normalizeTimestamp(
 
 export function normalizeDateString(value: unknown): string | unknown {
   if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
+    // toISOString() prints years outside 0001-9999 as +010000 or -000043.
+    return dateStringFromDate(value);
   }
   if (typeof value === 'string') {
-    return value.slice(0, 10);
+    return value === 'infinity' || value === '-infinity'
+      ? value
+      : value.slice(0, 10);
   }
   return value;
 }
 
 export function normalizeDateValue(value: unknown): Date | unknown {
   if (value instanceof Date) {
+    return value;
+  }
+  if (isInfiniteTimestamp(value)) {
     return value;
   }
   if (typeof value === 'string') {
@@ -396,8 +403,8 @@ function compileValueMapper(
   decoder: DriverValueDecoder<unknown, unknown>
 ): (value: unknown) => unknown {
   const normalize = compileValueNormalizer(decoder);
-  if (is(decoder, PgTimestamp)) {
-    // Dates are final, and infinite timestamps keep DuckDB's text.
+  if (is(decoder, PgTimestamp) || is(decoder, PgDate)) {
+    // Dates are final, and infinite values keep DuckDB's text.
     return (value) => {
       const normalized = normalize(value);
       return normalized === null ||

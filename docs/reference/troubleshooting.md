@@ -175,6 +175,22 @@ try {
 
 **Solution**: Validate dates before binding them, for example with `Number.isNaN(date.getTime())`.
 
+### A `Date` in raw SQL does not match TIMESTAMPTZ rows
+
+**Symptom**: ``where(sql`${events.at} >= ${date}`)`` returns no rows or the wrong rows, while `gte(events.at, date)` works.
+
+**Cause**: A `Date` written straight into a `sql` template has no column type, so it binds as a naive `TIMESTAMP` holding the UTC time. DuckDB reads that value in the session `TimeZone` when it compares it with a `TIMESTAMPTZ`, and the default zone is the system zone.
+
+**Solution**: Use typed operators such as `gte(column, date)`, or set `dateParams: 'timestamptz'` in the `drizzle()` config. See [dateParams]({{ '/reference/configuration' | relative_url }}#dateparams).
+
+### "The prepareCache option is deprecated and ignored"
+
+**Symptom**: This warning is logged once when a database is created.
+
+**Cause**: The config passes `prepareCache`. The driver no longer caches prepared statements, because DuckDB can return wrong results when a prepared statement runs again after the data changed.
+
+**Solution**: Remove `prepareCache` from the config. Query results are unchanged.
+
 ### Ambiguous column reference in a join
 
 **Symptom**: A join fails with a DuckDB binder error such as `Ambiguous reference to column name "id"`.

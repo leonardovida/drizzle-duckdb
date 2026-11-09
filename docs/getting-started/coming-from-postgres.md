@@ -19,7 +19,7 @@ If you already use Drizzle with Postgres, this page covers what changes when you
 | Default schema           | `public`              | `main`                                                                                               |
 | Serial columns           | `SERIAL` type         | Sequence + `nextval()`                                                                               |
 | Result streaming         | Supported             | Chunked reads via `executeBatches()`, no cursor API                                                  |
-| Prepared statement cache | Yes                   | Opt-in per-connection cache via `prepareCache`                                                       |
+| Prepared statement cache | Yes                   | No. Statements are prepared on every run                                                             |
 | `numeric()` columns      | Exact strings         | Exact strings. Raw SQL results return DECIMAL as numbers                                             |
 | Raw `COUNT(*)`           | String                | `bigint`. Use `countN()` or Drizzle's `count()` for a number                                         |
 

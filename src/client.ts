@@ -4,6 +4,7 @@ import {
   JSDuckDBValueConverter,
   JsonDuckDBValueConverter,
   listValue,
+  TIMESTAMPTZ,
   timestampTZValue,
   timestampValue,
   type DuckDBArrayType,
@@ -31,11 +32,7 @@ import {
 } from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
 import type { PgDuckClient, PgDuckField, PgDuckQueryResult } from './pgduck.ts';
-import {
-  bindPreparedStatement,
-  clearPreparedStatementCache,
-  getPreparedStatementCache,
-} from './prepared-statement-cache.ts';
+import { clearPreparedStatementCache } from './prepared-statement-cache.ts';
 import { assignOwnProperty } from './own-property.ts';
 import { rememberDroppedMicros } from './time.ts';
 
@@ -63,13 +60,28 @@ export function isPool(
 export interface ExecuteClientOptions {
   /** Return DECIMAL values as exact strings, including nested values. */
   decimalMode?: 'number' | 'string';
+  /**
+   * @deprecated Ignored. DuckDB plans a prepared statement from the table
+   * statistics at prepare time, so running it again after the data changed
+   * can return wrong results. Every query is prepared for one run.
+   */
   prepareCache?: PreparedStatementCacheConfig;
   /**
    * Read top-level DECIMAL columns as exact strings instead of doubles. The
    * result lists those columns in `exactDecimalColumns`.
    */
   exactDecimals?: boolean;
+  /** How a bare Date parameter binds. Defaults to a naive UTC TIMESTAMP. */
+  dateParams?: DateParamType;
 }
+
+/**
+ * The DuckDB type of a bare `Date` parameter, one that reaches the driver
+ * without a column type, as in sql`${new Date()}`. 'timestamp' binds its UTC
+ * wall time as a naive TIMESTAMP. 'timestamptz' binds the instant, which
+ * compares correctly with TIMESTAMPTZ values in any session TimeZone.
+ */
+export type DateParamType = 'timestamp' | 'timestamptz';
 
 export type ExecuteArraysResult = {
   columns: string[];
@@ -416,16 +428,24 @@ const NO_NODE_API_PARAMS: NodeApiParams = {
   types: undefined,
 };
 
-function toNodeApiParams(params: unknown[]): NodeApiParams {
+function toNodeApiParams(
+  params: unknown[],
+  dateParams?: DateParamType
+): NodeApiParams {
   if (params.length === 0) {
     return NO_NODE_API_PARAMS;
   }
+  const dateType = dateParams === 'timestamptz' ? TIMESTAMPTZ : undefined;
 
   const values: DuckDBValue[] = new Array(params.length);
   let types: DuckDBType[] | undefined;
 
   for (let index = 0; index < params.length; index += 1) {
-    const value = toNodeApiValue(params[index]);
+    const param = params[index];
+    const value = toNodeApiValue(
+      param,
+      dateType && param instanceof Date ? dateType : undefined
+    );
     values[index] = value;
 
     // Primitives other than integers outside int32 bind correctly as they are.
@@ -669,6 +689,9 @@ function wrapUnsupportedNodeApiTypeError(
 /** DuckDB stores `infinity` and `-infinity` timestamps as the int64 extremes. */
 const TIMESTAMP_INFINITY_MICROS = 9_223_372_036_854_775_807n;
 const MAX_DATE_MILLIS = 8_640_000_000_000_000n;
+const MAX_SAFE_MICROS = BigInt(Number.MAX_SAFE_INTEGER);
+/** DuckDB stores `infinity` and `-infinity` dates as the int32 extremes. */
+const DATE_INFINITY_DAYS = 2_147_483_647;
 
 /**
  * node-api divides with truncation, which moves pre-1970 values with
@@ -682,6 +705,20 @@ function dateFromTimestampUnits(
 ): Date | string {
   if (units === TIMESTAMP_INFINITY_MICROS) return 'infinity';
   if (units === -TIMESTAMP_INFINITY_MICROS) return '-infinity';
+  // Microseconds inside the safe integer range cover about 285 years either
+  // side of 1970. Plain numbers are much cheaper there than bigint division.
+  if (
+    unitsPerMilli === 1000n &&
+    units >= -MAX_SAFE_MICROS &&
+    units <= MAX_SAFE_MICROS
+  ) {
+    const micros = Number(units);
+    const wholeMillis = Math.floor(micros / 1000);
+    const date = new Date(wholeMillis);
+    const dropped = micros - wholeMillis * 1000;
+    if (dropped !== 0) rememberDroppedMicros(date, dropped);
+    return date;
+  }
   let millis = units / unitsPerMilli;
   if (units % unitsPerMilli < 0n) millis -= 1n;
   if (millis < -MAX_DATE_MILLIS || millis > MAX_DATE_MILLIS) {
@@ -712,6 +749,12 @@ const JSValueConverter: DuckDBValueConverter<JS> = (value, type, converter) => {
     ) {
       return dateFromTimestampUnits(value.nanos, 1_000_000n, 'TIMESTAMP_NS');
     }
+    // node-api throws for infinite dates. Read DuckDB's text, as for
+    // infinite timestamps.
+    if (type.typeId === DuckDBTypeId.DATE && 'days' in value) {
+      if (value.days === DATE_INFINITY_DAYS) return 'infinity';
+      if (value.days === -DATE_INFINITY_DAYS) return '-infinity';
+    }
   }
   return JSDuckDBValueConverter(value, type, converter);
 };
@@ -720,6 +763,8 @@ const FLOORED_TIMESTAMP_TYPE_IDS = new Set<DuckDBTypeId>([
   DuckDBTypeId.TIMESTAMP,
   DuckDBTypeId.TIMESTAMP_TZ,
   DuckDBTypeId.TIMESTAMP_NS,
+  // Not floored, but its infinite values need the same converter.
+  DuckDBTypeId.DATE,
 ]);
 
 function containsFlooredTimestamp(type: DuckDBType): boolean {
@@ -927,68 +972,6 @@ async function materializeResultRows(
   return { columns, rows };
 }
 
-/**
- * DuckDB prepares one statement at a time. SQL with several statements, or
- * with only comments, cannot be cached and runs through connection.run().
- */
-function isUnpreparableQueryError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /Cannot prepare multiple statements at once|No statement to prepare/.test(
-      error.message
-    )
-  );
-}
-
-async function executePreparedQuery(
-  connection: DuckDBConnection,
-  query: string,
-  { values, types }: NodeApiParams,
-  cacheConfig: PreparedStatementCacheConfig,
-  exactDecimals = false,
-  recursiveDecimals = false
-): Promise<MaterializedRows> {
-  const cache = getPreparedStatementCache(connection, cacheConfig.size);
-
-  return await cache.runExclusive(async () => {
-    // The connection may start streaming or closing while this query waits
-    // behind another cached execution. Recheck before touching native state.
-    assertConnectionAvailable(connection);
-    let statement;
-    try {
-      statement = await cache.getOrPrepare(query);
-    } catch (error) {
-      if (!isUnpreparableQueryError(error)) {
-        throw error;
-      }
-      assertConnectionAvailable(connection);
-      const result = await connection.run(query, values, types);
-      return await materializeResultRows(
-        result,
-        exactDecimals,
-        recursiveDecimals
-      );
-    }
-
-    // Preparing is asynchronous too. A stream opened during preparation must
-    // keep its result, and a closing connection must not start another query.
-    assertConnectionAvailable(connection);
-    try {
-      bindPreparedStatement(statement, values, types);
-      const result = await statement.run();
-      cache.remember(query, statement);
-      return await materializeResultRows(
-        result,
-        exactDecimals,
-        recursiveDecimals
-      );
-    } catch (error) {
-      cache.evict(query);
-      throw error;
-    }
-  });
-}
-
 type StreamResultLike = ResultTypeMetadataLike &
   ResultChunksLike & {
     yieldRowsJs: () => AsyncIterable<unknown[][]>;
@@ -1063,18 +1046,7 @@ async function materializeRows(
     }
 
     return await runNodeApiOperation(connection, async () => {
-      const nodeApiParams = toNodeApiParams(params);
-
-      if (options.prepareCache && typeof connection.prepare === 'function') {
-        return await executePreparedQuery(
-          connection,
-          query,
-          nodeApiParams,
-          options.prepareCache,
-          options.exactDecimals,
-          options.decimalMode === 'string'
-        );
-      }
+      const nodeApiParams = toNodeApiParams(params, options.dateParams);
 
       const result = await connection.run(
         query,
@@ -1309,6 +1281,8 @@ export async function executeArraysOnClient(
 export interface ExecuteInBatchesOptions {
   rowsPerChunk?: number;
   decimalMode?: 'number' | 'string';
+  /** How a bare Date parameter binds. See `dateParams` on drizzle(). */
+  dateParams?: DateParamType;
 }
 
 export interface ExecuteBatchesRawChunk {
@@ -1369,7 +1343,7 @@ async function* streamRawBatches(
       let result: StreamResultLike | undefined;
 
       try {
-        const { values, types } = toNodeApiParams(params);
+        const { values, types } = toNodeApiParams(params, options.dateParams);
         result = (await connection.stream(
           query,
           values,
@@ -1494,7 +1468,7 @@ export async function executeArrowOnClient(
   client: DuckDBClientLike,
   query: string,
   params: unknown[],
-  options: Pick<ExecuteClientOptions, 'decimalMode'> = {}
+  options: Pick<ExecuteClientOptions, 'decimalMode' | 'dateParams'> = {}
 ): Promise<unknown> {
   return await withConnection(client, async (connection) => {
     if (isPgDuckClient(connection)) {
@@ -1507,7 +1481,7 @@ export async function executeArrowOnClient(
     }
 
     return await runNodeApiOperation(connection, async () => {
-      const { values, types } = toNodeApiParams(params);
+      const { values, types } = toNodeApiParams(params, options.dateParams);
       const result = await connection.run(query, values, types);
 
       // Runtime detection for Arrow API support (optional method, not in base type)
@@ -1581,6 +1555,170 @@ export async function executeArrowOnClient(
         wrapError: (error) =>
           wrapUnsupportedNodeApiTypeError(resultMetadata, error),
       });
+    });
+  });
+}
+
+/** Return this for a cell to append the column's DEFAULT. */
+export const APPEND_DEFAULT = Symbol('drizzle-duckdb:append-default');
+
+export interface AppendTarget {
+  table: string;
+  schema?: string;
+}
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+type AppenderLike = {
+  columnCount: number;
+  columnType(index: number): DuckDBType;
+  endRow(): void;
+  appendDefault(): void;
+  appendNull(): void;
+  appendBoolean(value: boolean): void;
+  appendInteger(value: number): void;
+  appendBigInt(value: bigint): void;
+  appendHugeInt(value: bigint): void;
+  appendDouble(value: number): void;
+  appendVarchar(value: string): void;
+  appendValue(value: DuckDBValue, type?: DuckDBType): void;
+  flushSync(): void;
+  closeSync(): void;
+  /** Drops rows that are buffered but not flushed. Newer node-api only. */
+  clear?(): void;
+};
+
+/**
+ * Append one cell. DuckDB casts an appended value to the column type, the way
+ * it casts a bound parameter, so text reaches DECIMAL, DATE or UUID columns.
+ */
+function appendCell(
+  appender: AppenderLike,
+  value: unknown,
+  columnType: DuckDBType
+): void {
+  if (value === APPEND_DEFAULT) {
+    appender.appendDefault();
+    return;
+  }
+  const nodeValue = toNodeApiValue(value, columnType);
+  if (nodeValue === null) {
+    appender.appendNull();
+    return;
+  }
+  switch (typeof nodeValue) {
+    case 'string':
+      appender.appendVarchar(nodeValue);
+      return;
+    case 'number':
+      if (!Number.isInteger(nodeValue)) {
+        appender.appendDouble(nodeValue);
+      } else if (nodeValue >= -2_147_483_648 && nodeValue <= 2_147_483_647) {
+        appender.appendInteger(nodeValue);
+      } else if (Number.isSafeInteger(nodeValue)) {
+        appender.appendBigInt(BigInt(nodeValue));
+      } else {
+        appender.appendDouble(nodeValue);
+      }
+      return;
+    case 'boolean':
+      appender.appendBoolean(nodeValue);
+      return;
+    case 'bigint':
+      if (nodeValue >= INT64_MIN && nodeValue <= INT64_MAX) {
+        appender.appendBigInt(nodeValue);
+      } else {
+        appender.appendHugeInt(nodeValue);
+      }
+      return;
+    default: {
+      const typed = typedNodeApiParam(nodeValue);
+      if (typed) {
+        appender.appendValue(typed.value, typed.type);
+      } else {
+        appender.appendValue(nodeValue);
+      }
+    }
+  }
+}
+
+function quoteAppendIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Append rows through node-api's appender, which skips SQL parsing and
+ * parameter binding. `bindRows` receives the table's column names in catalog
+ * order and returns the value of each cell.
+ */
+export async function appendRowsOnClient(
+  client: DuckDBClientLike,
+  target: AppendTarget,
+  rowCount: number,
+  bindRows: (
+    columnNames: string[]
+  ) => (rowIndex: number, columnIndex: number) => unknown
+): Promise<number> {
+  return await withConnection(client, async (connection) => {
+    if (
+      !isNodeApiConnection(connection) ||
+      typeof connection.createAppender !== 'function'
+    ) {
+      throw new Error(
+        'appendRows() needs an @duckdb/node-api connection. Use db.insert() with pg_duckdb clients.'
+      );
+    }
+
+    return await runNodeApiOperation(connection, async () => {
+      const qualified = target.schema
+        ? `${quoteAppendIdentifier(target.schema)}.${quoteAppendIdentifier(target.table)}`
+        : quoteAppendIdentifier(target.table);
+      // The appender exposes column types but not names.
+      const probe = await connection.run(`select * from ${qualified} limit 0`);
+      const columnNames = probe.columnNames();
+      const appender = (await connection.createAppender(
+        target.table,
+        target.schema ?? null
+      )) as unknown as AppenderLike;
+
+      let failed = true;
+      try {
+        if (appender.columnCount !== columnNames.length) {
+          throw new Error(
+            `appendRows() cannot append to ${qualified}: the table has ${columnNames.length} columns but its appender takes ${appender.columnCount}, as for tables with generated columns. Use db.insert() instead.`
+          );
+        }
+        const columnTypes = columnNames.map((_, index) =>
+          appender.columnType(index)
+        );
+        const valueAt = bindRows(columnNames);
+        for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+          for (
+            let columnIndex = 0;
+            columnIndex < columnTypes.length;
+            columnIndex += 1
+          ) {
+            appendCell(
+              appender,
+              valueAt(rowIndex, columnIndex),
+              columnTypes[columnIndex] as DuckDBType
+            );
+          }
+          appender.endRow();
+        }
+        appender.flushSync();
+        failed = false;
+        return rowCount;
+      } finally {
+        try {
+          // Closing flushes. After a failure, drop the buffered rows first.
+          if (failed) appender.clear?.();
+          appender.closeSync();
+        } catch (error) {
+          if (!failed) throw error;
+        }
+      }
     });
   });
 }

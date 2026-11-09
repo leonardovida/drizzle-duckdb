@@ -3,7 +3,6 @@ import { sql } from 'drizzle-orm';
 import { expect, test } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 import { createDuckDBConnectionPool } from '../src/pool.ts';
-import { getPreparedStatementCacheStats } from '../src/prepared-statement-cache.ts';
 import { introspect } from '../src/introspect.ts';
 
 test('pool counters reflect queue handoff, leases and snapshot introspection', async () => {
@@ -40,29 +39,6 @@ test('pool counters reflect queue handoff, leases and snapshot introspection', a
       total: 0,
       leased: 0,
       idle: 0,
-    });
-  } finally {
-    await db.close();
-    instance.closeSync();
-  }
-});
-
-test('native cache counters observe reuse and eviction without creating a cache', async () => {
-  const instance = await DuckDBInstance.create(':memory:');
-  const connection = await instance.connect();
-  const db = drizzle(connection, { prepareCache: { size: 2 } });
-  try {
-    expect(getPreparedStatementCacheStats(connection)).toBeUndefined();
-    await db.execute(sql`select ${1}::integer as value`);
-    await db.execute(sql`select ${2}::integer as value`);
-    await db.execute(sql`select ${3}::integer as another`);
-    await db.execute(sql`select ${4}::integer as third`);
-    expect(getPreparedStatementCacheStats(connection)).toEqual({
-      size: 2,
-      capacity: 2,
-      hits: 1,
-      misses: 3,
-      evictions: 1,
     });
   } finally {
     await db.close();

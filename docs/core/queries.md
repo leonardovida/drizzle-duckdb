@@ -427,7 +427,12 @@ await db.insert(users).values(manyUsers);
 for (const user of manyUsers) {
   await db.insert(users).values(user);
 }
+
+// Fastest for thousands of rows: DuckDB's appender
+await db.appendRows(users, manyUsers);
 ```
+
+`appendRows()` has no `RETURNING` or `ON CONFLICT`. See [appendRows()]({{ '/api/database' | relative_url }}#appendrows).
 
 ### Use LIMIT
 

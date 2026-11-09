@@ -30,6 +30,10 @@ class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
   $with(alias: string): WithBuilder;
 
   // DuckDB additions
+  appendRows<TTable>(
+    table: TTable,
+    rows: readonly TTable['$inferInsert'][]
+  ): Promise<number>;
   executeBatches<T>(
     query: SQL,
     options?: { rowsPerChunk?: number }
@@ -101,6 +105,31 @@ const [newUser] = await db
   .values({ name: 'Alice', email: 'alice@example.com' })
   .returning();
 ```
+
+### appendRows()
+
+Append rows with DuckDB's appender instead of an INSERT statement. Use it to load many rows: it skips SQL building and parameter binding, and is many times faster than `insert()` for large batches. Returns the number of rows appended.
+
+```typescript
+const count = await db.appendRows(usersTable, [
+  { name: 'Alice', email: 'alice@example.com' },
+  { name: 'Bob', email: 'bob@example.com' },
+]);
+
+// All or nothing
+await db.transaction((tx) => tx.appendRows(usersTable, rows));
+```
+
+| Behavior          | `insert()`          | `appendRows()`                                |
+| ----------------- | ------------------- | --------------------------------------------- |
+| Missing keys      | Column default      | Column default                                |
+| `RETURNING`       | Yes                 | No                                            |
+| `ON CONFLICT`     | Yes                 | No                                            |
+| SQL values        | Yes                 | No. Throws and names the column               |
+| Struct and union  | Yes                 | No. Also empty lists and lists of objects     |
+| Generated columns | Yes                 | No                                            |
+| On failure        | Nothing is inserted | Earlier rows may remain outside a transaction |
+| pg_duckdb clients | Yes                 | No                                            |
 
 ### update()
 

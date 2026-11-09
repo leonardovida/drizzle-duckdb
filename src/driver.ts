@@ -10,6 +10,7 @@ import type {
 import type {
   PgColumn,
   PgSession,
+  PgTable,
   PgTransactionConfig,
 } from 'drizzle-orm/pg-core';
 import {
@@ -37,6 +38,7 @@ import {
   type DuckDBSelectBuilder,
 } from './select-builder.ts';
 import type {
+  DateParamType,
   ExecuteBatchesRawChunk,
   ExecuteInBatchesOptions,
   RowData,
@@ -66,6 +68,7 @@ import {
 
 export interface PgDriverOptions {
   decimalMode?: 'number' | 'string';
+  dateParams?: DateParamType;
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
@@ -90,6 +93,7 @@ export class DuckDBDriver {
       arrayLiteralWarning: this.options.arrayLiteralWarning,
       prepareCache: this.options.prepareCache,
       decimalMode: this.options.decimalMode,
+      dateParams: this.options.dateParams,
     });
   }
 }
@@ -107,11 +111,23 @@ export interface DuckDBDrizzleConfig<
 > extends DrizzleConfig<TSchema> {
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
+  /**
+   * @deprecated Ignored, with a one-time warning. DuckDB can return wrong
+   * results when a prepared statement runs again after the data changed, so
+   * statements are no longer cached.
+   */
   prepareCache?: PrepareCacheOption;
   /** Opt into legacy heuristic qualification of raw SQL join operands. */
   qualifyRawJoinColumns?: boolean;
   /** Opt into exact DECIMAL strings across execution paths. */
   decimalMode?: 'number' | 'string';
+  /**
+   * How a bare `Date` parameter binds, as in sql`${new Date()}`. The default
+   * 'timestamp' binds its UTC wall time as a naive TIMESTAMP, which DuckDB
+   * reads in the session TimeZone when it compares it with a TIMESTAMPTZ.
+   * 'timestamptz' binds the instant instead. Typed columns are not affected.
+   */
+  dateParams?: DateParamType;
   /** Pool configuration. Use preset name, size config, or false to disable. */
   pool?: DuckDBPoolConfig | PoolPreset | false;
   /** Optional DuckLake configuration */
@@ -251,6 +267,19 @@ function isNodePostgresPool(value: unknown): value is PgDuckPool {
   );
 }
 
+const PREPARE_CACHE_WARNING =
+  'The prepareCache option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. Remove the option. It will be removed in the next major version.';
+
+let hasWarnedPrepareCache = false;
+
+function warnPrepareCacheIgnored(): void {
+  if (hasWarnedPrepareCache) {
+    return;
+  }
+  hasWarnedPrepareCache = true;
+  console.warn(PREPARE_CACHE_WARNING);
+}
+
 /** Internal: create database from a client (connection or pool) */
 function createFromClient<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -282,6 +311,9 @@ function createFromClient<
     decimalMode: config.decimalMode,
   });
   const prepareCache = resolvePrepareCacheOption(config.prepareCache);
+  if (prepareCache) {
+    warnPrepareCacheIgnored();
+  }
 
   const logger =
     config.logger === true ? new DefaultLogger() : config.logger || undefined;
@@ -306,6 +338,7 @@ function createFromClient<
     arrayLiteralWarning: config.arrayLiteralWarning,
     prepareCache,
     decimalMode: config.decimalMode,
+    dateParams: config.dateParams,
   });
   const session = driver.createSession(schema);
 
@@ -593,6 +626,24 @@ export class DuckDBDatabase<
 
   executeArrow(query: SQL): Promise<unknown> {
     return this.session.executeArrow(query);
+  }
+
+  /**
+   * Append rows with DuckDB's appender instead of an INSERT statement. It
+   * skips SQL building and parameter binding, so large batches load far
+   * faster than `db.insert().values()`. Missing columns take their default.
+   * Returns the number of rows appended.
+   *
+   * The appender has no RETURNING or ON CONFLICT, and it cannot take values
+   * that a column encodes as SQL, such as structs. Outside a transaction a
+   * failure can leave earlier rows of the batch in the table. Use
+   * `db.transaction((tx) => tx.appendRows(...))` for all or nothing.
+   */
+  appendRows<TTable extends PgTable>(
+    table: TTable,
+    rows: readonly TTable['$inferInsert'][]
+  ): Promise<number> {
+    return this.session.appendRows(table, rows);
   }
 
   /**

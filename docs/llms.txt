@@ -36,6 +36,16 @@ const allUsers = await db.select().from(users);
 await db.close();
 ```
 
+## Choosing an API
+
+- Read rows with typed columns: `db.select().from(table)`. Raw `db.execute(sql)` returns undecoded values (bigint counts, interval objects).
+- Write a few rows, or need RETURNING or ON CONFLICT: `db.insert(table).values(rows)`.
+- Load thousands of rows: `db.appendRows(table, rows)`. About 20 times faster than insert for 10,000 rows.
+- Read a large result: `db.executeBatches(sql)` streams chunks instead of building one array.
+- Run queries in parallel: use the default pool. One connection runs one query at a time.
+- Compare a Date with a TIMESTAMPTZ column: use typed operators such as `gte(column, date)`, or set `dateParams: 'timestamptz'` before writing ``sql`${column} >= ${date}` ``.
+- Store JSON: `duckDbJson()`, never pg `json()` or `jsonb()`.
+
 ## drizzle() Forms
 
 - `await drizzle(path)` and `await drizzle(path, config)`: path is ':memory:', './file.duckdb', 'md:' or 'md:database'. Returns a Promise and creates a pool. 'md:database?attach_mode=single' attaches only that database instead of the whole MotherDuck workspace.
@@ -48,7 +58,9 @@ await db.close();
 - `logger`: `true` or a Drizzle `Logger`.
 - `schema`: tables and relations for `db.query`. Relational queries work: `findMany` returns an array, `findFirst` returns an object or undefined, and `with:` loads relations.
 - `pool`: preset name ('pulse' 4, 'standard' 6, 'jumbo' 8, 'mega' 12, 'giga' 16, 'local' 8, 'memory' 4), an object `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`, or `false` for one connection. Default size 4. `acquireTimeout` defaults to 30000 ms, and 0 or Infinity means no timeout. `maxWaitingRequests` defaults to 100 and must be a non-negative integer or Infinity. Negative or NaN values throw. Applies only to the connection-string and `{ connection }` forms.
-- `prepareCache`: `true` (32 statements), a number, or `{ size }`. Per-connection LRU cache of prepared statements. Disabled by default. Multi-statement and comment-only SQL runs without the cache.
+- `prepareCache`: deprecated and ignored, with a one-time warning. Do not set it. Statements are prepared on every run, because DuckDB can return wrong results when a prepared statement runs again after the data changed.
+- `dateParams`: 'timestamp' (default) or 'timestamptz'. The DuckDB type of a bare Date parameter, one written into a sql template without a column. See Parameter Binding.
+- `decimalMode`: 'number' (default) or 'string'. 'string' reads every DECIMAL as exact text in raw, streaming, columnar and nested reads.
 - `casing`: 'snake_case' or 'camelCase' maps TypeScript keys to column names, as in other Drizzle drivers. Drizzle's `cache` option is not applied.
 - `ducklake`: `{ catalog, alias?, use?, install?, load?, attachOptions? }`. Attaches a DuckLake catalog on every connection. A local catalog (`:memory:`, a `duckdb:` or `file:` catalog, or a file path without a scheme such as `meta.db`) defaults to a pool of size 1 when `pool` is not set. A bare name such as `my_lake` is a secret name, not local. Larger pools work in one process and log a warning for local catalogs. Connection setup throws when the alias already names a different database, for example a main file named `ducklake.duckdb`. Pooled connections are set up on first use, so attach errors surface on the first query. `attachOptions.metaParameters` (`Record<string, string>`) emits `META_<KEY>` options. The deprecated `metaParameterName` throws. Numeric attach options must be non-negative integers.
 - `rejectStringArrayLiterals`: throw when a parameter without column information (plain sql template value, sql.param, bare sql.placeholder) looks like a Postgres array literal such as '{1,2,3}'. Default false: such a parameter is converted to a list when it parses as one, and a warning goes to the logger once per session. Strings bound to a column are always stored as written.
@@ -61,6 +73,7 @@ Everything from Drizzle's PgDatabase, plus:
 - `db.executeBatches(sql, { rowsPerChunk })`: async generator of row-object chunks (default 100,000 rows per chunk). While the loop is open, other queries on the same connection (a single connection, or `tx` in a transaction) throw "This connection is streaming a result from executeBatches()". Pools outside a transaction use other connections.
 - `db.executeBatchesRaw(sql, { rowsPerChunk })`: chunks of `{ columns, rows }` with array rows.
 - `db.executeArrow(sql)`: column-major result such as `{ a: [1], b: ['x'] }`. Duplicate column names get suffixes like execute() (`a`, `a_1`). Returns an Arrow table only if the client exposes an Arrow API, which `@duckdb/node-api` does not.
+- `db.appendRows(table, rows)` and `tx.appendRows(table, rows)`: append rows with DuckDB's appender and return the row count. Row keys match `db.insert()`, and missing keys take the column default. No RETURNING or ON CONFLICT. Throws for SQL values, duckDbStruct and duckDbUnion values, empty lists, lists or maps of objects or Buffers, tables with generated columns, and pg_duckdb clients. Outside a transaction a failure can leave earlier rows of the batch in the table.
 - `db.close()`: closes the pool or connection and the instance created by the connection-string forms. It interrupts running queries, waits up to 5 seconds for them to settle, then disconnects. Interrupted and later queries reject with "DuckDB connection is closed..." or "DuckDB connection pool is closed".
 - `db.$client` (connection or pool) and `db.$instance` (DuckDBInstance for connection-string forms).
 - `db.transaction(fn)`: pins one pooled connection for the whole transaction. The second argument (transaction config) is deprecated and ignored with a one-time warning. It will throw in the next major version.
@@ -85,7 +98,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 ## Parameter Binding
 
 - Integers in the 32-bit range bind as INTEGER, larger integers as BIGINT, integers beyond Number.MAX_SAFE_INTEGER as DOUBLE, other numbers as DOUBLE, and JS bigint as HUGEINT.
-- A Date binds as a TIMESTAMP holding its UTC time. An invalid Date throws "Invalid Date parameter: cannot bind an invalid Date".
+- A bare Date binds as a naive TIMESTAMP holding its UTC time. DuckDB reads it in the session TimeZone when comparing with TIMESTAMPTZ, so ``sql`${tzColumn} >= ${date}` `` is wrong unless the session zone is UTC. With `dateParams: 'timestamptz'` it binds as a TIMESTAMPTZ instant. Typed operators and column values are correct either way. An invalid Date throws "Invalid Date parameter: cannot bind an invalid Date".
 - Buffer and Uint8Array bind as BLOB.
 - Lists (for example `sql.param([null, 7, 8])`) get their item type from every item: [null, 7, 8] is INTEGER[], [1, 2.5] is DOUBLE[], [1, 3e9] is BIGINT[]. duckDbList, duckDbArray and duckDbMap use the declared element type when the items fit it. A Date inside a TIMESTAMPTZ list or map binds as TIMESTAMPTZ.
 - A JS array written directly into a sql template is expanded by Drizzle into separate parameters. Wrap it in sql.param() to bind one list.
@@ -94,6 +107,9 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 ## Results
 
 - Each column is converted on its own. TIMESTAMP_NS, TIMETZ and TIME_NS columns come back as DuckDB text, other columns keep their JS values (BLOB as Buffer, BIGINT and HUGEINT as bigint, DATE as Date).
+- Infinite values read as the strings 'infinity' and '-infinity' for DATE and timestamp columns, also in `mode: 'date'` columns.
+- pg-core `date()` in string mode prints DuckDB's text, such as '10000-01-01' and '0044-03-15 (BC)'.
+- Relational queries (`db.query` with `with:`) keep `bigint({ mode: 'bigint' })` and numeric() columns exact inside nested relations. Other nested numbers pass through JSON and are doubles.
 - Raw db.execute() results have no column decoders. COUNT(*) and integer SUM return bigint, INTERVAL returns { months, days, micros }.
 - A SQL field uses its own .mapWith() decoder even when it mentions a DuckDB column. Only a bare ``sql`${column}` `` without mapWith uses the column decoder.
 - Subquery (.as()), CTE ($with) and view fields render qualified by their alias, such as "sq"."id", so joins on shared column names are not ambiguous.
@@ -133,7 +149,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - Do NOT use Postgres json or jsonb columns. Use duckDbJson() instead.
 - DuckDB 1.4.x and 1.5.x do not support SAVEPOINT. Nested transactions reuse the outer transaction and mark it for rollback on nested errors.
 - DuckDB aborts the whole transaction when a statement fails at execution time. If the callback catches that error and continues, `db.transaction` rejects with "DuckDB aborted the transaction because a statement inside it failed..." and the statement error as `cause`. No changes are committed. Parser and catalog errors do not abort the transaction.
-- DECIMAL values selected through numeric() columns with db.select() are exact strings. Raw db.execute() results, SQL expressions, relational queries, streams and executeArrow() read DECIMAL as JavaScript numbers, which can lose precision. Cast to VARCHAR in SQL for exact values there.
+- DECIMAL values selected through numeric() columns with db.select() are exact strings. numeric() columns in relational queries are exact strings too. Raw db.execute() results, SQL expressions, streams and executeArrow() read DECIMAL as JavaScript numbers, which can lose precision. Cast to VARCHAR in SQL or set `decimalMode: 'string'` for exact values there.
 - A column type that @duckdb/node-api cannot convert to JavaScript throws an error naming the column. Cast it in SQL.
 - DuckDB runs one query per connection. Use the pool for parallel queries. Temp views and other session state exist only on the connection that created them.
 - DuckDB 1.5 adds VARIANT and built-in GEOMETRY. With @duckdb/node-api 1.5.4-r.1 and newer, VARIANT values materialize into JavaScript values. Project geometry with ST_AsText(...) or ST_AsWKB(...).
