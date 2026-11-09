@@ -146,7 +146,10 @@ export function clearPreparedStatementCache(
   store[PREPARED_CACHE]?.clear();
 }
 
-/** Read cache counters without creating or resizing the native cache. */
+/**
+ * @deprecated The driver no longer caches prepared statements, so this
+ * returns undefined. It will be removed in the next major version.
+ */
 export function getPreparedStatementCacheStats(connection: DuckDBConnection) {
   const store = connection as unknown as Record<
     symbol,

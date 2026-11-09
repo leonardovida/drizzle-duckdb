@@ -11,72 +11,42 @@ Settings and query patterns that affect DuckDB throughput and latency.
 
 ## Quick Wins
 
-These settings help most workloads:
+- Use a connection pool for concurrent queries. See [Connection Pooling](#connection-pooling).
+- Load many rows with `db.appendRows()` instead of `db.insert()`. See [Bulk Loading](#bulk-loading).
+- Stream large results with `db.executeBatches()`. See [Streaming Large Results](#streaming-large-results).
+- Select only the columns you need.
+
+## Bulk Loading
+
+`db.insert().values(rows)` builds one SQL statement with a parameter for every value. For 10,000 rows of 6 columns that is 60,000 parameters, and most of the time goes to building the SQL and binding them.
+
+`db.appendRows(table, rows)` writes the rows through DuckDB's appender, which skips SQL and parameters:
 
 ```typescript
-import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle } from '@duckdbfan/drizzle-duckdb';
-import { createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
-
-const instance = await DuckDBInstance.create(':memory:');
-
-// Option 1: Single connection with prepared statement cache
-const connection = await instance.connect();
-const dbSingle = drizzle(connection, {
-  prepareCache: { size: 64 },
-});
-
-// Option 2: Connection pool for concurrent workloads
-const pool = createDuckDBConnectionPool(instance, { size: 8 });
-const dbPooled = drizzle({ client: pool, prepareCache: { size: 64 } });
+const count = await db.appendRows(events, rows); // number of rows appended
 ```
 
-## Prepared Statement Caching
-
-Reusing a prepared statement skips parsing and planning for repeated SQL. In the benchmark below, reuse ran about 20% faster than a fresh query. Enable caching to reuse prepared statements across identical queries.
-
-### Configuration
-
-```typescript
-// Enable with default size (32 statements)
-const db = drizzle(connection, { prepareCache: true });
-
-// Custom cache size
-const db = drizzle(connection, { prepareCache: { size: 100 } });
-
-// Disable (default)
-const db = drizzle(connection);
-```
-
-### How It Works
-
-1. First execution of a query prepares the statement and caches it
-2. Subsequent executions with the same SQL reuse the cached statement
-3. LRU eviction removes least-recently-used statements when cache is full
-
-Bindings are mutable on native prepared statements, so cached executions are
-serialized per connection to keep concurrent parameter sets isolated. Use a
-connection pool for parallel query execution. Each pooled connection keeps its
-own cache.
-
-SQL with several statements, or with only comments, cannot be prepared. It runs
-without the cache.
-
-### Sizing Guidelines
-
-| Workload Type               | Recommended Size |
-| --------------------------- | ---------------- |
-| Simple CRUD app             | 32 (default)     |
-| Dashboard with many queries | 64-100           |
-| Analytics with complex CTEs | 100-200          |
-| High-volume API server      | 200+             |
-
-### Benchmark Results
+Measured on one machine with `@duckdb/node-api` 1.5.6, 10,000 rows of 3 columns:
 
 ```
-prepared select reuse:    4,349 ops/sec
-fresh query each time:    3,580 ops/sec  (22% slower)
+db.insert().values(rows):  275 ms
+db.appendRows(table, rows): 13 ms
 ```
+
+Rules:
+
+- Row objects use the same keys as `db.insert()`. Missing keys take the column default, including `$defaultFn()` values.
+- There is no `RETURNING` and no `ON CONFLICT`. Use `db.insert()` for those.
+- Values a column sends as SQL cannot be appended: `duckDbStruct` and `duckDbUnion` values, empty lists, and lists or maps that hold objects or Buffers. `appendRows()` throws and names the column.
+- Tables with generated columns are not supported.
+- It needs an `@duckdb/node-api` connection or pool. pg_duckdb clients throw.
+- Outside a transaction, a failure can leave earlier rows of the batch in the table. For all or nothing, use `db.transaction((tx) => tx.appendRows(table, rows))`.
+
+## Prepared Statements Are Not Cached
+
+Each query is prepared, run once and released. The `prepareCache` option is deprecated and ignored, with a one-time warning.
+
+DuckDB plans a prepared statement from the table statistics it sees at prepare time. When the statement runs again after the data changed, the old plan can return wrong results. With DuckDB 1.4.4 and 1.5.6, a statement prepared on a small table returned a wrong `count(*)`, corrupted `ORDER BY` values and a "statistics are corrupt" error after rows were added. Preparing per run costs about 50 microseconds per query and avoids this.
 
 ## Connection Pooling
 
@@ -93,7 +63,7 @@ const pool = createDuckDBConnectionPool(instance, {
   maxWaitingRequests: 100, // Max queued requests
 });
 
-const db = drizzle({ client: pool, prepareCache: { size: 64 } });
+const db = drizzle({ client: pool });
 ```
 
 ### Pool Presets for MotherDuck
@@ -186,13 +156,13 @@ It returns an Arrow table only when the client result exposes an Arrow API. `@du
 
 ### Measure materialization and streaming
 
-Run `bun run perf:run` to compare native rows, raw objects, builders, columnar output, streaming, native caching, concurrency and exact decimal conversion. Benchmarks validate row counts or checksums. The output includes throughput and relative margin of error, with runtime, CPU, dependency and dataset metadata in `action-bench.json.meta.json`. Raw Vitest measurements are saved under `perf-results/`.
+Run `bun run perf:run` to compare native rows, raw objects, builders, columnar output, streaming, concurrency and exact decimal conversion. Benchmarks validate row counts or checksums. The output includes throughput and relative margin of error, with runtime, CPU, dependency and dataset metadata in `action-bench.json.meta.json`. Raw Vitest measurements are saved under `perf-results/`.
 
 Use `bun run perf:compare -- --fail-on-regression old.json new.json` to reject missing measurements or a throughput drop beyond the threshold and reported uncertainty. `--allow-new` permits added benchmarks, while removed benchmarks still fail. Pull requests measure their base revision on the same runner before applying this gate. Historical action reports use a `105.2631579%` worsening ratio for a 5% throughput drop and report alerts without independently failing the job.
 
 After building, run `node --expose-gc scripts/measure-memory.ts` with Node 24 or newer for separate-process memory comparisons. It saves RSS observations and checksums in `perf-results/memory.json`. RSS is sampled, so observed peaks are lower bounds. Latency alone does not establish memory efficiency.
 
-Pools expose `pool.stats()` for current leases, idle connections, pending creation, queue depth, queue wait time, timeouts and recycling. `getPreparedStatementCacheStats(connection)` reports native cache hits, misses, evictions and capacity without creating a cache. Measure these counters before changing pool or cache sizes.
+Pools expose `pool.stats()` for current leases, idle connections, pending creation, queue depth, queue wait time, timeouts and recycling. Measure these counters before changing the pool size.
 
 ## Query Optimization
 
@@ -365,7 +335,7 @@ await warmUp(db);
 
 ## Performance Checklist
 
-- [ ] Enable prepared statement caching (`prepareCache: { size: 64 }`)
+- [ ] Load large batches with `db.appendRows()`
 - [ ] Use connection pooling for concurrent access
 - [ ] Stream large result sets with `db.executeBatches()`
 - [ ] Select only needed columns
@@ -382,7 +352,7 @@ await warmUp(db);
 | Symptom                                | Likely Cause                | Solution              |
 | -------------------------------------- | --------------------------- | --------------------- |
 | First query is slow, repeats are fast  | Cache population            | Warm up at startup    |
-| All queries uniformly slow             | No prepared statement cache | Enable `prepareCache` |
+| Large inserts are slow                 | One parameter per value     | Use `db.appendRows()` |
 | Concurrent requests queue up           | Single connection           | Use connection pool   |
 | Memory spikes on large results         | Full materialization        | Use streaming         |
 | JOIN queries fail with ambiguous error | Unqualified raw SQL columns | Qualify the columns   |

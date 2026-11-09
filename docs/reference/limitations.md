@@ -21,7 +21,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | Aggregations                         | Full    |                                                                                                                                                    |
 | Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config is ignored                                   |
 | Concurrent queries                   | Partial | One query per connection. Use pooling for parallelism                                                                                              |
-| Prepared statements                  | Partial | Optional per-connection cache via `prepareCache`. No named statements                                                                              |
+| Prepared statements                  | Partial | Prepared on every run. No statement cache and no named statements                                                                                  |
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                                         |
 | `VARIANT` / `GEOMETRY` raw JS values | Partial | `VARIANT` materializes with `@duckdb/node-api@1.5.4-r.1` and newer. Project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output. |
 | Streaming results                    | Partial | Default materialized. Use `executeBatches()` for chunks                                                                                            |
@@ -123,21 +123,9 @@ The driver checks for Postgres JSON columns and throws a descriptive error if fo
 
 ## Prepared Statements
 
-### Optional Statement Caching
+Prepared statements are not cached. Each query is prepared, run once and released, and there are no named statements. Drizzle's `.prepare()` still works: it builds the SQL once and the driver prepares it on every `execute()`.
 
-Prepared statements are not cached unless you enable the per-connection cache:
-
-```typescript
-const db = drizzle(connection, { prepareCache: { size: 32 } });
-```
-
-Cached executions on one connection run serially because binding mutates the
-native prepared statement. Use a connection pool when queries need to run in
-parallel.
-
-DuckDB prepares one statement at a time. SQL with several statements, or with
-only comments, runs without the cache, so migrations without
-`--> statement-breakpoint` markers also work with `prepareCache` on.
+The `prepareCache` option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a statement kept across data changes can return wrong results.
 
 ## Result Handling
 

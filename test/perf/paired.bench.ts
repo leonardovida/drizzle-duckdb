@@ -15,7 +15,6 @@ import {
 import { factLarge } from './schema.ts';
 
 let harness: PerfHarness;
-let cached: DuckDBDatabase;
 let pooled: DuckDBDatabase;
 let precise: DuckDBDatabase;
 let precisionInstance: DuckDBInstance;
@@ -35,22 +34,13 @@ function checkRows(rows: unknown[][]) {
 
 beforeAll(async () => {
   harness = await createPerfHarness();
-  cached = drizzle(await harness.instance.connect(), {
-    prepareCache: { size: 32 },
-  });
   pooled = drizzle(createDuckDBConnectionPool(harness.instance, { size: 4 }));
   precisionInstance = await DuckDBInstance.create(':memory:');
   precise = drizzle(await precisionInstance.connect(), {
     decimalMode: 'string',
   });
-  // Confirm identical results before comparing native caching and concurrency.
-  const uncached = await harness.db.execute(lookup);
-  const warm = await cached.execute(lookup);
-  if (uncached[0]?.checksum !== warm[0]?.checksum)
-    throw new Error('Cached query mismatch');
 });
 afterAll(async () => {
-  await cached.close();
   await pooled.close();
   await precise.close();
   precisionInstance.closeSync();
@@ -90,18 +80,9 @@ describe('paired execution paths', () => {
     { time: 700 }
   );
   bench(
-    'paired native cache disabled',
+    'paired lookup query',
     async () => {
       const rows = await harness.db.execute(lookup);
-      if (rows.length !== 1 || rows[0]?.checksum !== 49_992_000n)
-        throw new Error('Lookup checksum mismatch');
-    },
-    { time: 700 }
-  );
-  bench(
-    'paired native cache enabled',
-    async () => {
-      const rows = await cached.execute(lookup);
       if (rows.length !== 1 || rows[0]?.checksum !== 49_992_000n)
         throw new Error('Lookup checksum mismatch');
     },

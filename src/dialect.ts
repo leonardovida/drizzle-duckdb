@@ -174,6 +174,9 @@ const RELATIONAL_JSON_CHUNKS = new Map([
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
+// pg-core bigint columns that decode with BigInt(), which also reads text.
+const EXACT_BIGINT_COLUMN_TYPES = new Set(['PgBigInt64', 'PgBigSerial64']);
+
 function rewriteRelationalJsonChunks(
   chunks: SQLChunk[],
   exactDecimals = false
@@ -191,10 +194,15 @@ function rewriteRelationalJsonChunks(
           // text, as in flat selects, and decimalMode 'string' reads every
           // DECIMAL column as text.
           const fields = next.queryChunks.map((item) => {
-            if (
-              !is(item, Column) ||
-              (!exactDecimals && !item.columnType.startsWith('PgNumeric'))
-            ) {
+            if (!is(item, Column)) {
+              return item;
+            }
+            // JSON numbers are doubles, which round 64-bit integers past
+            // 2^53. bigint columns in 'bigint' mode read exact text instead.
+            if (EXACT_BIGINT_COLUMN_TYPES.has(item.columnType)) {
+              return sql`cast(${item} as VARCHAR)`;
+            }
+            if (!exactDecimals && !item.columnType.startsWith('PgNumeric')) {
               return item;
             }
             const originalType = item.getSQLType();

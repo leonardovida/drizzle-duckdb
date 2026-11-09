@@ -162,8 +162,8 @@ const db = await drizzle(':memory:', {
   // Pool size, preset, or timeout and recycling options
   pool: { size: 8, idleTimeoutMs: 60_000 },
 
-  // Per-connection prepared statement cache (default: disabled)
-  prepareCache: { size: 32 },
+  // Bind a bare Date in sql`...` as TIMESTAMPTZ instead of a naive TIMESTAMP
+  dateParams: 'timestamptz', // Default: 'timestamp'
 
   // Preserve DECIMAL values as strings in raw, streaming and nested reads
   decimalMode: 'string', // Default: 'number'
@@ -276,6 +276,7 @@ The package ships composable SQL helpers for analytical work:
 - Typed MotherDuck AI builders: `mdPromptJev()` classifies text or images and `mdPrompt()` generates text or structured output.
 - `duckLakeMergeAdjacentFiles()` for DuckLake compaction.
 - Batch and Arrow reads through `db.executeBatches()`, `db.executeBatchesRaw()` and `db.executeArrow()`.
+- Fast bulk loads through `db.appendRows()`, which uses DuckDB's appender instead of an INSERT statement.
 
 ```typescript
 import { sql } from 'drizzle-orm';
@@ -314,7 +315,7 @@ The older `mdJobs()` and `mdFlights()` helper names remain as deprecated aliases
 | Joins and subqueries  | Full support                                                                  |
 | Transactions          | No savepoints (nested transactions reuse the outer one). Config is ignored    |
 | JSON/JSONB columns    | Use `duckDbJson()` instead                                                    |
-| Prepared statements   | Optional per-connection cache via `prepareCache`, no named statements         |
+| Prepared statements   | Prepared on every run. No statement cache and no named statements             |
 | Streaming results     | Chunked reads via `executeBatches()`, no cursor streaming                     |
 | Concurrent queries    | One query per connection. Use pooling for parallelism                         |
 

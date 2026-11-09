@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { NoopLogger } from 'drizzle-orm/logger';
-import { PgArray, PgTransaction } from 'drizzle-orm/pg-core';
-import type { PgColumn } from 'drizzle-orm/pg-core';
+import { getTableConfig, PgArray, PgTransaction } from 'drizzle-orm/pg-core';
+import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type {
   PgSelectBuilder,
   SelectedFields,
@@ -52,12 +52,15 @@ import type {
   RowData,
 } from './client.ts';
 import {
+  APPEND_DEFAULT,
+  appendRowsOnClient,
   executeArrowOnClient,
   executeArraysOnClient,
   executeInBatches,
   executeInBatchesRaw,
   executeOnClient,
   prepareParams,
+  type DateParamType,
   type ExecuteBatchesRawChunk,
   type ExecuteInBatchesOptions,
 } from './client.ts';
@@ -463,7 +466,8 @@ export class DuckDBPreparedQuery<
     private onStatementError?: (error: unknown) => void,
     private decimalMode: 'number' | 'string' = 'number',
     private waitForTransactions = false,
-    private relationalSelection?: readonly RelationalSelectionItem[]
+    private relationalSelection?: readonly RelationalSelectionItem[],
+    private dateParams?: DateParamType
   ) {
     super(
       ...([
@@ -520,6 +524,7 @@ export class DuckDBPreparedQuery<
       const rows = await executeOnClient(this.client, queryString, params, {
         prepareCache: this.prepareCache,
         decimalMode: this.decimalMode,
+        dateParams: this.dateParams,
       });
 
       return rows as T['execute'];
@@ -538,6 +543,7 @@ export class DuckDBPreparedQuery<
         prepareCache: this.prepareCache,
         exactDecimals: !customResultMapper || relationalSelection !== undefined,
         decimalMode: this.decimalMode,
+        dateParams: this.dateParams,
       }
     );
 
@@ -575,6 +581,7 @@ export class DuckDBPreparedQuery<
 
 export interface DuckDBSessionOptions {
   decimalMode?: 'number' | 'string';
+  dateParams?: DateParamType;
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
@@ -653,7 +660,8 @@ export class DuckDBSession<
         : undefined,
       this.options.decimalMode,
       this.waitsForTransactions(),
-      relationalSelectionOf(query)
+      relationalSelectionOf(query),
+      this.options.dateParams
     );
   }
 
@@ -917,6 +925,7 @@ export class DuckDBSession<
       this.afterOpenTransaction(
         executeInBatches(this.client, queryString, params, {
           decimalMode: this.options.decimalMode,
+          dateParams: this.options.dateParams,
           ...options,
         })
       )
@@ -932,6 +941,7 @@ export class DuckDBSession<
       this.afterOpenTransaction(
         executeInBatchesRaw(this.client, queryString, params, {
           decimalMode: this.options.decimalMode,
+          dateParams: this.options.dateParams,
           ...options,
         })
       )
@@ -946,7 +956,89 @@ export class DuckDBSession<
     try {
       return await executeArrowOnClient(this.client, queryString, params, {
         decimalMode: this.options.decimalMode,
+        dateParams: this.options.dateParams,
       });
+    } catch (error) {
+      this.recordStatementFailure(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Append rows with DuckDB's appender, which is much faster than a
+   * multi-row INSERT. Returns the number of rows appended.
+   */
+  async appendRows(
+    table: PgTable,
+    rows: readonly Record<string, unknown>[]
+  ): Promise<number> {
+    if (rows.length === 0) {
+      return 0;
+    }
+    const { name, schema, columns } = getTableConfig(table);
+    // Row objects use the table's property keys, as db.insert() does.
+    const keyOf = new Map<PgColumn, string>();
+    for (const [key, column] of Object.entries(
+      table as unknown as Record<string, PgColumn>
+    )) {
+      keyOf.set(column, key);
+    }
+    const byName = new Map(columns.map((column) => [column.name, column]));
+
+    if (this.waitsForTransactions()) {
+      await waitForOpenTransaction(this.client);
+    }
+    try {
+      return await appendRowsOnClient(
+        this.client,
+        { table: name, schema },
+        rows.length,
+        (columnNames) => {
+          const known = new Set(columnNames);
+          for (const column of columns) {
+            if (!known.has(column.name)) {
+              throw new Error(
+                `appendRows(): column "${column.name}" is not a column of table "${name}".`
+              );
+            }
+          }
+          const plan = columnNames.map((columnName) => {
+            const column = byName.get(columnName);
+            return column
+              ? { column, key: keyOf.get(column) ?? column.name }
+              : undefined;
+          });
+          return (rowIndex, columnIndex) => {
+            const entry = plan[columnIndex];
+            // Columns the Drizzle table does not declare take their default.
+            if (!entry) return APPEND_DEFAULT;
+            const { column, key } = entry;
+            let value = (rows[rowIndex] as Record<string, unknown>)[key];
+            if (value === undefined) {
+              if (column.defaultFn !== undefined) {
+                value = column.defaultFn();
+              } else if (column.onUpdateFn !== undefined) {
+                value = column.onUpdateFn();
+              } else {
+                return APPEND_DEFAULT;
+              }
+            }
+            if (value === null) return null;
+            if (is(value, SQL)) {
+              throw new Error(
+                `appendRows(): column "${column.name}" got a SQL expression, which the appender cannot evaluate. Use db.insert() for such rows.`
+              );
+            }
+            const driverValue = column.mapToDriverValue(value);
+            if (is(driverValue, SQL)) {
+              throw new Error(
+                `appendRows(): column "${column.name}" encodes this value as a SQL literal (a struct, union, empty list, or a list of objects or blobs), which the appender cannot take. Use db.insert() for such rows.`
+              );
+            }
+            return driverValue;
+          };
+        }
+      );
     } catch (error) {
       this.recordStatementFailure(error);
       throw error;
@@ -1133,6 +1225,14 @@ export class DuckDBTransaction<
 
   executeArrow(query: SQL): Promise<unknown> {
     return this.getInternals().session.executeArrow(query);
+  }
+
+  /** Append rows inside this transaction. See `db.appendRows()`. */
+  appendRows<TTable extends PgTable>(
+    table: TTable,
+    rows: readonly TTable['$inferInsert'][]
+  ): Promise<number> {
+    return this.getInternals().session.appendRows(table, rows);
   }
 
   override async transaction<T>(

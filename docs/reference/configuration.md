@@ -142,25 +142,26 @@ const results = await db
 
 ### prepareCache
 
-Enable a per-connection prepared statement cache.
+Deprecated and ignored. Passing it logs a one-time warning, and it will be removed in the next major version.
 
-| Type                                       | Default | Description                                                    |
-| ------------------------------------------ | ------- | -------------------------------------------------------------- |
-| `boolean` / `number` / `{ size?: number }` | `false` | Cache prepared statements. Numbers or `size` set the LRU size. |
+DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. The driver prepares every query for one run instead. See [Prepared Statements Are Not Cached]({{ '/reference/performance' | relative_url }}#prepared-statements-are-not-cached).
 
-**Usage**:
+### dateParams
+
+How a bare `Date` parameter binds. A bare parameter is one without a column type, as in ``sql`${new Date()}` ``.
+
+| Type                            | Default       | Description                                              |
+| ------------------------------- | ------------- | -------------------------------------------------------- |
+| `'timestamp'` / `'timestamptz'` | `'timestamp'` | The DuckDB type a `Date` in a raw SQL template binds as. |
+
+- `'timestamp'` binds the UTC wall time as a naive `TIMESTAMP`. DuckDB reads a naive timestamp in the session `TimeZone` when it compares it with a `TIMESTAMPTZ`, so ``sql`${events.at} >= ${date}` `` matches the wrong rows unless the session zone is UTC. DuckDB's default zone is the system zone.
+- `'timestamptz'` binds the instant as a `TIMESTAMPTZ`. Comparisons with `TIMESTAMPTZ` columns are correct in any zone. Writing such a parameter to a naive `TIMESTAMP` column stores the wall time of the session zone.
 
 ```typescript
-// Enable with default size (32)
-const db = drizzle(connection, { prepareCache: true });
-
-// Custom cache size
-const db = drizzle(connection, { prepareCache: { size: 16 } });
+const db = await drizzle('./app.duckdb', { dateParams: 'timestamptz' });
 ```
 
-SQL with several statements, or with only comments, cannot be prepared. It runs without the cache, the same as with `prepareCache` off. This covers migration files without `--> statement-breakpoint` markers.
-
-Use `getPreparedStatementCacheStats(connection)` to inspect hit, miss and eviction counters on a node-api connection without creating a cache.
+Typed operators such as `eq(events.at, date)` and inserted column values encode the `Date` through the column and are correct with either setting. The option does not apply to pg_duckdb clients.
 
 ### decimalMode
 

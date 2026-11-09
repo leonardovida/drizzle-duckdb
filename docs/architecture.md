@@ -26,7 +26,7 @@ A short map of the source tree for contributors.
 ## Client and Value Conversion
 
 - `src/client.ts`: parameter preparation, value conversion to `@duckdb/node-api` values with explicit bind types, materialized execution with a per-column result converter, streaming (`executeInBatches`, `executeInBatchesRaw`) with a per-connection streaming marker, the columnar path behind `executeArrow`, column name deduplication, and connection cleanup that interrupts running queries.
-- `src/prepared-statement-cache.ts`: optional per-connection LRU cache for prepared statements.
+- `src/prepared-statement-cache.ts`: deprecated statement cache, no longer used for execution. Kept for its exported stats helper until the next major version.
 - `src/value-wrappers*.ts`: wrappers for list, array, struct, map, JSON, blob and timestamp values, and the list item type inference used for binding.
 
 ## DuckDB Types, Helpers, and Rewriting

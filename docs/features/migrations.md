@@ -37,7 +37,7 @@ drizzle/
     └── _journal.json
 ```
 
-Each migration file contains raw SQL statements. Drizzle Kit separates statements with `--> statement-breakpoint` comments, and the migrator runs each part as its own statement. A part may hold several statements, also with `prepareCache` on:
+Each migration file contains raw SQL statements. Drizzle Kit separates statements with `--> statement-breakpoint` comments, and the migrator runs each part as its own statement. A part may hold several statements:
 
 ```sql
 -- 0000_init.sql
