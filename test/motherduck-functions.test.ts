@@ -497,6 +497,18 @@ test('MotherDuck flight config helpers reject invalid environment keys', () => {
       })}
     `)
   ).toThrow(/config key "MOTHERDUCK_FLIGHTS_RUN" is reserved/i);
+
+  for (const key of [
+    'MOTHERDUCK_FLIGHT_ID',
+    'MOTHERDUCK_FLIGHT_RUN_ID',
+    'MOTHERDUCK_HOST',
+  ]) {
+    expect(() =>
+      dialect.sqlToQuery(sql`
+        from ${mdUpdateFlight({ flightId, config: { [key]: 'x' } })}
+      `)
+    ).toThrow(new RegExp(`config key "${key}" is reserved`, 'i'));
+  }
 });
 
 test('MotherDuck config validation preserves nulls and SQL wrapper escape hatches', () => {

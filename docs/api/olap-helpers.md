@@ -321,6 +321,10 @@ owner nor an organization admin, and `mdGetFlightLogs()` stays limited to them.
 `mdCreateFlight()` and `mdUpdateFlight()` accept `metadata: { chart }`, for
 example Mermaid flowchart source that describes the Flight's steps. On update,
 an empty string clears the chart and `chart: null` leaves it unchanged.
+Metadata that changes nothing is not an update on its own. MotherDuck rejects
+an `mdUpdateFlight()` call whose only field is `metadata: {}` or
+`metadata: { chart: null }` with "At least one of the following parameters
+must be provided".
 `chart` is the only metadata key MotherDuck accepts, and the helper throws on
 any other key. `mdGetFlightVersion()` returns the version's chart in a
 `metadata` MAP column. `db.execute` returns MAP values as key and value
@@ -426,8 +430,11 @@ check the current session's roles.
 
 `config` entries are exposed to Flight code as environment variables using the
 config key. Config keys must not be empty, cannot contain `=` or NULL bytes, and
-cannot use reserved runtime names such as `MOTHERDUCK_TOKEN` or
-`MOTHERDUCK_FLIGHTS_RUN`. Config values cannot contain NULL bytes.
+cannot use the runtime names MotherDuck sets for every run: `MOTHERDUCK_TOKEN`,
+`MOTHERDUCK_FLIGHTS_RUN`, `MOTHERDUCK_FLIGHT_ID`, `MOTHERDUCK_FLIGHT_RUN_ID` and
+`MOTHERDUCK_HOST`. `MOTHERDUCK_HOST` holds the API host of the Flight's region,
+so `duckdb.connect("md:")` inside a run connects to that region. Config values
+cannot contain NULL bytes.
 `flightSecretNames` references MotherDuck `TYPE flights` secrets. Each secret
 param is exposed as `<SECRET_NAME>_<KEY>`, so a secret named `api_secret` with
 param `API_KEY` becomes `API_SECRET_API_KEY`.
