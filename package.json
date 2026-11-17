@@ -62,7 +62,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22"
   },
   "packageManager": "bun@1.4.4",
   "keywords": [
