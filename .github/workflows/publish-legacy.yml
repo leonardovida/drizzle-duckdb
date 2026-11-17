@@ -29,6 +29,14 @@ jobs:
       - run: bun run build
       - run: npm pack --dry-run
       - name: Publish legacy package
-        run: npm publish --access public --tag latest
+        # A prerelease version such as 3.0.0-rc.1 must not become `latest`.
+        run: |
+          version=$(node -p "require('./package.json').version")
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *) dist_tag=latest ;;
+          esac
+          echo "Publishing ${version} with dist-tag '${dist_tag}'."
+          npm publish --access public --tag "$dist_tag"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
