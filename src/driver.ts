@@ -153,7 +153,7 @@ function assertNoRemovedOptions(config: object): void {
   }
   if ('casing' in config && config.casing !== undefined) {
     throw new Error(
-      'The casing option was removed in 3.0 with drizzle-orm 1.0. Set the casing on the table definitions instead, for example with pgTableCreator() from drizzle-orm/pg-core.'
+      'The casing option was removed in 3.0 with drizzle-orm 1.0. Set the casing on the table definitions instead, for example with snakeCase.table() or pgTableCreator() from drizzle-orm/pg-core.'
     );
   }
 }

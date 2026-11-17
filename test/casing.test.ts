@@ -1,6 +1,12 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import { eq, sql } from 'drizzle-orm';
-import { integer, pgTable, pgTableCreator, text } from 'drizzle-orm/pg-core';
+import {
+  integer,
+  pgTable,
+  pgTableCreator,
+  snakeCase,
+  text,
+} from 'drizzle-orm/pg-core';
 import { expect, test } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 
@@ -31,6 +37,25 @@ test('snake_case tables generate snake_case SQL', async () => {
   } finally {
     connection.closeSync();
     instance.closeSync();
+  }
+});
+
+test('snakeCase.table() maps keys to snake_case columns', async () => {
+  const people = snakeCase.table('casing_people', {
+    id: integer().primaryKey(),
+    firstName: text(),
+  });
+  const db = await drizzle(':memory:');
+  try {
+    await db.execute(
+      sql`create table casing_people (id integer primary key, first_name text)`
+    );
+    await db.insert(people).values({ id: 1, firstName: 'ada' });
+    expect(await db.select().from(people)).toEqual([
+      { id: 1, firstName: 'ada' },
+    ]);
+  } finally {
+    await db.close();
   }
 });
 
