@@ -30,8 +30,8 @@ concurrency:
 
 jobs:
   publish:
-    # Tags and releases publish their commit. Manual runs publish only from main.
-    if: github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    # Tags and releases publish their commit. Manual runs publish only from 2.x.
+    if: github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/2.x')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

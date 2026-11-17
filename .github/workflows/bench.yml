@@ -2,10 +2,10 @@ name: Benchmarks
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+  # The stored benchmark history belongs to main, so 2.x only gates pull
+  # requests against their base.
   pull_request:
-    branches: [main]
+    branches: [2.x]
 
 permissions:
   contents: read
