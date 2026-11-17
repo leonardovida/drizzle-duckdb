@@ -59,7 +59,7 @@ test('findFirst and findMany map rows to schema keys', async () => {
   expect(await db.query.users.findMany()).toEqual([{ id: 1, fullName: 'Ann' }]);
 });
 
-test('findMany loads many and one relations with DuckDB JSON functions', async () => {
+test('findMany loads many and one relations as DuckDB nested values', async () => {
   await db.insert(users).values([
     { id: 1, fullName: 'Ann' },
     { id: 2, fullName: 'Bob' },
@@ -124,4 +124,92 @@ test('relation columns decode through their column mappers', async () => {
   expect(result?.posts[0]?.publishedAt?.toISOString()).toBe(
     '2024-01-02T03:04:05.000Z'
   );
+});
+
+test('related columns named like the join aliases keep their values', async () => {
+  const parents = pgTable('rq_alias_parents', {
+    id: integer('id').primaryKey(),
+  });
+  const kids = pgTable('rq_alias_kids', {
+    id: integer('id').primaryKey(),
+    parentId: integer('parent_id').notNull(),
+    t: text('t'),
+    r: text('r'),
+  });
+  const aliasRelations = defineRelations({ parents, kids }, (r) => ({
+    parents: {
+      kids: r.many.kids({ from: r.parents.id, to: r.kids.parentId }),
+    },
+    kids: {
+      parent: r.one.parents({ from: r.kids.parentId, to: r.parents.id }),
+    },
+  }));
+  const aliasDb = await drizzle(':memory:', { relations: aliasRelations });
+  try {
+    await aliasDb.execute(sql`
+      create table rq_alias_parents (id integer primary key);
+      create table rq_alias_kids (
+        id integer primary key,
+        parent_id integer not null,
+        t text,
+        r text
+      );
+      insert into rq_alias_parents values (1);
+      insert into rq_alias_kids values (10, 1, 'tee', 'arr');
+    `);
+
+    expect(
+      await aliasDb.query.parents.findMany({ with: { kids: true } })
+    ).toEqual([{ id: 1, kids: [{ id: 10, parentId: 1, t: 'tee', r: 'arr' }] }]);
+    expect(
+      await aliasDb.query.kids.findFirst({
+        columns: { t: true, r: true },
+        with: { parent: true },
+      })
+    ).toEqual({ t: 'tee', r: 'arr', parent: { id: 1 } });
+  } finally {
+    await aliasDb.close();
+  }
+});
+
+test('nested DECIMAL extras follow decimalMode', async () => {
+  const extras = {
+    amount: () => sql`cast(1234567890123456789.5 as decimal(38, 2))`,
+  };
+  const query = (target: DuckDBDatabase<typeof relations>) =>
+    target.query.users.findFirst({
+      columns: { id: true },
+      with: { posts: { columns: { id: true }, extras } },
+    });
+
+  await db.insert(users).values({ id: 1, fullName: 'Ann' });
+  await db.insert(posts).values({ id: 10, authorId: 1, title: 'first' });
+  expect(await query(db)).toEqual({
+    id: 1,
+    posts: [{ id: 10, amount: 1234567890123456789.5 }],
+  });
+
+  const stringDb = await drizzle(':memory:', {
+    relations,
+    decimalMode: 'string',
+  });
+  try {
+    await stringDb.execute(sql`
+      create table rq_users (id integer primary key, full_name text not null);
+      create table rq_posts (
+        id integer primary key,
+        author_id integer not null,
+        title text not null,
+        published_at timestamp
+      );
+      insert into rq_users values (1, 'Ann');
+      insert into rq_posts values (10, 1, 'first', null);
+    `);
+    expect(await query(stringDb)).toEqual({
+      id: 1,
+      posts: [{ id: 10, amount: '1234567890123456789.50' }],
+    });
+  } finally {
+    await stringDb.close();
+  }
 });
