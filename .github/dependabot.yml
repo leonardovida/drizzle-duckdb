@@ -16,8 +16,8 @@ updates:
       interval: weekly
     ignore:
       # Peer ranges for these packages are maintained by hand, so major
-      # updates of the dev copies need a deliberate change. drizzle-orm is
-      # still 0.x, where a minor bump is the breaking one.
+      # updates of the dev copies need a deliberate change. drizzle-orm 1.0
+      # is still a release candidate, so minor updates wait for review too.
       - dependency-name: drizzle-orm
         update-types:
           - 'version-update:semver-major'

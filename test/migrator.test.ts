@@ -11,7 +11,8 @@ import {
 import { drizzle } from '../src/driver.ts';
 import { migrate } from '../src/migrator.ts';
 import type { DuckDBDatabase } from '../src/driver.ts';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { writeMigrationFolders } from './utils.ts';
+import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 describe('Migrator Tests', () => {
@@ -29,50 +30,17 @@ describe('Migrator Tests', () => {
       mkdirSync(testMigrationsDir, { recursive: true });
     }
 
-    // Create a meta directory for drizzle migrations
-    const metaDir = join(testMigrationsDir, 'meta');
-    if (!existsSync(metaDir)) {
-      mkdirSync(metaDir, { recursive: true });
-    }
-
-    // Create _journal.json
-    writeFileSync(
-      join(metaDir, '_journal.json'),
-      JSON.stringify({
-        version: '5',
-        dialect: 'pg',
-        entries: [
-          {
-            idx: 0,
-            version: '5',
-            when: Date.now(),
-            tag: '0001_create_users',
-            breakpoints: false,
-          },
-        ],
-      })
-    );
-
-    // Create snapshot file
-    writeFileSync(
-      join(metaDir, '0001_snapshot.json'),
-      JSON.stringify({
-        version: '5',
-        dialect: 'pg',
-        tables: {},
-        enums: {},
-      })
-    );
-
-    // Create migration SQL file
-    writeFileSync(
-      join(testMigrationsDir, '0001_create_users.sql'),
-      `CREATE TABLE IF NOT EXISTS users (
+    writeMigrationFolders(testMigrationsDir, [
+      {
+        tag: 'create_users',
+        when: Date.now(),
+        sql: `CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         email TEXT UNIQUE
-      );`
-    );
+      );`,
+      },
+    ]);
   });
 
   beforeEach(async () => {

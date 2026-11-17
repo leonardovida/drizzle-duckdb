@@ -1,5 +1,5 @@
 import { DuckDBInstance } from '@duckdb/node-api';
-import { relations, sql } from 'drizzle-orm';
+import { defineRelations, sql } from 'drizzle-orm';
 import { integer, numeric, pgTable } from 'drizzle-orm/pg-core';
 import { expect, test } from 'vitest';
 import { duckDbList, duckDbMap, duckDbStruct } from '../src/columns.ts';
@@ -18,19 +18,20 @@ const entries = pgTable('decimal_entries', {
   }),
 });
 const owners = pgTable('decimal_owners', { id: integer('id').primaryKey() });
-const entriesRelations = relations(entries, ({ one }) => ({
-  owner: one(owners, { fields: [entries.id], references: [owners.id] }),
-}));
-const ownersRelations = relations(owners, ({ many }) => ({
-  entries: many(entries),
+const relations = defineRelations({ entries, owners }, (r) => ({
+  entries: {
+    owner: r.one.owners({ from: r.entries.id, to: r.owners.id }),
+  },
+  owners: {
+    entries: r.many.entries({ from: r.owners.id, to: r.entries.id }),
+  },
 }));
 
 test('exact decimal policy agrees across raw, builder, stream and columnar reads', async () => {
   const instance = await DuckDBInstance.create(':memory:');
   const db = drizzle(await instance.connect(), {
     decimalMode: 'string',
-    prepareCache: true,
-    schema: { entries, owners, entriesRelations, ownersRelations },
+    relations,
   });
   const approximate = drizzle(await instance.connect());
   try {

@@ -400,7 +400,7 @@ describe('public schema and untyped DuckDB values', () => {
 
   test('declares public with the PgSchema constructor', () => {
     expect(generated).toContain(
-      'export const publicSchema = new PgSchema("public");'
+      'export const publicSchema = new PgSchema("public", undefined);'
     );
     expect(generated).toContain('export const mainSchema = pgSchema("main");');
     expect(generated).toMatch(/import \{[^}]*\bPgSchema\b[^}]*\bpgSchema\b/);

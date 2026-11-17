@@ -17,18 +17,20 @@
 
 > **Status:** Experimental. Query building, migrations and type inference are stable. Some DuckDB-specific types and edge cases are still being refined.
 
+> **Version 3 is a release candidate.** It requires drizzle-orm 1.0, which is itself a release candidate, and is published under the `next` tag. Version 2.6 remains the `latest` release and works with drizzle-orm 0.40.1 to 0.45. Its source and documentation are on the [`2.x` branch](https://github.com/leonardovida/drizzle-duckdb/tree/2.x). See [Upgrading to v3](https://leonardovida.github.io/drizzle-duckdb/reference/upgrading-to-v3).
+
 Every docs page has a **Markdown (raw)** button with LLM-friendly source.
 
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 # or: npm install / pnpm add with the same packages
 ```
 
 | Requirement        | Supported versions                                                                  |
 | ------------------ | ----------------------------------------------------------------------------------- |
-| `drizzle-orm`      | 0.40.1 or newer, below 0.46.0                                                       |
+| `drizzle-orm`      | 1.0.0-rc.5 to 1.0.0-rc.99, or 1.x from 1.0.0. npm snapshot builds do not match      |
 | `@duckdb/node-api` | 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as `1.5.6-r.2`            |
 | Runtime            | Node.js 18.17 or newer (22, 24 or 26 recommended), or Bun                           |
 
@@ -174,11 +176,8 @@ const db = await drizzle(':memory:', {
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals: false,
 
-  // Map camelCase keys to snake_case column names
-  casing: 'snake_case',
-
-  // Schema for relational queries
-  schema: mySchema,
+  // Relations from defineRelations() for relational queries
+  relations,
 });
 ```
 
@@ -231,7 +230,7 @@ DuckDB differs from Postgres here:
 - There is no `SAVEPOINT`. Nested transactions reuse the outer one, so an inner rollback aborts everything.
 - Without a pool, other `db` queries wait while a transaction is open on the shared connection, instead of joining it.
 - Any failed statement aborts the whole transaction. Catching the error inside the callback does not keep earlier writes. `db.transaction()` rolls back and rejects.
-- The `config` argument (`isolationLevel`, `accessMode`, `deferrable`) is deprecated and ignored with a one-time warning, because DuckDB has no `SET TRANSACTION`.
+- DuckDB has no `SET TRANSACTION`, so `db.transaction()` rejects when it receives a `config` argument (`isolationLevel`, `accessMode`, `deferrable`).
 
 ## Migrations
 
@@ -305,7 +304,7 @@ await db.execute(sql`
 `);
 ```
 
-The older `mdJobs()` and `mdFlights()` helper names remain as deprecated aliases. See [OLAP Helpers](https://leonardovida.github.io/drizzle-duckdb/api/olap-helpers) for the full list, Flight options and log pagination, and [MotherDuck](https://leonardovida.github.io/drizzle-duckdb/integrations/motherduck) for the AI builders.
+The Job helpers and older Flight aliases such as `mdJobs()` and `mdFlights()` were removed in 3.0. See [Upgrading to v3](https://leonardovida.github.io/drizzle-duckdb/reference/upgrading-to-v3) for their replacements, [OLAP Helpers](https://leonardovida.github.io/drizzle-duckdb/api/olap-helpers) for the full list, Flight options and log pagination, and [MotherDuck](https://leonardovida.github.io/drizzle-duckdb/integrations/motherduck) for the AI builders.
 
 ## Known Limitations
 
@@ -313,7 +312,7 @@ The older `mdJobs()` and `mdFlights()` helper names remain as deprecated aliases
 | --------------------- | ----------------------------------------------------------------------------- |
 | Basic CRUD operations | Full support                                                                  |
 | Joins and subqueries  | Full support                                                                  |
-| Transactions          | No savepoints (nested transactions reuse the outer one). Config is ignored    |
+| Transactions          | No savepoints (nested transactions reuse the outer one). Config rejects    |
 | JSON/JSONB columns    | Use `duckDbJson()` instead                                                    |
 | Prepared statements   | Prepared on every run. No statement cache and no named statements             |
 | Streaming results     | Chunked reads via `executeBatches()`, no cursor streaming                     |

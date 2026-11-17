@@ -26,13 +26,8 @@ import {
   withNodeApiItemTypeHint,
   wrapperToNodeApiValue,
 } from './value-wrappers.ts';
-import {
-  normalizePositiveInteger,
-  type PreparedStatementCacheConfig,
-} from './options.ts';
 import { isPgArrayLiteral, parsePgArrayLiteral } from './array-literals.ts';
 import type { PgDuckClient, PgDuckField, PgDuckQueryResult } from './pgduck.ts';
-import { clearPreparedStatementCache } from './prepared-statement-cache.ts';
 import { assignOwnProperty } from './own-property.ts';
 import { rememberDroppedMicros } from './time.ts';
 
@@ -60,12 +55,6 @@ export function isPool(
 export interface ExecuteClientOptions {
   /** Return DECIMAL values as exact strings, including nested values. */
   decimalMode?: 'number' | 'string';
-  /**
-   * @deprecated Ignored. DuckDB plans a prepared statement from the table
-   * statistics at prepare time, so running it again after the data changed
-   * can return wrong results. Every query is prepared for one run.
-   */
-  prepareCache?: PreparedStatementCacheConfig;
   /**
    * Read top-level DECIMAL columns as exact strings instead of doubles. The
    * result lists those columns in `exactDecimalColumns`.
@@ -1213,7 +1202,6 @@ export async function closeClientConnection(
   if (isNodeApiConnection(connection)) {
     interruptClientConnection(connection);
     await waitForClientConnectionIdle(connection, drainTimeoutMs);
-    clearPreparedStatementCache(connection);
   }
 
   await closeDuckDbResource(connection as DisconnectableResource, true);
@@ -1288,6 +1276,17 @@ export interface ExecuteInBatchesOptions {
 export interface ExecuteBatchesRawChunk {
   columns: string[];
   rows: unknown[][];
+}
+
+function normalizePositiveInteger(
+  value: number | undefined,
+  fallback: number
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
 }
 
 function resolveRowsPerChunk(

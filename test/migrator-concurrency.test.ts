@@ -1,12 +1,13 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { drizzle } from '../src/driver.ts';
 import { migrate } from '../src/migrator.ts';
+import { writeMigrationFolders } from './utils.ts';
 
 async function runConcurrentMigrators(
   migrations: MigrationMeta[],
@@ -44,6 +45,7 @@ test('concurrent migrators succeed on a fresh database', async () => {
   const migrations = [
     {
       hash: 'fresh-migration',
+      name: 'fresh-migration',
       folderMillis: 1000,
       sql: ['create table if not exists fresh_effects (id integer)'],
       bps: true,
@@ -65,12 +67,14 @@ test('concurrent migrators succeed with DDL migrations', async () => {
   const migrations = [
     {
       hash: 'ddl-users',
+      name: 'ddl-users',
       folderMillis: 1000,
       sql: ['create table users (id integer)'],
       bps: true,
     },
     {
       hash: 'ddl-posts',
+      name: 'ddl-posts',
       folderMillis: 2000,
       sql: ['create table posts (id integer)', 'insert into posts values (1)'],
       bps: true,
@@ -94,38 +98,14 @@ test('migrate() calls on one database run one after another', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'drizzle-duckdb-migrate-'));
   const db = await drizzle(':memory:', { pool: { size: 4 } });
   try {
-    await mkdir(join(folder, 'meta'));
-    await writeFile(
-      join(folder, 'meta', '_journal.json'),
-      JSON.stringify({
-        version: '7',
-        dialect: 'postgresql',
-        entries: [
-          {
-            idx: 0,
-            version: '7',
-            when: 1000,
-            tag: '0000_a',
-            breakpoints: true,
-          },
-          {
-            idx: 1,
-            version: '7',
-            when: 2000,
-            tag: '0001_b',
-            breakpoints: true,
-          },
-        ],
-      })
-    );
-    await writeFile(
-      join(folder, '0000_a.sql'),
-      'create table serial_a (id integer);\n--> statement-breakpoint\ninsert into serial_a values (1);'
-    );
-    await writeFile(
-      join(folder, '0001_b.sql'),
-      'create table serial_b (id integer);'
-    );
+    writeMigrationFolders(folder, [
+      {
+        tag: 'a',
+        when: 1000,
+        sql: 'create table serial_a (id integer);\n--> statement-breakpoint\ninsert into serial_a values (1);',
+      },
+      { tag: 'b', when: 2000, sql: 'create table serial_b (id integer);' },
+    ]);
 
     let active = 0;
     let maxActive = 0;
@@ -171,6 +151,7 @@ test('concurrent migrators apply each migration once', async () => {
   const migrations = [
     {
       hash: 'concurrent-migration',
+      name: 'concurrent-migration',
       bps: false,
       folderMillis: 1000,
       sql: ['insert into migration_effects values (1)'],
@@ -228,27 +209,9 @@ test('migrate() calls on two databases opened on one file run one after another'
   const first = await drizzle(file);
   const second = await drizzle(join(folder, '.', 'app.duckdb'));
   try {
-    await mkdir(join(migrations, 'meta'), { recursive: true });
-    await writeFile(
-      join(migrations, 'meta', '_journal.json'),
-      JSON.stringify({
-        version: '7',
-        dialect: 'postgresql',
-        entries: [
-          {
-            idx: 0,
-            version: '7',
-            when: 1000,
-            tag: '0000_a',
-            breakpoints: true,
-          },
-        ],
-      })
-    );
-    await writeFile(
-      join(migrations, '0000_a.sql'),
-      'create table shared_file_a (id integer);'
-    );
+    writeMigrationFolders(migrations, [
+      { tag: 'a', when: 1000, sql: 'create table shared_file_a (id integer);' },
+    ]);
 
     let active = 0;
     let maxActive = 0;

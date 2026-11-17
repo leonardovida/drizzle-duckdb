@@ -179,7 +179,6 @@ async function main(): Promise<void> {
       arrayRows: 5000,
       streamRowsPerChunk: 10000,
     },
-    cache: 'disabled unless benchmark name explicitly enables it',
     uncertainty: 'range is the relative margin of error in percent',
     filters: runFilters,
   };

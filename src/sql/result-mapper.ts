@@ -2,12 +2,12 @@ import {
   Column,
   SQL,
   StringChunk,
+  getColumnTable,
   getTableName,
   is,
   sql,
   type AnyColumn,
   type DriverValueDecoder,
-  type SelectedFieldsOrdered,
 } from 'drizzle-orm';
 import {
   PgCustomColumn,
@@ -39,8 +39,19 @@ type SQLCarrier = {
 type DecoderInput<TDecoder extends DriverValueDecoder<unknown, unknown>> =
   Parameters<TDecoder['mapFromDriverValue']>[0];
 
-type NullifyMap = Record<string, string | false>;
 type ResultRow = Record<string, unknown>;
+
+/** Normalizes a decoded driver value, as drizzle-orm codecs do. */
+export type ValueCodec = (value: unknown, dimensions?: number) => unknown;
+
+/** Returns the `normalize` codec of a column, if it has one. */
+export type CodecLookup = (column: Column) => ValueCodec | undefined;
+
+/** The part of a drizzle-orm ordered selection entry the mapper reads. */
+export interface SelectionFieldEntry {
+  path: string[];
+  field: unknown;
+}
 
 const passthroughDecoder: DriverValueDecoder<unknown, unknown> = {
   mapFromDriverValue: (value) => value,
@@ -79,9 +90,7 @@ function findColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
 const defaultSqlDecoder = (sql.empty() as SQLInternal).decoder;
 
 function isEmptyStringChunk(chunk: unknown): boolean {
-  return (
-    is(chunk, StringChunk) && chunk.value.every((part) => part.trim() === '')
-  );
+  return is(chunk, StringChunk) && chunk.value.trim() === '';
 }
 
 /**
@@ -124,27 +133,44 @@ export function resolveFieldDecoder(
   return fieldSql?.decoder ?? passthroughDecoder;
 }
 
-function trackNullifyTarget(
-  nullifyMap: NullifyMap,
-  objectName: string,
-  tableName: string,
-  value: unknown
-): void {
-  if (!Object.hasOwn(nullifyMap, objectName)) {
-    assignOwnProperty(
-      nullifyMap,
-      objectName,
-      value === null ? tableName : false
-    );
-    return;
-  }
+/** The table of a column field, or of the column an aliased field wraps. */
+function fieldTableName(field: unknown): string | undefined {
+  const column = is(field, Column)
+    ? field
+    : is(field, SQL.Aliased)
+      ? findColumnInSql(getFieldSql(field as SQLCarrier))
+      : undefined;
+  return column ? getTableName(getColumnTable(column)) : undefined;
+}
 
-  if (
-    nullifyMap[objectName] &&
-    (nullifyMap[objectName] !== tableName || value !== null)
-  ) {
-    nullifyMap[objectName] = false;
+/**
+ * The top-level keys of a joined selection whose object becomes null when
+ * every column under it is null: those whose columns all come from one table
+ * that a left, right or full join can leave out. Unlike drizzle-orm's own
+ * version, this one also sees columns wrapped by the driver's field aliases.
+ */
+export function resolveNullableObjectPaths(
+  columns: readonly SelectionFieldEntry[],
+  joinsNotNullableMap: Record<string, boolean> | undefined
+): string[] | undefined {
+  if (!joinsNotNullableMap) return undefined;
+  const tableOf = new Map<string, string | false>();
+  for (const { path, field } of columns) {
+    if (path.length !== 2) continue;
+    const tableName = fieldTableName(field);
+    if (tableName === undefined) continue;
+    const key = path[0]!;
+    const current = tableOf.get(key);
+    if (current === undefined) tableOf.set(key, tableName);
+    else if (current !== tableName) tableOf.set(key, false);
   }
+  const result: string[] = [];
+  for (const [key, table] of tableOf) {
+    if (typeof table === 'string' && !joinsNotNullableMap[table]) {
+      result.push(key);
+    }
+  }
+  return result;
 }
 
 type InetValue = {
@@ -399,10 +425,33 @@ function compileValueNormalizer(
   return (value) => (value === null ? null : normalize(inet(value)));
 }
 
+/**
+ * The column codec, then the decoder. drizzle-orm 1.0 moved the decoding of
+ * built-in pg-core columns, such as `bigint({ mode: 'number' })`, from the
+ * column into codecs, so both run.
+ */
+function decodeWith(
+  decoder: DriverValueDecoder<unknown, unknown>,
+  codec: ValueCodec | undefined
+): (value: unknown) => unknown {
+  const dimensions = is(decoder, Column)
+    ? (decoder as Column & { dimensions?: number }).dimensions
+    : undefined;
+  if (codec) {
+    return (value) =>
+      decoder.mapFromDriverValue(
+        toDecoderInput(decoder, codec(value, dimensions))
+      );
+  }
+  return (value) => decoder.mapFromDriverValue(toDecoderInput(decoder, value));
+}
+
 function compileValueMapper(
-  decoder: DriverValueDecoder<unknown, unknown>
+  decoder: DriverValueDecoder<unknown, unknown>,
+  codec?: ValueCodec
 ): (value: unknown) => unknown {
   const normalize = compileValueNormalizer(decoder);
+  const decode = decodeWith(decoder, codec);
   if (is(decoder, PgTimestamp) || is(decoder, PgDate)) {
     // Dates are final, and infinite values keep DuckDB's text.
     return (value) => {
@@ -411,43 +460,109 @@ function compileValueMapper(
         normalized instanceof Date ||
         isInfiniteTimestamp(normalized)
         ? normalized
-        : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+        : decode(normalized);
     };
   }
   return (value) => {
     const normalized = normalize(value);
-    return normalized === null
-      ? null
-      : decoder.mapFromDriverValue(toDecoderInput(decoder, normalized));
+    return normalized === null ? null : decode(normalized);
   };
 }
 
+/** The part of a drizzle-orm relational query selection the driver reads. */
+export interface RelationalSelectionItem {
+  key: string;
+  field: unknown;
+  fieldType?: string;
+  selection?: readonly RelationalSelectionItem[];
+  isArray?: boolean;
+}
+
 /**
- * Normalize the top-level values of relational query rows (`db.query`) in
- * place. Drizzle decodes them afterwards with each field's decoder, so they
- * must arrive the way flat selects see them. JSON relation fields are left
- * alone.
+ * Name of the column, and struct field, at a position of a related row.
+ * DuckDB matches identifiers case-insensitively, so keys such as userId and
+ * userid cannot name the columns or the struct fields of a relation.
+ */
+export function relationColumnName(position: number): string {
+  return `c${position}`;
+}
+
+/**
+ * Normalize the values of relational query rows (`db.query`) in place, so
+ * they reach drizzle-orm's relational mapper the way flat selects see them.
+ * Relations arrive as native DuckDB structs and lists, whose fields are
+ * normalized the same way and renamed from their positions to their keys.
+ * Root rows are arrays, nested rows are objects.
  */
 export function compileRelationalRowNormalizer(
   selection: readonly RelationalSelectionItem[]
 ): (row: unknown[]) => void {
-  const normalizers = selection.map((item) =>
-    item.isJson
-      ? undefined
+  const normalizeObject = compileNestedNormalizer(selection);
+  const steps = selection.map((item) =>
+    item.selection
+      ? nestedValueNormalizer(item, normalizeObject.get(item)!)
       : compileValueNormalizer(resolveFieldDecoder(item.field))
   );
   return (row) => {
-    for (let index = 0; index < normalizers.length; index += 1) {
-      const normalize = normalizers[index];
-      if (normalize) row[index] = normalize(row[index]);
+    for (let index = 0; index < steps.length; index += 1) {
+      row[index] = steps[index]!(row[index]);
     }
   };
 }
 
-/** The part of Drizzle's relational query selection the driver reads. */
-export interface RelationalSelectionItem {
-  isJson: boolean;
-  field: unknown;
+type ObjectNormalizer = (
+  row: Record<string, unknown>
+) => Record<string, unknown>;
+
+function compileNestedNormalizer(
+  selection: readonly RelationalSelectionItem[]
+): Map<RelationalSelectionItem, ObjectNormalizer> {
+  const result = new Map<RelationalSelectionItem, ObjectNormalizer>();
+  for (const item of selection) {
+    if (!item.selection) continue;
+    const inner = item.selection;
+    const nested = compileNestedNormalizer(inner);
+    const steps = inner.map(
+      (child, position) =>
+        [
+          relationColumnName(position),
+          child.key,
+          child.selection
+            ? nestedValueNormalizer(child, nested.get(child)!)
+            : compileValueNormalizer(resolveFieldDecoder(child.field)),
+        ] as const
+    );
+    result.set(item, (row) => {
+      const normalized: Record<string, unknown> = {};
+      for (const [field, key, step] of steps) {
+        assignOwnProperty(normalized, key, step(row[field]));
+      }
+      return normalized;
+    });
+  }
+  return result;
+}
+
+function nestedValueNormalizer(
+  item: RelationalSelectionItem,
+  normalizeObject: ObjectNormalizer
+): (value: unknown) => unknown {
+  return (value) => {
+    if (value === null || typeof value !== 'object') return value;
+    if (item.isArray && Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const row = value[index];
+        if (row && typeof row === 'object') {
+          value[index] = normalizeObject(row as Record<string, unknown>);
+        }
+      }
+      return value;
+    }
+    if (!Array.isArray(value)) {
+      return normalizeObject(value as Record<string, unknown>);
+    }
+    return value;
+  };
 }
 
 function assignResultPath(
@@ -477,58 +592,55 @@ function assignResultPath(
   assignOwnProperty(node, path[path.length - 1] as string, value);
 }
 
-export function mapResultRow<TResult>(
-  columns: SelectedFieldsOrdered<AnyColumn>,
-  row: unknown[],
-  joinsNotNullableMap: Record<string, boolean> | undefined
-): TResult {
-  return compileResultMapper<TResult>(columns, joinsNotNullableMap)(row);
-}
-
-/** Resolve stable field metadata once, before mapping any result rows. */
+/**
+ * Resolve stable field metadata once, before mapping any result rows.
+ * `nullableObjectPaths` lists the top-level keys that become null when every
+ * column under them is null (see resolveNullableObjectPaths()).
+ */
 export function compileResultMapper<TResult>(
-  columns: SelectedFieldsOrdered<AnyColumn>,
-  joinsNotNullableMap?: Record<string, boolean>
+  columns: readonly SelectionFieldEntry[],
+  nullableObjectPaths?: readonly string[],
+  codecOf?: CodecLookup
 ): (row: unknown[]) => TResult {
+  const nullable = new Set(nullableObjectPaths ?? []);
   const plan = columns.map(({ path, field }) => {
-    let tableName: string | undefined;
-    if (joinsNotNullableMap && path.length === 2) {
-      const column = is(field, Column)
-        ? field
-        : is(field, SQL.Aliased)
-          ? findColumnInSql(getFieldSql(field as SQLCarrier))
-          : undefined;
-      if (column) tableName = getTableName(column.table);
-    }
+    const decoder = resolveFieldDecoder(field);
+    const codec = codecOf && is(decoder, Column) ? codecOf(decoder) : undefined;
+    const nullifies =
+      path.length === 2 &&
+      nullable.has(path[0]!) &&
+      fieldTableName(field) !== undefined;
     return {
       path: [...path],
-      map: compileValueMapper(resolveFieldDecoder(field)),
-      tableName,
+      map: compileValueMapper(decoder, codec),
+      nullifies,
     };
   });
   const flat = plan.every(({ path }) => path.length === 1);
-  const hasNullifyTargets = plan.some(
-    ({ tableName }) => tableName !== undefined
-  );
+  const nullifyTargets = [...nullable].map((key) => ({
+    key,
+    leaves: plan.flatMap((entry, index) =>
+      entry.nullifies && entry.path[0] === key ? [index] : []
+    ),
+  }));
 
   return (row) => {
     const result: ResultRow = {};
-    const nullifyMap = hasNullifyTargets
-      ? (Object.create(null) as NullifyMap)
-      : undefined;
+    const values = nullifyTargets.length ? new Array(plan.length) : undefined;
     for (let index = 0; index < plan.length; index += 1) {
-      const { path, map, tableName } = plan[index]!;
+      const { path, map } = plan[index]!;
       const value = map(row[index]);
+      if (values) values[index] = value;
       if (flat) assignOwnProperty(result, path[0]!, value);
       else assignResultPath(result, path, value);
-      if (nullifyMap && tableName !== undefined) {
-        trackNullifyTarget(nullifyMap, path[0]!, tableName, value);
-      }
     }
-    if (nullifyMap) {
-      for (const [name, tableName] of Object.entries(nullifyMap)) {
-        if (typeof tableName === 'string' && !joinsNotNullableMap![tableName]) {
-          assignOwnProperty(result, name, null);
+    if (values) {
+      for (const { key, leaves } of nullifyTargets) {
+        if (
+          leaves.length > 0 &&
+          leaves.every((index) => values[index] === null)
+        ) {
+          assignOwnProperty(result, key, null);
         }
       }
     }

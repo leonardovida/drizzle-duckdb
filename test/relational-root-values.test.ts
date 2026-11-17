@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { defineRelations, sql } from 'drizzle-orm';
 import {
   integer,
   interval,
@@ -24,23 +24,19 @@ const readings = pgTable('rqb_root_readings', {
   amount: numeric('amount', { precision: 30, scale: 10 }),
 });
 
-const ownersRelations = relations(owners, ({ many }) => ({
-  readings: many(readings),
+const relations = defineRelations({ owners, readings }, (r) => ({
+  owners: {
+    readings: r.many.readings({ from: r.owners.id, to: r.readings.ownerId }),
+  },
+  readings: {
+    owner: r.one.owners({ from: r.readings.ownerId, to: r.owners.id }),
+  },
 }));
 
-const readingsRelations = relations(readings, ({ one }) => ({
-  owner: one(owners, {
-    fields: [readings.ownerId],
-    references: [owners.id],
-  }),
-}));
-
-const schema = { owners, readings, ownersRelations, readingsRelations };
-
-let db: DuckDBDatabase<typeof schema>;
+let db: DuckDBDatabase<typeof relations>;
 
 beforeAll(async () => {
-  db = await drizzle(':memory:', { pool: false, schema });
+  db = await drizzle(':memory:', { pool: false, relations });
   await db.execute(sql`set TimeZone = 'America/New_York'`);
   await db.execute(sql`create table rqb_root_owners (id integer primary key)`);
   await db.execute(sql`
@@ -96,7 +92,7 @@ describe('relational query root rows', () => {
     const rows = await db.query.readings.findMany({
       columns: { id: true, amount: true },
       extras: {
-        doubled: sql<number>`${readings.amount} * 2`.as('doubled'),
+        doubled: (table) => sql<number>`${table.amount} * 2`,
       },
     });
     expect(rows).toEqual([
@@ -112,7 +108,7 @@ describe('relational query root rows', () => {
     const prepared = db.query.readings
       .findFirst({
         columns: { at: true, span: true },
-        where: (fields, { eq }) => eq(fields.id, sql.placeholder('id')),
+        where: { id: sql.placeholder('id') },
       })
       .prepare('rqb_root_prepared');
 
@@ -124,6 +120,13 @@ describe('relational query root rows', () => {
 });
 
 describe('relational query nested rows', () => {
+  test('decode like a flat select', async () => {
+    const rows = await db.query.owners.findMany({
+      with: { readings: true },
+    });
+    expect(rows).toEqual([{ id: 1, readings: [expected] }]);
+  });
+
   test('keep numeric() digits', async () => {
     const rows = await db.query.owners.findMany({
       with: { readings: { columns: { amount: true } } },

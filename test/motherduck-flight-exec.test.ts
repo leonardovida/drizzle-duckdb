@@ -5,8 +5,6 @@ import { executeOnClient } from '../src/client.ts';
 import { DuckDBDialect } from '../src/dialect.ts';
 import {
   mdCreateFlight,
-  mdFlightLogs,
-  mdJobRunLogs,
   mdRunFlight,
   mdUpdateFlight,
 } from '../src/motherduck.ts';
@@ -24,8 +22,6 @@ const standInMacros = [
     select flight_secret_names as flight_secret_names, typeof(flight_secret_names) as names_type, config as config, typeof(config) as config_type`,
   `create macro md_update_flight(flight_id := NULL, config := NULL, flight_secret_names := NULL) as table
     select flight_secret_names as flight_secret_names, typeof(flight_secret_names) as names_type, config as config, typeof(config) as config_type`,
-  `create macro md_get_flight_logs(flight_id := NULL, run_number := NULL, "ORDER" := NULL) as table
-    select * from (values (2, 'second'), (1, 'first'), (3, 'third')) as t(line_number, line)`,
 ];
 
 function toStandInSql(query: SQL): { sql: string; params: unknown[] } {
@@ -112,17 +108,5 @@ describe('MotherDuck Flight arguments run in DuckDB', () => {
         config_type: 'MAP(VARCHAR, VARCHAR)',
       },
     ]);
-  });
-
-  test('the legacy logs blob joins lines in line_number order', async () => {
-    await expect(
-      run(sql`from ${mdFlightLogs('flight-id', 1)}`)
-    ).resolves.toEqual([{ logs: 'first\nsecond\nthird' }]);
-    await expect(
-      run(sql`from ${mdJobRunLogs('flight-id', 1, { order: 'desc' })}`)
-    ).resolves.toEqual([{ logs: 'third\nsecond\nfirst' }]);
-    await expect(
-      run(sql`from ${mdFlightLogs('flight-id', 1, { order: sql`'DESC'` })}`)
-    ).resolves.toEqual([{ logs: 'third\nsecond\nfirst' }]);
   });
 });

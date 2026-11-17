@@ -4,7 +4,7 @@ import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { PgViewBase } from 'drizzle-orm/pg-core/view-base';
 import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders';
 import { SQL, isSQLWrapper } from 'drizzle-orm/sql/sql';
-import { Column, getTableName } from 'drizzle-orm';
+import { Column, getColumnTable, getTableName } from 'drizzle-orm';
 import type { DuckDBDatabase } from './driver.ts';
 
 export const countN = (expr: SQLWrapper = sql`*`) =>
@@ -239,7 +239,7 @@ function keyAlias(key: SQLWrapper, fallback: string): string {
     return key.fieldAlias ?? fallback;
   }
   if (is(key, Column)) {
-    return `${getTableName(key.table)}.${key.name}`;
+    return `${getTableName(getColumnTable(key))}.${key.name}`;
   }
   return fallback;
 }

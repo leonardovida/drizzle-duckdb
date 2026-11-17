@@ -39,12 +39,12 @@ try {
     stdio: 'inherit',
     timeout: 90_000,
   });
-  const consumer = `import { drizzle, getPreparedStatementCacheStats } from '@duckdbfan/drizzle-duckdb';
+  const consumer = `import { drizzle } from '@duckdbfan/drizzle-duckdb';
 import { duckDbList, duckDbTimestamp } from '@duckdbfan/drizzle-duckdb/helpers';
 import { sql } from 'drizzle-orm';
 import { integer, pgTable } from 'drizzle-orm/pg-core';
 const table = pgTable('consumer_items', { id: integer('id'), values: duckDbList<number>('items', 'INTEGER'), createdAt: duckDbTimestamp('created_at') });
-const db = await drizzle(':memory:', { pool: false, decimalMode: 'string', prepareCache: true });
+const db = await drizzle(':memory:', { pool: false, decimalMode: 'string' });
 try {
   const rows = await db.execute(sql\`select 42::integer as answer\`);
   if (rows[0]?.answer !== 42) throw new Error('Packed consumer returned incorrect result');

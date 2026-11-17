@@ -2,27 +2,23 @@ import {
   PgSelectBase,
   PgSelectBuilder,
   QueryBuilder,
-  type CreatePgSelectFromBuilderMode,
   type SelectedFields,
-  type TableLikeHasEmptySelection,
 } from 'drizzle-orm/pg-core/query-builders';
-import { PgColumn, PgTable, type PgSession } from 'drizzle-orm/pg-core';
+import type { PgSelectHKTBase } from 'drizzle-orm/pg-core/query-builders/select.types';
+import { PgAsyncSelectBase } from 'drizzle-orm/pg-core/async/select';
+import type { PgAsyncSelectHKT } from 'drizzle-orm/pg-core/async/select';
+import type { PgSession } from 'drizzle-orm/pg-core/session';
+import { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { Subquery, WithSubquery, type SQLWrapper } from 'drizzle-orm';
-import { entityKind } from 'drizzle-orm/entity';
+import { entityKind, is } from 'drizzle-orm/entity';
 import { SelectionProxyHandler } from 'drizzle-orm/selection-proxy';
-import { PgViewBase } from 'drizzle-orm/pg-core/view-base';
-import type {
-  GetSelectTableName,
-  GetSelectTableSelection,
-} from 'drizzle-orm/query-builders/select.types';
-import { SQL } from 'drizzle-orm/sql/sql';
+import { SQL, type Query } from 'drizzle-orm/sql/sql';
+import { aliasFields, exposeSubqueryFields } from './sql/selection.ts';
 import {
-  aliasFields,
-  exposeSubqueryFields,
-  getSelectSourceFields,
-} from './sql/selection.ts';
+  resolveNullableObjectPaths,
+  type SelectionFieldEntry,
+} from './sql/result-mapper.ts';
 import type { DuckDBDialect } from './dialect.ts';
-import type { DrizzleTypeError } from 'drizzle-orm/utils';
 
 type DistinctConfig =
   | boolean
@@ -30,42 +26,55 @@ type DistinctConfig =
       on: (PgColumn | SQLWrapper)[];
     };
 
-type SubqueryConstructor = new (
-  sql: SQL,
-  fields: Record<string, unknown>,
-  alias: string,
-  isWith: boolean,
-  usedTables?: string[]
-) => Subquery;
+type SelectBaseConfig = {
+  table: unknown;
+  fields: Record<string, unknown>;
+  isPartialSelect: boolean;
+  session: PgSession | undefined;
+  dialect: DuckDBDialect;
+  withList?: Subquery[];
+  distinct?: DistinctConfig;
+};
 
 type SelectInternals = {
   config: { fields: Record<string, unknown> };
   tableName: string | undefined;
   as(alias: string): Subquery;
   getSelectedFields(): Record<string, unknown>;
+  getSQL(): SQL;
 };
+
+/**
+ * DuckDB resolves duplicate output names in subqueries and CTEs to the first
+ * matching column, so selected fields are aliased by their keys. A table
+ * selected whole, which can be joined, is aliased by table and column name.
+ */
+function aliasSelectFields(config: SelectBaseConfig): SelectBaseConfig {
+  if (config.isPartialSelect) {
+    return { ...config, fields: aliasFields(config.fields as SelectedFields) };
+  }
+  if (is(config.table, PgTable)) {
+    return {
+      ...config,
+      fields: aliasFields(config.fields as SelectedFields, true),
+    };
+  }
+  return config;
+}
 
 /**
  * Keep the fields of `select` qualified by the subquery alias when it becomes
  * a subquery (`.as()`), a CTE (`$with`) or a view. See exposeSubqueryFields().
  */
-function qualifySubqueryFields<T>(select: T): T {
-  const internals = select as unknown as SelectInternals;
-  const baseAs = internals.as.bind(internals);
+function qualifySubqueryFields(select: object): void {
+  const internals = select as SelectInternals;
 
-  internals.as = (alias) => {
-    // Older drizzle-orm versions, such as 0.40, have no usedTables.
-    const { sql, usedTables } = baseAs(alias)._ as {
-      sql: SQL;
-      usedTables?: string[];
-    };
-    return new Proxy(
-      new (Subquery as unknown as SubqueryConstructor)(
-        sql,
+  internals.as = (alias) =>
+    new Proxy(
+      new Subquery(
+        internals.getSQL(),
         exposeSubqueryFields(internals.config.fields),
-        alias,
-        false,
-        usedTables
+        alias
       ),
       new SelectionProxyHandler({
         alias,
@@ -73,7 +82,6 @@ function qualifySubqueryFields<T>(select: T): T {
         sqlBehavior: 'error',
       })
     );
-  };
 
   internals.getSelectedFields = () =>
     new Proxy(
@@ -84,99 +92,122 @@ function qualifySubqueryFields<T>(select: T): T {
         sqlBehavior: 'error',
       })
     );
-
-  return select;
 }
 
-export class DuckDBSelectBuilder<
-  TSelection extends SelectedFields | undefined,
-  TBuilderMode extends 'db' | 'qb' = 'db',
-> extends PgSelectBuilder<TSelection, TBuilderMode> {
-  private _fields: TSelection;
-  private _session: PgSession | undefined;
-  private _dialect: DuckDBDialect;
-  private _withList: Subquery[] = [];
-  private _distinct: DistinctConfig | undefined;
-
-  constructor(config: {
-    fields: TSelection;
-    session: PgSession | undefined;
-    dialect: DuckDBDialect;
-    withList?: Subquery[];
-    distinct?: DistinctConfig;
-  }) {
-    super(config);
-    this._fields = config.fields;
-    this._session = config.session;
-    this._dialect = config.dialect;
-    if (config.withList) {
-      this._withList = config.withList;
-    }
-    this._distinct = config.distinct;
-  }
-
-  from<TFrom extends PgTable | Subquery | PgViewBase | SQL>(
-    source: TableLikeHasEmptySelection<TFrom> extends true
-      ? DrizzleTypeError<"Cannot reference a data-modifying statement subquery if it doesn't contain a `returning` clause">
-      : TFrom
-  ): CreatePgSelectFromBuilderMode<
-    TBuilderMode,
-    GetSelectTableName<TFrom>,
-    TSelection extends undefined ? GetSelectTableSelection<TFrom> : TSelection,
-    TSelection extends undefined ? 'single' : 'partial'
-  > {
-    const isPartialSelect = !!this._fields;
-    const src = source as TFrom;
-
-    let fields: SelectedFields;
-    if (this._fields) {
-      fields = this._fields;
-    } else {
-      fields = getSelectSourceFields(src, isPartialSelect);
-    }
-
-    return qualifySubqueryFields(
-      new PgSelectBase({
-        table: src,
-        fields,
-        isPartialSelect,
-        session: this._session,
-        dialect: this._dialect,
-        withList: this._withList,
-        distinct: this._distinct,
-      })
-    ) as unknown as CreatePgSelectFromBuilderMode<
-      TBuilderMode,
-      GetSelectTableName<TFrom>,
-      TSelection extends undefined
-        ? GetSelectTableSelection<TFrom>
-        : TSelection,
-      TSelection extends undefined ? 'single' : 'partial'
-    >;
-  }
-}
+type SelectPrepareInternals = {
+  session: PgSession & {
+    prepareQuery(
+      query: Query,
+      mode: 'arrays',
+      name: string | boolean,
+      mapper: unknown,
+      queryMetadata: unknown,
+      cacheConfig: unknown
+    ): unknown;
+  };
+  dialect: DuckDBDialect;
+  cacheConfig: unknown;
+  joinsNotNullableMap: Record<string, boolean> | undefined;
+  _resolveSelection(): SelectionFieldEntry[];
+  getSQL(withCastCodecs?: boolean): SQL;
+  getUsedTables(sql: SQL): string[];
+};
 
 /**
- * DuckDB resolves duplicate output names in subqueries and CTEs to the first
- * matching column, so every select entry point aliases fields by their keys.
+ * Select query of a database or transaction. It differs from drizzle-orm's
+ * in its field aliases, and in how it finds the joined objects that become
+ * null, which must see through those aliases.
  */
-export function createDuckDBSelectBuilder<
-  TBuilderMode extends 'db' | 'qb' = 'db',
->(config: {
-  fields: SelectedFields | undefined;
+export class DuckDBAsyncSelectBase extends (PgAsyncSelectBase as unknown as new (
+  config: SelectBaseConfig
+) => object) {
+  static readonly [entityKind]: string = 'DuckDBAsyncSelectQueryBuilder';
+  private duckMapper: unknown;
+
+  constructor(config: SelectBaseConfig) {
+    super(aliasSelectFields(config));
+    qualifySubqueryFields(this);
+  }
+
+  /** @internal */
+  _prepare(name?: string | boolean, generateName = false): unknown {
+    const internals = this as unknown as SelectPrepareInternals;
+    const fields = internals._resolveSelection();
+    const sequel = internals.getSQL(true);
+    const query = internals.dialect.sqlToQuery(sequel);
+    this.duckMapper ??= internals.dialect.mapperGenerators.rows(
+      fields as Parameters<DuckDBDialect['mapperGenerators']['rows']>[0],
+      resolveNullableObjectPaths(fields, internals.joinsNotNullableMap)
+    );
+    return internals.session.prepareQuery(
+      query,
+      'arrays',
+      name ?? generateName,
+      this.duckMapper,
+      {
+        type: 'select',
+        tables: () => internals.getUsedTables(sequel),
+      },
+      internals.cacheConfig
+    );
+  }
+}
+
+/** Select query of a standalone query builder, which cannot run. */
+export class DuckDBSelectBase extends (PgSelectBase as unknown as new (
+  config: SelectBaseConfig
+) => object) {
+  static readonly [entityKind]: string = 'DuckDBSelectQueryBuilder';
+
+  constructor(config: SelectBaseConfig) {
+    super(aliasSelectFields(config));
+    qualifySubqueryFields(this);
+  }
+}
+
+type SelectBuilderConfig<TSelection> = {
+  fields: TSelection;
   session: PgSession | undefined;
   dialect: DuckDBDialect;
   withList?: Subquery[];
   distinct?: DistinctConfig;
-}): DuckDBSelectBuilder<SelectedFields | undefined, TBuilderMode> {
-  return new DuckDBSelectBuilder<SelectedFields | undefined, TBuilderMode>({
+};
+
+/**
+ * drizzle-orm's select builder, building the driver's select queries. Every
+ * select entry point uses it, so field aliases apply to all of them.
+ */
+export class DuckDBSelectBuilder<
+  TSelection extends SelectedFields | undefined,
+  THKT extends PgSelectHKTBase = PgAsyncSelectHKT,
+> extends PgSelectBuilder<TSelection, THKT> {
+  static override readonly [entityKind]: string = 'DuckDBSelectBuilder';
+
+  constructor(config: SelectBuilderConfig<TSelection>) {
+    super(
+      config,
+      (config.session
+        ? DuckDBAsyncSelectBase
+        : DuckDBSelectBase) as unknown as ConstructorParameters<
+        typeof PgSelectBuilder
+      >[1]
+    );
+  }
+}
+
+export function createDuckDBSelectBuilder<
+  THKT extends PgSelectHKTBase = PgAsyncSelectHKT,
+>(
+  config: SelectBuilderConfig<SelectedFields | undefined>
+): DuckDBSelectBuilder<SelectedFields | undefined, THKT> {
+  return new DuckDBSelectBuilder<SelectedFields | undefined, THKT>({
     ...config,
-    fields: config.fields ? aliasFields(config.fields) : undefined,
+    fields: config.fields ?? undefined,
   });
 }
 
 export function createDuckDBSelectMethods<
-  TBuilderMode extends 'db' | 'qb' = 'db',
+  THKT extends PgSelectHKTBase = PgAsyncSelectHKT,
 >(
   session: PgSession | undefined,
   dialect: DuckDBDialect,
@@ -184,14 +215,14 @@ export function createDuckDBSelectMethods<
 ) {
   return {
     select: (fields?: SelectedFields) =>
-      createDuckDBSelectBuilder<TBuilderMode>({
+      createDuckDBSelectBuilder<THKT>({
         fields,
         session,
         dialect,
         withList,
       }),
     selectDistinct: (fields?: SelectedFields) =>
-      createDuckDBSelectBuilder<TBuilderMode>({
+      createDuckDBSelectBuilder<THKT>({
         fields,
         session,
         dialect,
@@ -202,7 +233,7 @@ export function createDuckDBSelectMethods<
       on: (PgColumn | SQLWrapper)[],
       fields?: SelectedFields
     ) =>
-      createDuckDBSelectBuilder<TBuilderMode>({
+      createDuckDBSelectBuilder<THKT>({
         fields,
         session,
         dialect,
@@ -221,52 +252,54 @@ export class DuckDBQueryBuilder extends QueryBuilder {
   }
 
   override with(...queries: WithSubquery[]): ReturnType<QueryBuilder['with']> {
-    return createDuckDBSelectMethods<'qb'>(
+    return createDuckDBSelectMethods(
       undefined,
       this.duckDialect,
       queries
     ) as unknown as ReturnType<QueryBuilder['with']>;
   }
 
-  override select(): PgSelectBuilder<undefined, 'qb'>;
+  override select(): ReturnType<QueryBuilder['select']>;
   override select<TSelection extends SelectedFields>(
     fields: TSelection
-  ): PgSelectBuilder<TSelection, 'qb'>;
-  override select(
-    fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined, 'qb'> {
-    return createDuckDBSelectMethods<'qb'>(undefined, this.duckDialect).select(
+  ): ReturnType<QueryBuilder['select']>;
+  override select(fields?: SelectedFields): ReturnType<QueryBuilder['select']> {
+    return createDuckDBSelectMethods(undefined, this.duckDialect).select(
       fields
-    );
+    ) as unknown as ReturnType<QueryBuilder['select']>;
   }
 
-  override selectDistinct(): PgSelectBuilder<undefined>;
+  override selectDistinct(): ReturnType<QueryBuilder['selectDistinct']>;
   override selectDistinct<TSelection extends SelectedFields>(
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): ReturnType<QueryBuilder['selectDistinct']>;
   override selectDistinct(
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): ReturnType<QueryBuilder['selectDistinct']> {
     return createDuckDBSelectMethods(
       undefined,
       this.duckDialect
-    ).selectDistinct(fields);
+    ).selectDistinct(fields) as unknown as ReturnType<
+      QueryBuilder['selectDistinct']
+    >;
   }
 
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[]
-  ): PgSelectBuilder<undefined>;
+  ): ReturnType<QueryBuilder['selectDistinctOn']>;
   override selectDistinctOn<TSelection extends SelectedFields>(
     on: (PgColumn | SQLWrapper)[],
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): ReturnType<QueryBuilder['selectDistinctOn']>;
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[],
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): ReturnType<QueryBuilder['selectDistinctOn']> {
     return createDuckDBSelectMethods(
       undefined,
       this.duckDialect
-    ).selectDistinctOn(on, fields);
+    ).selectDistinctOn(on, fields) as unknown as ReturnType<
+      QueryBuilder['selectDistinctOn']
+    >;
   }
 }

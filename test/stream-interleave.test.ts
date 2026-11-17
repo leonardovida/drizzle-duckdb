@@ -21,7 +21,7 @@ describe('queries while executeBatches is open', () => {
     let db: DuckDBDatabase;
 
     beforeAll(async () => {
-      db = drizzle(await instance.connect(), { prepareCache: false });
+      db = drizzle(await instance.connect());
     });
 
     afterAll(async () => {
@@ -46,28 +46,28 @@ describe('queries while executeBatches is open', () => {
       expect(await db.execute(sql`select 1 as one`)).toEqual([{ one: 1 }]);
     });
 
-    test('executeArrow, a second stream and cached statements also throw', async () => {
-      const cached = drizzle(await instance.connect(), { prepareCache: true });
+    test('executeArrow, a second stream and parameterized queries also throw', async () => {
+      const other = drizzle(await instance.connect());
       try {
-        const stream = cached.executeBatchesRaw(source, { rowsPerChunk: 10 });
+        const stream = other.executeBatchesRaw(source, { rowsPerChunk: 10 });
         await stream.next();
 
-        await expect(cached.executeArrow(sql`select 1`)).rejects.toThrow(
+        await expect(other.executeArrow(sql`select 1`)).rejects.toThrow(
           STREAMING_ERROR
         );
-        await expect(cached.execute(sql`select ${1} as one`)).rejects.toThrow(
+        await expect(other.execute(sql`select ${1} as one`)).rejects.toThrow(
           STREAMING_ERROR
         );
         await expect(
-          cached.executeBatches(sql`select 1`).next()
+          other.executeBatches(sql`select 1`).next()
         ).rejects.toThrow(STREAMING_ERROR);
 
         await stream.return(undefined);
-        expect(await cached.execute(sql`select ${1} as one`)).toEqual([
+        expect(await other.execute(sql`select ${1} as one`)).toEqual([
           { one: 1 },
         ]);
       } finally {
-        await cached.close();
+        await other.close();
       }
     });
 

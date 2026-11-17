@@ -38,7 +38,6 @@ export const posts = pgTable('posts', {
 // db.ts
 import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
 
 // In-memory database
 const instance = await DuckDBInstance.create(':memory:');
@@ -47,7 +46,7 @@ const instance = await DuckDBInstance.create(':memory:');
 // const instance = await DuckDBInstance.create('./my-database.duckdb');
 
 const connection = await instance.connect();
-export const db = drizzle(connection, { schema });
+export const db = drizzle(connection);
 ```
 
 ## 3. Create Tables

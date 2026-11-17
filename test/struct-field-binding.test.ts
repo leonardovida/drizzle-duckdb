@@ -12,16 +12,13 @@ function ownEntries<T>(entries: [string, T][]): Record<string, T> {
   return Object.fromEntries(entries);
 }
 
-describe.each([
-  { name: 'run', prepareCache: undefined },
-  { name: 'prepared statement cache', prepareCache: true as const },
-])('STRUCT field binding ($name)', ({ prepareCache }) => {
+describe('STRUCT field binding', () => {
   let instance: DuckDBInstance;
   let db: DuckDBDatabase;
 
   beforeAll(async () => {
     instance = await DuckDBInstance.create(':memory:');
-    db = drizzle(await instance.connect(), { prepareCache });
+    db = drizzle(await instance.connect());
   });
 
   afterAll(async () => {

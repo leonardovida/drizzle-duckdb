@@ -180,8 +180,6 @@ export interface IntrospectResult {
   files: {
     schemaTs: string;
     metaJson: IntrospectedTable[];
-    /** @deprecated Never populated. Will be removed in the next major version. */
-    relationsTs?: string;
   };
 }
 
@@ -704,7 +702,7 @@ function emitSchema(
   for (const schema of uniqueSchemas(sorted)) {
     const schemaVar = schemaIdentifiers.get(schema)!;
     lines.push(
-      `export const ${schemaVar} = ${schemaFactory(schema).call}(${JSON.stringify(schema)});`,
+      `export const ${schemaVar} = ${schemaFactory(schema).call}(${JSON.stringify(schema)}${schemaFactory(schema).extraArgs});`,
       ''
     );
 
@@ -738,12 +736,17 @@ function emitSchema(
  * pgSchema() throws for "public" because Postgres tables there are unqualified.
  * DuckDB resolves unqualified names against `main`, so a DuckDB schema named
  * public (for example in an attached Postgres database) must stay qualified.
- * The PgSchema constructor skips that check.
+ * The PgSchema constructor skips that check. In drizzle-orm 1.0 it also takes
+ * the schema's casing, which introspected names do not need.
  */
-function schemaFactory(schema: string): { importName: string; call: string } {
+function schemaFactory(schema: string): {
+  importName: string;
+  call: string;
+  extraArgs: string;
+} {
   return schema === 'public'
-    ? { importName: 'PgSchema', call: 'new PgSchema' }
-    : { importName: 'pgSchema', call: 'pgSchema' };
+    ? { importName: 'PgSchema', call: 'new PgSchema', extraArgs: ', undefined' }
+    : { importName: 'pgSchema', call: 'pgSchema', extraArgs: '' };
 }
 
 function emitOtherDatabaseHeader(

@@ -268,7 +268,7 @@ See the [Next.js guide]({{ '/integrations/nextjs' | relative_url }}) for full se
 Yes. Bun loads `@duckdb/node-api`, and suits scripts and local tooling. For production services, Node.js 22, 24 or 26 is the recommended runtime:
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 See the [Bun guide]({{ '/integrations/bun' | relative_url }}) for details.

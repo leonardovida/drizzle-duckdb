@@ -1,8 +1,7 @@
 import {
   Column,
   SQL,
-  Subquery,
-  ViewBaseConfig,
+  getColumnTable,
   getTableName,
   is,
   sql,
@@ -14,20 +13,7 @@ import {
   pgTable,
   type SelectedFields,
 } from 'drizzle-orm/pg-core';
-import { PgViewBase } from 'drizzle-orm/pg-core/view-base';
-import type { ColumnsSelection } from 'drizzle-orm/sql/sql';
-import { getTableColumns } from 'drizzle-orm/utils';
 import { resolveFieldDecoder } from './result-mapper.ts';
-
-interface PgViewBaseInternal<
-  TName extends string = string,
-  TExisting extends boolean = boolean,
-  TSelectedFields extends ColumnsSelection = ColumnsSelection,
-> extends PgViewBase<TName, TExisting, TSelectedFields> {
-  [ViewBaseConfig]?: {
-    selectedFields: SelectedFields;
-  };
-}
 
 function mapEntries(
   obj: Record<string, unknown>,
@@ -47,7 +33,7 @@ function mapEntries(
             key,
             sql`${value}`
               .mapWith(value)
-              .as(`${getTableName(value.table)}.${value.name}`),
+              .as(`${getTableName(getColumnTable(value))}.${value.name}`),
           ];
         }
 
@@ -56,7 +42,7 @@ function mapEntries(
             .getSQL()
             .queryChunks.find((chunk) => is(chunk, Column));
 
-          const tableName = col?.table && getTableName(col?.table);
+          const tableName = col && getTableName(getColumnTable(col));
 
           return [key, value.as(tableName ? `${tableName}.${key}` : key)];
         }
@@ -155,30 +141,4 @@ export function exposeSubqueryFields<T extends Record<string, unknown>>(
       return [key, value];
     })
   ) as T;
-}
-
-export function getSelectSourceFields(
-  source: PgTable | Subquery | PgViewBaseInternal | SQL,
-  isPartialSelect: boolean
-): SelectedFields {
-  if (is(source, Subquery)) {
-    return Object.fromEntries(
-      Object.keys(source._.selectedFields).map((key) => [
-        key,
-        source[
-          key as unknown as keyof typeof source
-        ] as unknown as SelectedFields[string],
-      ])
-    );
-  }
-
-  if (is(source, PgViewBase)) {
-    return source[ViewBaseConfig]?.selectedFields as SelectedFields;
-  }
-
-  if (is(source, SQL)) {
-    return {};
-  }
-
-  return aliasFields(getTableColumns<PgTable>(source), !isPartialSelect);
 }

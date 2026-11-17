@@ -17,4 +17,5 @@ Technical reference and troubleshooting guides.
 - [Limitations]({{ '/reference/limitations' | relative_url }}): known differences from Postgres
 - [FAQ]({{ '/reference/faq' | relative_url }}): frequently asked questions
 - [Troubleshooting]({{ '/reference/troubleshooting' | relative_url }}): common issues and solutions
+- [Upgrading to v3]({{ '/reference/upgrading-to-v3' | relative_url }}): removed APIs and their replacements
 - [Architecture]({{ '/architecture' | relative_url }}): map of the source tree

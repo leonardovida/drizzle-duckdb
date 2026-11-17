@@ -12,7 +12,7 @@ Drizzle DuckDB runs on Bun as well as Node.js. Bun runs TypeScript directly, whi
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 ## Basic Usage
@@ -21,12 +21,11 @@ bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 // db.ts
 import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
 
 const instance = await DuckDBInstance.create('./app.duckdb');
 const connection = await instance.connect();
 
-export const db = drizzle(connection, { schema });
+export const db = drizzle(connection);
 ```
 
 Run with:
@@ -77,17 +76,17 @@ bun run scripts/introspect.ts
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.6-r.2",
-    "@duckdbfan/drizzle-duckdb": "^1.7.0",
-    "drizzle-orm": "^0.45.4"
+    "@duckdbfan/drizzle-duckdb": "^3.0.0",
+    "drizzle-orm": "1.0.0-rc.5"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "1.0.0-rc.5"
   }
 }
 ```
 
-`bun add` writes the current versions for you. Keep `drizzle-orm` at 0.40.1 or newer and below 0.46.0, and `@duckdb/node-api` at 1.4.4 or newer and below 1.6.0. See [Installation]({{ '/getting-started/installation' | relative_url }}#peer-dependencies).
+`bun add` writes the current versions for you. Keep `drizzle-orm` at 1.0.0-rc.5 or a later release candidate, or at a 1.x release, and `@duckdb/node-api` at 1.4.4 or newer and below 1.6.0. See [Installation]({{ '/getting-started/installation' | relative_url }}#peer-dependencies).
 
 ### tsconfig.json
 

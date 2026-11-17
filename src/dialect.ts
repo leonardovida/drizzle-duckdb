@@ -1,38 +1,30 @@
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { MigrationConfig, MigrationMeta } from 'drizzle-orm/migrator';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { commonStringChunks, sql, StringChunk, type SQL } from 'drizzle-orm';
 import {
-  PgArray,
-  PgDate,
-  PgDateString,
-  PgDialect,
-  PgJson,
-  PgJsonb,
-  PgNumeric,
-  PgTime,
-  PgTimestamp,
-  PgTimestampString,
-  PgUUID,
-  type PgColumn,
-  type PgTable,
-} from 'drizzle-orm/pg-core';
-import {
-  Column,
-  sql,
-  SQL,
-  Subquery,
-  type DriverValueEncoder,
-  type QueryTypingsValue,
-} from 'drizzle-orm';
-import type { BuildRelationalQueryResult } from 'drizzle-orm/relations';
-import {
-  StringChunk,
-  type QueryWithTypings,
-  type SQLChunk,
-} from 'drizzle-orm/sql/sql';
+  makeDefaultRqbMapper,
+  type BuildRelationalQueryResult,
+  type RelationalQueryMapperConfig,
+} from 'drizzle-orm/relations';
+import type { Query } from 'drizzle-orm/sql/sql';
 
+import {
+  DuckDBCodecsCollection,
+  duckDbCodecs,
+  recordParamKinds,
+  type ParamKind,
+} from './codecs.ts';
 import { normalizeMigrationConfig } from './migration-config.ts';
 import { transformSQL } from './sql/ast-transformer.ts';
-import type { RelationalSelectionItem } from './sql/result-mapper.ts';
+import {
+  compileRelationalRowNormalizer,
+  compileResultMapper,
+  relationColumnName,
+  type RelationalSelectionItem,
+  type SelectionFieldEntry,
+  type ValueCodec,
+} from './sql/result-mapper.ts';
 
 const enum SavepointSupport {
   Unknown = 0,
@@ -40,42 +32,30 @@ const enum SavepointSupport {
   No = 2,
 }
 
-const PG_JSON_UNSUPPORTED_MESSAGE =
-  "Pg JSON/JSONB columns are not supported in DuckDB. Replace them with duckDbJson() to use DuckDB's native JSON type.";
-
 /**
- * Query typing for params bound to a non-array column. DuckDB sessions never
- * coerce these params from Postgres array literal strings.
- * @internal
+ * Kinds of the params of each query rendered by the dialect, keyed by the
+ * Query object, so sessions can tell column params from untyped ones.
  */
-export const DUCKDB_SCALAR_COLUMN_TYPING =
-  'duckdb:scalar' as unknown as QueryTypingsValue;
-
-/**
- * Root selections of relational queries (`db.query`), keyed first by the
- * built SQL and then by the Query that sqlToQuery() renders from it. Drizzle
- * calls both dialect methods before it prepares the query, and the session
- * reads the selection to normalize top-level values.
- */
-const relationalSelections = new WeakMap<
-  object,
-  readonly RelationalSelectionItem[]
->();
+const queryParamKinds = new WeakMap<object, ReadonlyMap<number, ParamKind>>();
 
 /** @internal */
-export function relationalSelectionOf(
+export function paramKindsOf(
   query: object
-): readonly RelationalSelectionItem[] | undefined {
-  return relationalSelections.get(query);
+): ReadonlyMap<number, ParamKind> | undefined {
+  return queryParamKinds.get(query);
 }
 
 /**
- * Query typing for params bound to a pg-core array column, so sessions can
- * bind its empty array as an empty list.
- * @internal
+ * The selected field of each result column, keyed by the row mappers the
+ * dialect generates. Sessions read exact DECIMAL text only for such queries,
+ * and turn it back into numbers for fields that are not numeric() columns.
  */
-export const DUCKDB_ARRAY_COLUMN_TYPING =
-  'duckdb:array' as unknown as QueryTypingsValue;
+const mapperFields = new WeakMap<object, readonly unknown[]>();
+
+/** @internal */
+export function mapperFieldsOf(mapper: object): readonly unknown[] | undefined {
+  return mapperFields.get(mapper);
+}
 
 const MIGRATION_CONFLICT_MAX_ATTEMPTS = 10;
 const MIGRATION_RETRY_BASE_DELAY_MS = 20;
@@ -125,6 +105,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * A local migration that is neither recorded in the journal nor newer than
+ * the last applied migration. The journal orders migrations by their
+ * timestamp, so applying it out of order is not possible and skipping it
+ * would leave the database without it.
+ */
+class MigrationOutOfOrderError extends Error {
+  constructor(migration: MigrationMeta, lastAppliedMillis: number) {
+    super(
+      `Migration ${JSON.stringify(migration.name)} is not newer than the last applied migration (created_at ${lastAppliedMillis}) and is not recorded in the migration journal. migrate() applies migrations in timestamp order, so it cannot apply this one. Rename its folder to a timestamp later than the last applied migration. If this migration was already applied and its file was edited since, restore the original file.`
+    );
+    this.name = 'MigrationOutOfOrderError';
+  }
+}
+
 // DuckDB's nextval() parses its string argument as a qualified name and drops
 // escaped "" quotes, so the journal sequence cannot be found for such names.
 function assertMigrationJournalName(option: string, name: string): void {
@@ -142,7 +137,7 @@ function assertMigrationJournalName(option: string, name: string): void {
  */
 type MigrationSession = {
   execute(query: SQL): PromiseLike<unknown>;
-  all<T>(query: SQL): PromiseLike<T[]>;
+  objects<T>(query: SQL): PromiseLike<T[]>;
   transaction<T>(
     callback: (tx: { execute(query: SQL): PromiseLike<unknown> }) => Promise<T>
   ): Promise<T>;
@@ -152,7 +147,7 @@ async function isDuckLakeCurrentCatalog(
   session: MigrationSession
 ): Promise<boolean> {
   try {
-    const [row] = await session.all<{ type: string }>(
+    const [row] = await session.objects<{ type: string }>(
       sql`select type from duckdb_databases() where database_name = current_database()`
     );
     return row?.type === 'ducklake';
@@ -161,90 +156,156 @@ async function isDuckLakeCurrentCatalog(
   }
 }
 
-// Drizzle's relational builder emits Postgres JSON functions. DuckDB names
-// them differently, so rewrite the exact template chunks it produces.
-// json_group_array is a macro and rejects ORDER BY, so aggregate with list().
-const RELATIONAL_JSON_CHUNKS = new Map([
-  ['json_build_array(', 'json_array('],
-  ['coalesce(json_agg(', 'coalesce(to_json(list('],
-  ["), '[]'::json)", ")), '[]'::json)"],
-]);
+// drizzle-orm's relational builder loads each relation in a lateral join that
+// serializes the related rows with Postgres JSON functions. DuckDB packs the
+// row into a struct and list() collects structs, so relations keep their
+// native values, such as 64-bit integers past 2^53. drizzle-orm defines these
+// chunks privately, so they are matched by their text.
+const RELATIONAL_JOIN_ONE =
+  ' left join lateral(select row_to_json("t".*) "r" from (';
+const RELATIONAL_JOIN_MANY = ` left join lateral(select coalesce(json_agg(row_to_json("t".*)), '[]') as "r" from (`;
+const RELATIONAL_JOIN_CLOSE = ') as "t") as ';
 
 // DuckDB rejects parameterized LIMIT/OFFSET in correlated subqueries, which
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
-// pg-core bigint columns that decode with BigInt(), which also reads text.
-const EXACT_BIGINT_COLUMN_TYPES = new Set(['PgBigInt64', 'PgBigSerial64']);
+/**
+ * Name of the ordinal column of an ordered many relation. The columns of the
+ * related row are renamed by position, so no user column can take this name.
+ */
+const RELATION_ORDINAL = '"ord"';
 
-function rewriteRelationalJsonChunks(
-  chunks: SQLChunk[],
-  exactDecimals = false
-): void {
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index];
-    if (is(chunk, StringChunk)) {
-      const value = chunk.value.length === 1 ? chunk.value[0] : undefined;
-      const replacement =
-        value === undefined ? undefined : RELATIONAL_JSON_CHUNKS.get(value);
-      const next = chunks[index + 1] as unknown;
-      if (replacement) {
-        if (value === 'json_build_array(' && is(next, SQL)) {
-          // JSON numbers lose DECIMAL digits. numeric() columns read exact
-          // text, as in flat selects, and decimalMode 'string' reads every
-          // DECIMAL column as text.
-          const fields = next.queryChunks.map((item) => {
-            if (!is(item, Column)) {
-              return item;
-            }
-            // JSON numbers are doubles, which round 64-bit integers past
-            // 2^53. bigint columns in 'bigint' mode read exact text instead.
-            if (EXACT_BIGINT_COLUMN_TYPES.has(item.columnType)) {
-              return sql`cast(${item} as VARCHAR)`;
-            }
-            if (!exactDecimals && !item.columnType.startsWith('PgNumeric')) {
-              return item;
-            }
-            const originalType = item.getSQLType();
-            const exactType = decimalStringType(originalType);
-            return exactType === originalType
-              ? item
-              : sql`cast(${item} as ${sql.raw(exactType)})`;
-          });
-          next.queryChunks.splice(0, next.queryChunks.length, ...fields);
-        }
-        chunks[index] = new StringChunk(replacement);
-      } else if (
-        value !== undefined &&
-        RELATIONAL_LIMIT_CHUNKS.has(value) &&
-        Number.isSafeInteger(next)
-      ) {
-        chunks[index + 1] = new StringChunk(String(next));
-      }
-    } else if (Array.isArray(chunk)) {
-      rewriteRelationalJsonChunks(chunk, exactDecimals);
-    } else if (is(chunk, SQL)) {
-      rewriteRelationalJsonChunks(chunk.queryChunks, exactDecimals);
-    } else if (is(chunk, SQL.Aliased)) {
-      rewriteRelationalJsonChunks(chunk.sql.queryChunks, exactDecimals);
-    } else if (is(chunk, Subquery)) {
-      rewriteRelationalJsonChunks(
-        (chunk._.sql as SQL).queryChunks,
-        exactDecimals
-      );
-    }
-  }
+const UNMATCHED_JOIN_MESSAGE =
+  'drizzle-duckdb could not match a relational query join to its relation.';
+
+/** The closing chunk each rewritten join needs, keyed by its opening chunk. */
+const relationJoinClosings = new WeakMap<StringChunk, string>();
+
+type CollectRelationalQueryConfig = {
+  depth?: number;
+  mode?: 'first' | 'many';
+  queryConfig?: true | { orderBy?: unknown; comment?: unknown };
+};
+
+type CollectRelationalQuery = (
+  config: CollectRelationalQueryConfig,
+  collectTo: unknown[]
+) => readonly RelationalSelectionItem[];
+
+/**
+ * The chunks of the ORDER BY of one relation, which drizzle-orm writes after
+ * the relation's nested joins and before its LIMIT, OFFSET and comment.
+ */
+function relationOrderChunks(
+  chunks: readonly unknown[],
+  start: number,
+  config: CollectRelationalQueryConfig
+): unknown[] | undefined {
+  const params = config.queryConfig === true ? undefined : config.queryConfig;
+  if (!params?.orderBy) return undefined;
+  let end = chunks.length;
+  if (params.comment) end -= 2;
+  if (chunks[end - 2] === commonStringChunks[' offset ']) end -= 2;
+  if (chunks[end - 2] === commonStringChunks[' limit ']) end -= 2;
+  const orderBy = chunks.lastIndexOf(commonStringChunks[' order by '], end - 1);
+  if (orderBy < start) return undefined;
+  return chunks.slice(orderBy + 1, end);
 }
 
-// Cast DECIMAL leaves before relational JSON serialization. Native nested
-// casts retain list/struct/map shape while preserving decimal digits as text.
-// Quoted field names and ENUM labels must remain literal catalog text.
-function decimalStringType(type: string): string {
-  return type.replace(
-    /"(?:""|[^"])*"|'(?:''|[^'])*'|\b(?:DECIMAL|NUMERIC)\b(?:\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\))?/gi,
-    (token) =>
-      token.startsWith('"') || token.startsWith("'") ? token : 'VARCHAR'
+/**
+ * Rewrite the lateral join of one nested relation, right after drizzle-orm
+ * collected its select. The related row becomes a struct of positional
+ * columns. A many relation with an orderBy also numbers its rows in that
+ * order and aggregates them in it: DuckDB decorrelates the lateral join into
+ * a grouped aggregate, and list() on several threads does not keep the order
+ * of the subquery.
+ */
+function rewriteNestedRelation(
+  chunks: unknown[],
+  start: number,
+  config: CollectRelationalQueryConfig,
+  selection: readonly RelationalSelectionItem[]
+): void {
+  const join = chunks[start - 1];
+  if (
+    !is(join, StringChunk) ||
+    (join.value !== RELATIONAL_JOIN_ONE && join.value !== RELATIONAL_JOIN_MANY)
+  ) {
+    throw new Error(UNMATCHED_JOIN_MESSAGE);
+  }
+  const isMany = join.value === RELATIONAL_JOIN_MANY;
+  const order = isMany ? relationOrderChunks(chunks, start, config) : undefined;
+
+  const columns = selection.map((_, position) =>
+    quoteIdentifier(relationColumnName(position))
   );
+  const row = `struct_pack(${columns
+    .map((column) => `${column} := "t".${column}`)
+    .join(', ')})`;
+
+  let open: string;
+  if (!isMany) {
+    open = ` left join lateral(select ${row} "r" from (`;
+  } else if (order) {
+    // The select starts with drizzle-orm's "select " chunk.
+    chunks.splice(
+      start + 1,
+      0,
+      new StringChunk('row_number() over (order by '),
+      ...order,
+      new StringChunk(`) as ${RELATION_ORDINAL}, `)
+    );
+    columns.unshift(RELATION_ORDINAL);
+    open = ` left join lateral(select coalesce(list(${row} order by "t".${RELATION_ORDINAL}), []) as "r" from (`;
+  } else {
+    open = ` left join lateral(select coalesce(list(${row}), []) as "r" from (`;
+  }
+  // Shared chunk instances must not be mutated.
+  const opening = new StringChunk(open);
+  chunks[start - 1] = opening;
+  relationJoinClosings.set(opening, `) as "t"(${columns.join(', ')})) as `);
+}
+
+/**
+ * Close each rewritten join with the positional column names of its row,
+ * and inline numeric LIMIT and OFFSET values.
+ */
+function finishRelationalChunks(chunks: unknown[]): void {
+  const closings: string[] = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!is(chunk, StringChunk)) continue;
+    const closing = relationJoinClosings.get(chunk);
+    if (closing !== undefined) {
+      closings.push(closing);
+      continue;
+    }
+    if (
+      chunk.value === RELATIONAL_JOIN_ONE ||
+      chunk.value === RELATIONAL_JOIN_MANY
+    ) {
+      throw new Error(UNMATCHED_JOIN_MESSAGE);
+    }
+    if (chunk.value === RELATIONAL_JOIN_CLOSE) {
+      const replacement = closings.pop();
+      if (replacement === undefined) throw new Error(UNMATCHED_JOIN_MESSAGE);
+      chunks[index] = new StringChunk(replacement);
+      continue;
+    }
+    const next = chunks[index + 1];
+    if (
+      RELATIONAL_LIMIT_CHUNKS.has(chunk.value) &&
+      Number.isSafeInteger(next)
+    ) {
+      chunks[index + 1] = new StringChunk(String(next));
+    }
+  }
+  if (closings.length > 0) throw new Error(UNMATCHED_JOIN_MESSAGE);
+}
+
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 export class DuckDBDialect extends PgDialect {
@@ -254,31 +315,75 @@ export class DuckDBDialect extends PgDialect {
   private savepointsSupported: SavepointSupport = SavepointSupport.Unknown;
 
   constructor(
-    private options: ConstructorParameters<typeof PgDialect>[0] & {
+    private options: {
       qualifyRawJoinColumns?: boolean;
       decimalMode?: 'number' | 'string';
     } = {}
   ) {
-    super(options);
+    super({ codecs: duckDbCodecs, useJitMappers: false });
+    const codecs = new DuckDBCodecsCollection();
+    const codecOf = (column: Parameters<typeof codecs.get>[0]) =>
+      codecs.get(column, 'normalize') as ValueCodec | undefined;
+    const internals = this as unknown as {
+      codecs: DuckDBCodecsCollection;
+      mapperGenerators: PgDialect['mapperGenerators'];
+    };
+    internals.codecs = codecs;
+    internals.mapperGenerators = {
+      // Rows arrive as arrays in selection order. The driver's mapper also
+      // turns node-api values into what each column decodes, and assigns
+      // keys such as __proto__ as own properties.
+      rows: ((fields: readonly SelectionFieldEntry[], nullableObjectPaths) => {
+        const mapRow = compileResultMapper(
+          fields,
+          nullableObjectPaths,
+          codecOf
+        );
+        const mapper = (rows: unknown[][]) => rows.map(mapRow);
+        mapperFields.set(
+          mapper,
+          fields.map(({ field }) => field)
+        );
+        return mapper;
+      }) as PgDialect['mapperGenerators']['rows'],
+      relationalRows: ((config: RelationalQueryMapperConfig) => {
+        const selection =
+          config.selection as unknown as readonly RelationalSelectionItem[];
+        const normalize = compileRelationalRowNormalizer(selection);
+        const map = makeDefaultRqbMapper(config);
+        const mapper = (rows: unknown[][]) => {
+          for (const row of rows) normalize(row);
+          return map(rows);
+        };
+        mapperFields.set(
+          mapper,
+          selection.map((item) => (item.selection ? undefined : item.field))
+        );
+        return mapper;
+      }) as PgDialect['mapperGenerators']['relationalRows'],
+    };
+
+    // drizzle-orm collects each nested relation of a relational query in a
+    // recursive call of this private method. Wrapping it on the instance lets
+    // the dialect rewrite every relation with its own config and selection.
+    const collect = (
+      PgDialect.prototype as unknown as {
+        collectRelationalQuery?: CollectRelationalQuery;
+      }
+    ).collectRelationalQuery;
+    if (typeof collect === 'function') {
+      (
+        this as unknown as { collectRelationalQuery: CollectRelationalQuery }
+      ).collectRelationalQuery = (config, collectTo) => {
+        const start = collectTo.length;
+        const selection = collect.call(this, config, collectTo);
+        if (config.depth) {
+          rewriteNestedRelation(collectTo, start, config, selection);
+        }
+        return selection;
+      };
+    }
   }
-
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  resetPgJsonFlag(): void {}
-
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  markPgJsonDetected(): void {}
-
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  assertNoPgJsonColumns(): void {}
 
   // Drizzle passes escapeName unbound, so it must not use `this`. drizzle-orm
   // before 0.45.2 did not escape embedded quotes (GHSA-gpj5-g38j-94v9).
@@ -307,7 +412,7 @@ export class DuckDBDialect extends PgDialect {
     this.savepointsSupported = SavepointSupport.No;
   }
 
-  override async migrate(
+  async migrate(
     migrations: MigrationMeta[],
     session: MigrationSession,
     config: MigrationConfig | string
@@ -385,6 +490,7 @@ export class DuckDBDialect extends PgDialect {
     };
 
     const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;
+    const appliedHashesQuery = sql`select distinct hash from ${migrationTable}`;
 
     const applyPendingMigrations = () =>
       session.transaction(async (tx) => {
@@ -395,11 +501,20 @@ export class DuckDBDialect extends PgDialect {
           created_at: string;
         }[];
         const lastDbMigration = dbMigrations[0];
+        let lastAppliedMillis =
+          lastDbMigration === undefined
+            ? undefined
+            : Number(lastDbMigration.created_at);
+        const appliedHashes = new Set(
+          ((await tx.execute(appliedHashesQuery)) as { hash: string }[]).map(
+            (row) => row.hash
+          )
+        );
 
         for (const migration of migrations) {
           if (
-            !lastDbMigration ||
-            Number(lastDbMigration.created_at) < migration.folderMillis
+            lastAppliedMillis === undefined ||
+            lastAppliedMillis < migration.folderMillis
           ) {
             for (const stmt of migration.sql) {
               await tx.execute(sql.raw(stmt));
@@ -412,6 +527,10 @@ export class DuckDBDialect extends PgDialect {
                     migration.folderMillis
                   })`
             );
+            lastAppliedMillis = migration.folderMillis;
+            appliedHashes.add(migration.hash);
+          } else if (!appliedHashes.has(migration.hash)) {
+            throw new MigrationOutOfOrderError(migration, lastAppliedMillis);
           }
         }
       });
@@ -422,7 +541,7 @@ export class DuckDBDialect extends PgDialect {
         return false;
       }
       try {
-        const [applied] = await session.all<{
+        const [applied] = await session.objects<{
           hash: string;
           created_at: string;
         }>(latestMigrationQuery);
@@ -445,6 +564,7 @@ export class DuckDBDialect extends PgDialect {
         await applyPendingMigrations();
         return;
       } catch (error) {
+        if (error instanceof MigrationOutOfOrderError) throw error;
         // Another migrator may have committed while this run failed.
         if (await isLatestMigrationApplied()) {
           return;
@@ -460,52 +580,22 @@ export class DuckDBDialect extends PgDialect {
     }
   }
 
-  // Drizzle passes prepareTyping unbound, so it must not use `this`.
-  override prepareTyping(
-    encoder: DriverValueEncoder<unknown, unknown>
-  ): QueryTypingsValue {
-    if (is(encoder, PgJsonb) || is(encoder, PgJson)) {
-      throw new Error(PG_JSON_UNSUPPORTED_MESSAGE);
-    } else if (is(encoder, PgArray)) {
-      return DUCKDB_ARRAY_COLUMN_TYPING;
-    } else if (is(encoder, PgNumeric)) {
-      return 'decimal';
-    } else if (is(encoder, PgTime)) {
-      return 'time';
-    } else if (is(encoder, PgTimestamp) || is(encoder, PgTimestampString)) {
-      return 'timestamp';
-    } else if (is(encoder, PgDate) || is(encoder, PgDateString)) {
-      return 'date';
-    } else if (is(encoder, PgUUID)) {
-      return 'uuid';
-    } else if (is(encoder, Column)) {
-      return DUCKDB_SCALAR_COLUMN_TYPING;
-    } else {
-      return 'none';
-    }
-  }
-
-  override buildRelationalQueryWithoutPK(
-    config: Parameters<PgDialect['buildRelationalQueryWithoutPK']>[0]
-  ): BuildRelationalQueryResult<PgTable, PgColumn> {
-    const result = super.buildRelationalQueryWithoutPK(config);
-    // Nested relations recurse through this method; rewrite once at the root.
-    if (!config.nestedQueryRelation && is(result.sql, SQL)) {
-      rewriteRelationalJsonChunks(
-        result.sql.queryChunks,
-        this.options.decimalMode === 'string'
-      );
-      relationalSelections.set(result.sql, result.selection);
-    }
+  override buildRelationalQuery(
+    config: Parameters<PgDialect['buildRelationalQuery']>[0]
+  ): BuildRelationalQueryResult {
+    const result = super.buildRelationalQuery(config);
+    finishRelationalChunks(result.sql.queryChunks);
     return result;
   }
 
   override sqlToQuery(
     sqlObj: SQL,
-    invokeSource?: 'indexes' | undefined
-  ): QueryWithTypings {
-    // First, let the parent generate the SQL string
-    const result = super.sqlToQuery(sqlObj, invokeSource);
+    invokeSource?: Parameters<PgDialect['sqlToQuery']>[1]
+  ): Query {
+    // Let the parent render the SQL, noting which params bind to columns.
+    const { result, kinds } = recordParamKinds(() =>
+      super.sqlToQuery(sqlObj, invokeSource)
+    );
 
     // Apply AST-based transformations for DuckDB compatibility
     const transformed = transformSQL(result.sql, {
@@ -516,8 +606,7 @@ export class DuckDBDialect extends PgDialect {
       ...result,
       sql: transformed.sql,
     };
-    const selection = relationalSelections.get(sqlObj);
-    if (selection) relationalSelections.set(query, selection);
+    if (kinds.size > 0) queryParamKinds.set(query, kinds);
     return query;
   }
 }

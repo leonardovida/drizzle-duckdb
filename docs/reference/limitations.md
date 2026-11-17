@@ -19,7 +19,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | Subqueries                           | Full    | Fields are qualified by the subquery alias                                                                                                         |
 | CTEs (WITH clauses)                  | Full    | Fields are qualified by the CTE name                                                                                                               |
 | Aggregations                         | Full    |                                                                                                                                                    |
-| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config is ignored                                   |
+| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config rejects                                      |
 | Concurrent queries                   | Partial | One query per connection. Use pooling for parallelism                                                                                              |
 | Prepared statements                  | Partial | Prepared on every run. No statement cache and no named statements                                                                                  |
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                                         |
@@ -52,9 +52,9 @@ await db.transaction(async (tx) => {
 
 DuckDB also aborts the whole transaction when any statement fails. Catching the error does not keep earlier writes. Validate before writing, or run the risky write in its own `db.transaction()`. If a failed statement was caught inside the callback, `db.transaction()` rejects with `DuckDB aborted the transaction because a statement inside it failed. No changes were committed. ...` and the statement error as `cause`. Parser and catalog errors do not abort the transaction.
 
-### Transaction Config Is Ignored (Deprecated)
+### Transaction Config Is Not Supported
 
-DuckDB has no `SET TRANSACTION` statement. The `config` argument of `db.transaction(fn, config)` (`isolationLevel`, `accessMode`, `deferrable`) is ignored with a one-time warning: `Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.` `DuckDBTransaction.setTransaction()` and `getTransactionConfigSQL()` are deprecated. See [Transactions]({{ '/core/transactions' | relative_url }}#transaction-config-deprecated).
+DuckDB has no `SET TRANSACTION` statement. When `db.transaction(fn, config)` receives a `config` argument (`isolationLevel`, `accessMode`, `deferrable`), it rejects before the transaction begins with `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).` `tx.setTransaction(config)` rejects with the same error. See [Transactions]({{ '/core/transactions' | relative_url }}#transaction-config).
 
 ## DuckDB 1.5 Core Types
 
@@ -80,7 +80,7 @@ If a result column has a type the installed `@duckdb/node-api` cannot convert, t
 
 A `numeric()` column returns the exact DECIMAL value as a string, as node-postgres does for NUMERIC. `numeric('amount', { precision: 38, scale: 10 })` keeps all 38 digits.
 
-By default, other DECIMAL results use JavaScript numbers, which lose precision beyond about 15 significant digits. Set `decimalMode: 'string'` when creating the driver to preserve DECIMAL values in raw queries, nested lists, structs and maps, streaming and columnar reads. Relational results preserve numeric columns and decimal leaves in these nested column types before JSON serialization. SQL expressions returning DECIMAL use strings too, so their TypeScript annotations should reflect that policy. Explicit `mapWith(Number)`, numeric-mode columns and Number-based aggregate helpers still convert to a number. Relational SQL extras with unknown result types and numbers embedded in JSON require explicit casts, since their serialization cannot recover precision. Third-party Arrow providers control their own output conversion.
+By default, other DECIMAL results use JavaScript numbers, which lose precision beyond about 15 significant digits. Set `decimalMode: 'string'` when creating the driver to preserve DECIMAL values in raw queries, nested lists, structs and maps, streaming and columnar reads. Relational queries build nested rows as DuckDB structs and lists, so numeric columns stay exact in nested relations and DECIMAL extras follow `decimalMode` there as well. SQL expressions returning DECIMAL use strings too, so their TypeScript annotations should reflect that policy. Explicit `mapWith(Number)`, numeric-mode columns and Number-based aggregate helpers still convert to a number. Numbers embedded in JSON require explicit casts, since JSON serialization cannot recover precision. Third-party Arrow providers control their own output conversion.
 
 For a single expression, cast to `VARCHAR` in SQL:
 
@@ -125,7 +125,7 @@ The driver checks for Postgres JSON columns and throws a descriptive error if fo
 
 Prepared statements are not cached. Each query is prepared, run once and released, and there are no named statements. Drizzle's `.prepare()` still works: it builds the SQL once and the driver prepares it on every `execute()`.
 
-The `prepareCache` option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a statement kept across data changes can return wrong results.
+DuckDB plans a prepared statement from the table statistics at prepare time, so a statement kept across data changes can return wrong results. Version 3.0 removed the `prepareCache` option.
 
 ## Result Handling
 

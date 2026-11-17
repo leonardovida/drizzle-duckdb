@@ -11,22 +11,22 @@ A short map of the source tree for contributors.
 
 ## Entry Points and Runtime Modes
 
-- `src/driver.ts`: `drizzle(...)` factory with five overloads. The connection-string and `{ connection }` forms get a shared `DuckDBInstance` for the path through `DuckDBInstance.fromCache()` and create either one connection (`pool: false`) or a pool from `createDuckDBConnectionPool()`. The client forms wrap an existing connection or pool, and wrap a raw `pg.Pool` with `createPgDuckConnectionPool()`. Passes `casing` to the dialect. Builds `DuckDBDatabase`, which adds `executeBatches`, `executeBatchesRaw`, `executeArrow`, `close()`, `$client` and `$instance`.
+- `src/driver.ts`: `drizzle(...)` factory with five overloads. The connection-string and `{ connection }` forms get a shared `DuckDBInstance` for the path through `DuckDBInstance.fromCache()` and create either one connection (`pool: false`) or a pool from `createDuckDBConnectionPool()`. The client forms wrap an existing connection or pool, and wrap a raw `pg.Pool` with `createPgDuckConnectionPool()`. Rejects the `schema` and `casing` options that drizzle-orm 1.0 removed. Builds `DuckDBDatabase` on drizzle-orm's `PgAsyncDatabase`, which adds `executeBatches`, `executeBatchesRaw`, `executeArrow`, `close()`, `$client` and `$instance`.
 - `src/pool.ts`: connection pool that opens connections with `DuckDBConnection.create(instance)` and hands them out with `acquire()` and `release()`, an acquire timeout, a cap on waiting requests, and recycling via `maxLifetimeMs` and `idleTimeoutMs`. Idle connections are reused newest first. Waiting requests are served in arrival order. Also defines the MotherDuck size presets.
 - `src/pgduck.ts`: adapter types and `createPgDuckConnectionPool()` for Postgres wire clients connected to pg_duckdb.
 
 ## Drizzle Integration Points
 
-- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Overrides `prepareTyping()` and `migrate()`, rejects `PgJson` and `PgJsonb`, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`. `migrate()` retries on write-write conflicts and uses a plain journal table when DuckLake is the current catalog.
+- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Installs the DuckDB codecs and result mappers, rewrites the lateral joins of relational queries to build nested rows with `struct_pack` and `list` from positional column names, aggregating ordered many relations by a `row_number()` ordinal, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`. `migrate()` retries on write-write conflicts and uses a plain journal table when DuckLake is the current catalog.
+- `src/codecs.ts`: DuckDB codecs for drizzle-orm 1.0. They decode column values, reject `PgJson` and `PgJsonb` parameters, record which parameters bind to array columns, and cast `numeric()` columns to text inside nested relations.
 - `src/migrator.ts`: `migrate()`, which queues calls on the same database file or client before calling the dialect.
 - `src/instance-keys.ts`: records which database path each shared DuckDB instance points at, so `migrate()` can queue per database.
-- `src/session.ts`: `DuckDBSession` extends `PgSession`. Pins one pooled connection per transaction, probes savepoint support for nested transactions, checks string parameters for Postgres array literals, keeps `numeric()` columns as exact DECIMAL strings, and wires streaming, columnar fetch and the prepared statement cache into `DuckDBPreparedQuery`.
+- `src/session.ts`: `DuckDBSession` extends `PgAsyncSession`, and `DuckDBTransaction` and `DuckDBPreparedQuery` extend `PgAsyncTransaction` and `PgAsyncPreparedQuery`. Pins one pooled connection per transaction, probes savepoint support for nested transactions, checks string parameters for Postgres array literals, keeps `numeric()` columns as exact DECIMAL strings, and wires streaming, columnar fetch into `DuckDBPreparedQuery`. Each query is prepared for one run.
 - `src/select-builder.ts`: DuckDB select builder used by `db.select()`. Aliases duplicate column names and exposes subquery, CTE and view fields qualified by their alias.
 
 ## Client and Value Conversion
 
 - `src/client.ts`: parameter preparation, value conversion to `@duckdb/node-api` values with explicit bind types, materialized execution with a per-column result converter, streaming (`executeInBatches`, `executeInBatchesRaw`) with a per-connection streaming marker, the columnar path behind `executeArrow`, column name deduplication, and connection cleanup that interrupts running queries.
-- `src/prepared-statement-cache.ts`: deprecated statement cache, no longer used for execution. Kept for its exported stats helper until the next major version.
 - `src/value-wrappers*.ts`: wrappers for list, array, struct, map, JSON, blob and timestamp values, and the list item type inference used for binding.
 
 ## DuckDB Types, Helpers, and Rewriting

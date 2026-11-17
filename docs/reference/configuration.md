@@ -16,7 +16,7 @@ The `drizzle()` function accepts a configuration object:
 ```typescript
 const db = await drizzle(':memory:', {
   logger: true,
-  schema: mySchema,
+  relations,
   rejectStringArrayLiterals: false,
   pool: { size: 6, idleTimeoutMs: 60_000 },
 });
@@ -59,20 +59,20 @@ const db = drizzle(connection, {
 Query: SELECT * FROM users WHERE id = $1 -- params: [1]
 ```
 
-### schema
+### relations
 
-Schema definition for relational queries.
+Relations for relational queries, built with `defineRelations()` from drizzle-orm 1.0.
 
-| Type                      | Default     | Description                             |
-| ------------------------- | ----------- | --------------------------------------- |
-| `Record<string, unknown>` | `undefined` | Schema object with tables and relations |
+| Type                          | Default     | Description                         |
+| ----------------------------- | ----------- | ----------------------------------- |
+| Result of `defineRelations()` | `undefined` | Tables and relations for `db.query` |
 
 **Usage**:
 
 ```typescript
 // schema.ts
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey(),
@@ -85,14 +85,16 @@ export const posts = pgTable('posts', {
   title: text('title'),
 });
 
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
+export const relations = defineRelations({ users, posts }, (r) => ({
+  users: {
+    posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+  },
 }));
 
 // db.ts
-import * as schema from './schema';
+import { relations } from './schema';
 
-const db = drizzle(connection, { schema });
+const db = drizzle(connection, { relations });
 
 // Now relational queries work
 const usersWithPosts = await db.query.users.findMany({
@@ -100,21 +102,19 @@ const usersWithPosts = await db.query.users.findMany({
 });
 ```
 
-### casing
+### Removed: schema and casing
 
-Map TypeScript keys to column names, as in other Drizzle drivers.
-
-| Type                          | Default     | Description                                 |
-| ----------------------------- | ----------- | ------------------------------------------- |
-| `'snake_case' \| 'camelCase'` | `undefined` | Derive column names from the TypeScript key |
+drizzle-orm 1.0 removed the `schema` and `casing` options, and `drizzle()` throws when it receives either one. Use `relations` for relational queries. Set casing on the table definition with `snakeCase.table()` or `camelCase.table()` from `drizzle-orm/pg-core`:
 
 ```typescript
-const users = pgTable('users', { id: integer(), userName: text() });
-const db = drizzle(connection, { casing: 'snake_case' });
+import { integer, snakeCase, text } from 'drizzle-orm/pg-core';
+
+const users = snakeCase.table('users', { id: integer(), userName: text() });
+const db = drizzle(connection);
 // db.select().from(users) reads "user_name" into userName
 ```
 
-`DrizzleConfig` also has a `cache` option. The DuckDB driver does not apply it.
+See [Upgrading to v3]({{ '/reference/upgrading-to-v3' | relative_url }}#drizzle-orm-10).
 
 ### Array SQL Handling
 
@@ -139,12 +139,6 @@ const results = await db
   .where(arrayContains(products.tags, ['sale']));
 // Generated: WHERE "products"."tags" @> $1
 ```
-
-### prepareCache
-
-Deprecated and ignored. Passing it logs a one-time warning, and it will be removed in the next major version.
-
-DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. The driver prepares every query for one run instead. See [Prepared Statements Are Not Cached]({{ '/reference/performance' | relative_url }}#prepared-statements-are-not-cached).
 
 ### dateParams
 
@@ -308,7 +302,7 @@ Options:
 - `use` boolean. Optional. Defaults to `true`.
 - `install` boolean. Optional. Defaults to `false`.
 - `load` boolean. Optional. Defaults to `false`.
-- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. The deprecated `metaParameterName` field throws, because DuckLake has no `META_PARAMETER_NAME` option.
+- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 Connection setup throws after the attach when the alias already names a different database, such as a main database file named `ducklake.duckdb` or another DuckLake catalog. Set `alias` to a different name in that case. Pooled connections are set up on first use, so with a pool these errors, and invalid `attachOptions`, come from the first query.
 

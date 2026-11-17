@@ -142,13 +142,13 @@ Parser errors and catalog errors, such as a typo in SQL or a missing table, do n
 
 If `COMMIT` itself fails, `db.transaction()` rejects with the commit error.
 
-## Transaction Config (Deprecated)
+## Transaction Config
 
 {: .warning }
 
-> **Deprecated**
+> **Not Supported**
 >
-> DuckDB has no `SET TRANSACTION` statement. The `config` argument of `db.transaction(fn, config)`, with options such as `isolationLevel`, `accessMode` and `deferrable`, is ignored. The first call that passes it prints a one-time `console.warn`: `Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.` `DuckDBTransaction.setTransaction()` and `getTransactionConfigSQL()` are deprecated as well. Remove the config argument.
+> DuckDB has no `SET TRANSACTION` statement. When `db.transaction(fn, config)` receives a `config` argument, with options such as `isolationLevel`, `accessMode` and `deferrable`, it rejects before the transaction begins: `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).` An object with no option set, such as `{}`, is accepted. `tx.setTransaction(config)` rejects with the same error, and `tx.setTransaction()` without config resolves. Remove the config argument.
 
 ## Important Limitation: No Savepoints
 

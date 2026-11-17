@@ -152,14 +152,14 @@ Or simply:
 const db = drizzle(connection, { logger: true });
 ```
 
-## With Schema
+## With Relations
 
-Pass your schema for relational queries:
+Pass the relations built with `defineRelations()` for relational queries:
 
 ```typescript
-import * as schema from './schema';
+import { relations } from './schema';
 
-const db = drizzle(connection, { schema });
+const db = drizzle(connection, { relations });
 
 // Now relational queries work
 const usersWithPosts = await db.query.users.findMany({
@@ -175,19 +175,19 @@ const usersWithPosts = await db.query.users.findMany({
 // db.ts
 import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api';
 import { drizzle, DuckDBDatabase } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
+import { relations } from './schema';
 
 let instance: DuckDBInstance | null = null;
 let connection: DuckDBConnection | null = null;
 
-export async function getDb(): Promise<DuckDBDatabase<typeof schema>> {
+export async function getDb(): Promise<DuckDBDatabase<typeof relations>> {
   if (!instance) {
     instance = await DuckDBInstance.create('./app.duckdb');
   }
   if (!connection) {
     connection = await instance.connect();
   }
-  return drizzle(connection, { schema });
+  return drizzle(connection, { relations });
 }
 ```
 
@@ -308,17 +308,14 @@ const db = await drizzle(':memory:', {
   // Enable query logging (or pass a custom logger such as new DefaultLogger())
   logger: true,
 
-  // Schema for relational queries
-  schema: mySchema,
+  // Relations from defineRelations() for relational queries
+  relations,
 
   // Pool configuration (size/preset plus timeout and recycling options)
   pool: { size: 8, idleTimeoutMs: 60_000 },
 
   // Throw on Postgres-style array literals (default: false)
   rejectStringArrayLiterals: false,
-
-  // Map camelCase keys to snake_case column names
-  casing: 'snake_case',
 });
 ```
 

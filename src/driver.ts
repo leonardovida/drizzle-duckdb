@@ -2,26 +2,18 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { entityKind } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { DefaultLogger } from 'drizzle-orm/logger';
-import { PgDatabase } from 'drizzle-orm/pg-core/db';
-import type {
-  PgSelectBuilder,
-  SelectedFields,
-} from 'drizzle-orm/pg-core/query-builders';
+import { PgAsyncDatabase } from 'drizzle-orm/pg-core/async/db';
+import type { PgAsyncSelectBuilder } from 'drizzle-orm/pg-core/async/select';
+import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders/select.types';
 import type {
   PgColumn,
-  PgSession,
   PgTable,
   PgTransactionConfig,
 } from 'drizzle-orm/pg-core';
-import {
-  createTableRelationsHelpers,
-  extractTablesRelationalConfig,
-  type ExtractTablesWithRelations,
-  type RelationalSchemaConfig,
-  type TablesRelationalConfig,
-} from 'drizzle-orm/relations';
-import { type DrizzleConfig } from 'drizzle-orm/utils';
+import type { AnyRelations, EmptyRelations } from 'drizzle-orm/relations';
+import type { DrizzleConfig } from 'drizzle-orm/utils';
 import type { SQL, SQLWrapper } from 'drizzle-orm/sql/sql';
+import type { InferInsertModel } from 'drizzle-orm/table';
 import type { WithSubquery } from 'drizzle-orm/subquery';
 import type {
   DuckDBClientLike,
@@ -54,11 +46,6 @@ import {
   type PoolPreset,
 } from './pool.ts';
 import {
-  resolvePrepareCacheOption,
-  type PreparedStatementCacheConfig,
-  type PrepareCacheOption,
-} from './options.ts';
-import {
   configureDuckLake,
   createDuckLakeConnectionSetup,
   resolveDuckLakePoolSize,
@@ -72,7 +59,6 @@ export interface PgDriverOptions {
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
-  prepareCache?: PreparedStatementCacheConfig;
 }
 
 export class DuckDBDriver {
@@ -84,14 +70,13 @@ export class DuckDBDriver {
     private options: PgDriverOptions = {}
   ) {}
 
-  createSession(
-    schema: RelationalSchemaConfig<TablesRelationalConfig> | undefined
-  ): DuckDBSession<Record<string, unknown>, TablesRelationalConfig> {
-    return new DuckDBSession(this.client, this.dialect, schema, {
+  createSession<TRelations extends AnyRelations = EmptyRelations>(
+    relations: TRelations
+  ): DuckDBSession<TRelations> {
+    return new DuckDBSession(this.client, this.dialect, relations, {
       logger: this.options.logger,
       rejectStringArrayLiterals: this.options.rejectStringArrayLiterals,
       arrayLiteralWarning: this.options.arrayLiteralWarning,
-      prepareCache: this.options.prepareCache,
       decimalMode: this.options.decimalMode,
       dateParams: this.options.dateParams,
     });
@@ -107,16 +92,10 @@ export interface DuckDBConnectionConfig {
 }
 
 export interface DuckDBDrizzleConfig<
-  TSchema extends Record<string, unknown> = Record<string, never>,
-> extends DrizzleConfig<TSchema> {
+  TRelations extends AnyRelations = EmptyRelations,
+> extends Pick<DrizzleConfig<TRelations>, 'logger' | 'relations'> {
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
-  /**
-   * @deprecated Ignored, with a one-time warning. DuckDB can return wrong
-   * results when a prepared statement runs again after the data changed, so
-   * statements are no longer cached.
-   */
-  prepareCache?: PrepareCacheOption;
   /** Opt into legacy heuristic qualification of raw SQL join operands. */
   qualifyRawJoinColumns?: boolean;
   /** Opt into exact DECIMAL strings across execution paths. */
@@ -135,15 +114,15 @@ export interface DuckDBDrizzleConfig<
 }
 
 export interface DuckDBDrizzleConfigWithConnection<
-  TSchema extends Record<string, unknown> = Record<string, never>,
-> extends DuckDBDrizzleConfig<TSchema> {
+  TRelations extends AnyRelations = EmptyRelations,
+> extends DuckDBDrizzleConfig<TRelations> {
   /** Connection string or config object */
   connection: string | DuckDBConnectionConfig;
 }
 
 export interface DuckDBDrizzleConfigWithClient<
-  TSchema extends Record<string, unknown> = Record<string, never>,
-> extends DuckDBDrizzleConfig<TSchema> {
+  TRelations extends AnyRelations = EmptyRelations,
+> extends DuckDBDrizzleConfig<TRelations> {
   /** Explicit client (connection or pool) */
   client: DuckDBClientLike;
 }
@@ -156,31 +135,51 @@ function isConfigObject(data: unknown): data is Record<string, unknown> {
     'connection' in data ||
     'client' in data ||
     'pool' in data ||
+    'relations' in data ||
+    'logger' in data ||
+    // Removed options, so they reach the error that explains the removal.
     'schema' in data ||
-    'logger' in data
+    'casing' in data
   );
 }
 
+/**
+ * drizzle-orm 1.0 removed the `schema` and `casing` options of Postgres
+ * drivers. Passing them would otherwise be ignored without notice.
+ */
+function assertNoRemovedOptions(config: object): void {
+  if ('schema' in config && config.schema !== undefined) {
+    throw new Error(
+      'The schema option was removed in 3.0 with drizzle-orm 1.0. Pass relations built with defineRelations() as the relations option, and use db.query with the drizzle-orm 1.0 relational query syntax.'
+    );
+  }
+  if ('casing' in config && config.casing !== undefined) {
+    throw new Error(
+      'The casing option was removed in 3.0 with drizzle-orm 1.0. Set the casing on the table definitions instead, for example with snakeCase.table() or pgTableCreator() from drizzle-orm/pg-core.'
+    );
+  }
+}
+
 interface ResolvedConnectionTarget<
-  TSchema extends Record<string, unknown> = Record<string, never>,
+  TRelations extends AnyRelations = EmptyRelations,
 > {
   kind: 'connection';
   path: string;
   instanceOptions: Record<string, string> | undefined;
-  config: DuckDBDrizzleConfig<TSchema>;
+  config: DuckDBDrizzleConfig<TRelations>;
 }
 
 interface ResolvedClientTarget<
-  TSchema extends Record<string, unknown> = Record<string, never>,
+  TRelations extends AnyRelations = EmptyRelations,
 > {
   kind: 'client';
   client: DuckDBClientLike;
-  config: DuckDBDrizzleConfig<TSchema>;
+  config: DuckDBDrizzleConfig<TRelations>;
 }
 
-type ResolvedDrizzleTarget<
-  TSchema extends Record<string, unknown> = Record<string, never>,
-> = ResolvedConnectionTarget<TSchema> | ResolvedClientTarget<TSchema>;
+type ResolvedDrizzleTarget<TRelations extends AnyRelations = EmptyRelations> =
+  | ResolvedConnectionTarget<TRelations>
+  | ResolvedClientTarget<TRelations>;
 
 function resolveConnectionTarget(
   connection: string | DuckDBConnectionConfig
@@ -198,16 +197,15 @@ function resolveConnectionTarget(
   };
 }
 
-function resolveDrizzleTarget<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+function resolveDrizzleTarget<TRelations extends AnyRelations = EmptyRelations>(
   clientOrConfigOrPath:
     | string
     | DuckDBClientLike
-    | DuckDBDrizzleConfigWithConnection<TSchema>
-    | DuckDBDrizzleConfigWithClient<TSchema>,
-  config: DuckDBDrizzleConfig<TSchema> = {}
-): ResolvedDrizzleTarget<TSchema> {
+    | DuckDBDrizzleConfigWithConnection<TRelations>
+    | DuckDBDrizzleConfigWithClient<TRelations>,
+  config: DuckDBDrizzleConfig<TRelations> = {}
+): ResolvedDrizzleTarget<TRelations> {
+  assertNoRemovedOptions(config);
   if (typeof clientOrConfigOrPath === 'string') {
     return {
       kind: 'connection',
@@ -217,15 +215,16 @@ function resolveDrizzleTarget<
   }
 
   if (isConfigObject(clientOrConfigOrPath)) {
+    assertNoRemovedOptions(clientOrConfigOrPath);
     if ('connection' in clientOrConfigOrPath) {
       const { connection, ...restConfig } = clientOrConfigOrPath;
 
       return {
         kind: 'connection',
         ...resolveConnectionTarget(
-          connection as DuckDBDrizzleConfigWithConnection<TSchema>['connection']
+          connection as DuckDBDrizzleConfigWithConnection<TRelations>['connection']
         ),
-        config: restConfig as DuckDBDrizzleConfig<TSchema>,
+        config: restConfig as DuckDBDrizzleConfig<TRelations>,
       };
     }
 
@@ -235,7 +234,7 @@ function resolveDrizzleTarget<
       return {
         kind: 'client',
         client: client as DuckDBClientLike,
-        config: restConfig as DuckDBDrizzleConfig<TSchema>,
+        config: restConfig as DuckDBDrizzleConfig<TRelations>,
       };
     }
 
@@ -267,27 +266,12 @@ function isNodePostgresPool(value: unknown): value is PgDuckPool {
   );
 }
 
-const PREPARE_CACHE_WARNING =
-  'The prepareCache option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. Remove the option. It will be removed in the next major version.';
-
-let hasWarnedPrepareCache = false;
-
-function warnPrepareCacheIgnored(): void {
-  if (hasWarnedPrepareCache) {
-    return;
-  }
-  hasWarnedPrepareCache = true;
-  console.warn(PREPARE_CACHE_WARNING);
-}
-
 /** Internal: create database from a client (connection or pool) */
-function createFromClient<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+function createFromClient<TRelations extends AnyRelations = EmptyRelations>(
   client: DuckDBClientLike,
-  config: DuckDBDrizzleConfig<TSchema> = {},
+  config: DuckDBDrizzleConfig<TRelations> = {},
   instance?: DuckDBInstance
-): DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>> {
+): DuckDBDatabase<TRelations> {
   // pool.query() runs each statement on any free client, so BEGIN, the
   // statements and COMMIT of one transaction would land on different
   // backends. Lease one client per operation instead.
@@ -306,50 +290,31 @@ function createFromClient<
   }
 
   const dialect = new DuckDBDialect({
-    casing: config.casing,
     qualifyRawJoinColumns: config.qualifyRawJoinColumns,
     decimalMode: config.decimalMode,
   });
-  const prepareCache = resolvePrepareCacheOption(config.prepareCache);
-  if (prepareCache) {
-    warnPrepareCacheIgnored();
-  }
 
   const logger =
     config.logger === true ? new DefaultLogger() : config.logger || undefined;
 
-  let schema: RelationalSchemaConfig<TablesRelationalConfig> | undefined;
-
-  if (config.schema) {
-    const tablesConfig = extractTablesRelationalConfig(
-      config.schema,
-      createTableRelationsHelpers
-    );
-    schema = {
-      fullSchema: config.schema,
-      schema: tablesConfig.tables,
-      tableNamesMap: tablesConfig.tableNamesMap,
-    };
-  }
+  const relations = (config.relations ?? {}) as TRelations;
 
   const driver = new DuckDBDriver(finalClient, dialect, {
     logger,
     rejectStringArrayLiterals: config.rejectStringArrayLiterals,
     arrayLiteralWarning: config.arrayLiteralWarning,
-    prepareCache,
     decimalMode: config.decimalMode,
     dateParams: config.dateParams,
   });
-  const session = driver.createSession(schema);
+  const session = driver.createSession(relations);
 
-  const db = new DuckDBDatabase(
+  return new DuckDBDatabase<TRelations>(
     dialect,
     session,
-    schema,
+    relations,
     finalClient,
     instance
   );
-  return db as DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>;
 }
 
 function resolvePoolOptions(
@@ -373,12 +338,12 @@ async function closeDatabaseClient(client: DuckDBClientLike): Promise<void> {
 
 /** Internal: create database from a connection string */
 async function createFromConnectionString<
-  TSchema extends Record<string, unknown> = Record<string, never>,
+  TRelations extends AnyRelations = EmptyRelations,
 >(
   path: string,
   instanceOptions: Record<string, string> | undefined,
-  config: DuckDBDrizzleConfig<TSchema> = {}
-): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
+  config: DuckDBDrizzleConfig<TRelations> = {}
+): Promise<DuckDBDatabase<TRelations>> {
   // Share one instance per database path in this process. Two instances on
   // the same file do not see each other's writes and can lose committed data.
   // ':memory:' still gets a new database each time.
@@ -423,7 +388,7 @@ async function createFromConnectionString<
 
     const db = createFromClient(
       createdClient,
-      restConfig as DuckDBDrizzleConfig<TSchema>,
+      restConfig as DuckDBDrizzleConfig<TRelations>,
       instance
     );
     createdClient = undefined;
@@ -438,56 +403,53 @@ async function createFromConnectionString<
 }
 
 // Overload 1: Connection string (async, auto-pools)
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
   connectionString: string
-): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>>;
+): Promise<DuckDBDatabase<TRelations>>;
 
 // Overload 2: Connection string + config (async, auto-pools)
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
   connectionString: string,
-  config: DuckDBDrizzleConfig<TSchema>
-): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>>;
+  config: DuckDBDrizzleConfig<TRelations>
+): Promise<DuckDBDatabase<TRelations>>;
 
 // Overload 3: Config with connection (async, auto-pools)
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
-  config: DuckDBDrizzleConfigWithConnection<TSchema>
-): Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>>;
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
+  config: DuckDBDrizzleConfigWithConnection<TRelations>
+): Promise<DuckDBDatabase<TRelations>>;
 
 // Overload 4: Config with explicit client (sync)
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
-  config: DuckDBDrizzleConfigWithClient<TSchema>
-): DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>;
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
+  config: DuckDBDrizzleConfigWithClient<TRelations>
+): DuckDBDatabase<TRelations>;
 
 // Overload 5: Explicit client (sync, backward compatible)
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
   client: DuckDBClientLike,
-  config?: DuckDBDrizzleConfig<TSchema>
-): DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>;
+  config?: DuckDBDrizzleConfig<TRelations>
+): DuckDBDatabase<TRelations>;
 
 // Implementation
-export function drizzle<
-  TSchema extends Record<string, unknown> = Record<string, never>,
->(
+export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
   clientOrConfigOrPath:
     | string
     | DuckDBClientLike
-    | DuckDBDrizzleConfigWithConnection<TSchema>
-    | DuckDBDrizzleConfigWithClient<TSchema>,
-  config?: DuckDBDrizzleConfig<TSchema>
-):
-  | DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>
-  | Promise<DuckDBDatabase<TSchema, ExtractTablesWithRelations<TSchema>>> {
-  const target = resolveDrizzleTarget(clientOrConfigOrPath, config);
+    | DuckDBDrizzleConfigWithConnection<TRelations>
+    | DuckDBDrizzleConfigWithClient<TRelations>,
+  config?: DuckDBDrizzleConfig<TRelations>
+): DuckDBDatabase<TRelations> | Promise<DuckDBDatabase<TRelations>> {
+  let target: ResolvedDrizzleTarget<TRelations>;
+  try {
+    target = resolveDrizzleTarget(clientOrConfigOrPath, config);
+  } catch (error) {
+    // The connection overloads return a promise, so they reject instead.
+    const opensConnection =
+      typeof clientOrConfigOrPath === 'string' ||
+      (isConfigObject(clientOrConfigOrPath) &&
+        'connection' in clientOrConfigOrPath);
+    if (opensConnection) return Promise.reject(error);
+    throw error;
+  }
 
   if (target.kind === 'connection') {
     return createFromConnectionString(
@@ -501,11 +463,9 @@ export function drizzle<
 }
 
 export class DuckDBDatabase<
-  TFullSchema extends Record<string, unknown> = Record<string, never>,
-  TSchema extends TablesRelationalConfig =
-    ExtractTablesWithRelations<TFullSchema>,
-> extends PgDatabase<DuckDBQueryResultHKT, TFullSchema, TSchema> {
-  static readonly [entityKind]: string = 'DuckDBDatabase';
+  TRelations extends AnyRelations = EmptyRelations,
+> extends PgAsyncDatabase<DuckDBQueryResultHKT, TRelations> {
+  static override readonly [entityKind]: string = 'DuckDBDatabase';
 
   /** The underlying connection or pool */
   readonly $client: DuckDBClientLike;
@@ -515,12 +475,13 @@ export class DuckDBDatabase<
 
   constructor(
     readonly dialect: DuckDBDialect,
-    readonly session: DuckDBSession<TFullSchema, TSchema>,
-    schema: RelationalSchemaConfig<TSchema> | undefined,
+    readonly session: DuckDBSession<TRelations>,
+    relations: TRelations,
     client: DuckDBClientLike,
     instance?: DuckDBInstance
   ) {
-    super(dialect, session, schema);
+    // Relations arrive as native DuckDB values, so they are not JSON text.
+    super(dialect, session, relations, false);
     this.$client = client;
     this.$instance = instance;
     this.$with = new DuckDBQueryBuilder(dialect).$with;
@@ -555,24 +516,17 @@ export class DuckDBDatabase<
   }
 
   private selectMethods(withList?: WithSubquery[]) {
-    // Cast needed: DuckDBSession is compatible but types don't align exactly with PgSession
-    return createDuckDBSelectMethods(
-      this.session as unknown as PgSession<DuckDBQueryResultHKT>,
-      this.dialect,
-      withList
-    );
+    return createDuckDBSelectMethods(this.session, this.dialect, withList);
   }
 
   override with(
     ...queries: WithSubquery[]
-  ): ReturnType<
-    PgDatabase<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
-  > {
+  ): ReturnType<PgAsyncDatabase<DuckDBQueryResultHKT, TRelations>['with']> {
     return {
       ...super.with(...queries),
       ...this.selectMethods(queries),
-    } as ReturnType<
-      PgDatabase<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+    } as unknown as ReturnType<
+      PgAsyncDatabase<DuckDBQueryResultHKT, TRelations>['with']
     >;
   }
 
@@ -586,27 +540,27 @@ export class DuckDBDatabase<
     return this.selectMethods().select(fields);
   }
 
-  override selectDistinct(): PgSelectBuilder<undefined>;
+  override selectDistinct(): PgAsyncSelectBuilder<undefined>;
   override selectDistinct<TSelection extends SelectedFields>(
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): PgAsyncSelectBuilder<TSelection>;
   override selectDistinct(
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): PgAsyncSelectBuilder<SelectedFields | undefined> {
     return this.selectMethods().selectDistinct(fields);
   }
 
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[]
-  ): PgSelectBuilder<undefined>;
+  ): PgAsyncSelectBuilder<undefined>;
   override selectDistinctOn<TSelection extends SelectedFields>(
     on: (PgColumn | SQLWrapper)[],
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): PgAsyncSelectBuilder<TSelection>;
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[],
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): PgAsyncSelectBuilder<SelectedFields | undefined> {
     return this.selectMethods().selectDistinctOn(on, fields);
   }
 
@@ -641,17 +595,17 @@ export class DuckDBDatabase<
    */
   appendRows<TTable extends PgTable>(
     table: TTable,
-    rows: readonly TTable['$inferInsert'][]
+    rows: readonly InferInsertModel<TTable>[]
   ): Promise<number> {
     return this.session.appendRows(table, rows);
   }
 
   /**
-   * Run a transaction. The `config` argument is deprecated: DuckDB has no
-   * SET TRANSACTION statement, so it is ignored with a one-time warning.
+   * Run a transaction. DuckDB has no SET TRANSACTION statement, so passing
+   * `config` rejects before the transaction begins.
    */
   override async transaction<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
+    transaction: (tx: DuckDBTransaction<TRelations>) => Promise<T>,
     config?: PgTransactionConfig
   ): Promise<T> {
     return await this.session.transaction<T>(transaction, config);

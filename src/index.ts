@@ -1,11 +1,60 @@
 export * from './driver.ts';
 export * from './session.ts';
-export * from './columns.ts';
+// Explicit lists keep the literal builders, type parsers and other internal
+// helpers of columns.ts, introspect.ts and client.ts out of the public API.
+export {
+  duckDbList,
+  duckDbArray,
+  duckDbMap,
+  duckDbStruct,
+  duckDbUnion,
+  duckDbJson,
+  duckDbBlob,
+  duckDbInet,
+  duckDbInterval,
+  duckDbTimestamp,
+  duckDbDate,
+  duckDbTime,
+  duckDbArrayContains,
+  duckDbArrayContained,
+  duckDbArrayOverlaps,
+  type ArrayPredicateValue,
+  type DuckDbUnionValue,
+} from './columns.ts';
 export * from './migrator.ts';
-export * from './introspect.ts';
-export * from './client.ts';
+export {
+  introspect,
+  type IntrospectOptions,
+  type IntrospectedColumn,
+  type IntrospectedConstraint,
+  type IntrospectedTable,
+  type IntrospectResult,
+} from './introspect.ts';
+export {
+  isPool,
+  prepareParams,
+  closeClientConnection,
+  closeDuckDbInstance,
+  executeOnClient,
+  executeArraysOnClient,
+  executeInBatches,
+  executeInBatchesRaw,
+  executeArrowOnClient,
+  appendRowsOnClient,
+  APPEND_DEFAULT,
+  type DuckDBExecutionClient,
+  type DuckDBClientLike,
+  type RowData,
+  type DuckDBConnectionPool,
+  type ExecuteClientOptions,
+  type DateParamType,
+  type ExecuteArraysResult,
+  type PrepareParamsOptions,
+  type ExecuteInBatchesOptions,
+  type ExecuteBatchesRawChunk,
+  type AppendTarget,
+} from './client.ts';
 export * from './pool.ts';
-export { getPreparedStatementCacheStats } from './prepared-statement-cache.ts';
 export * from './olap.ts';
 // Explicit list keeps the node-api binding helpers in value-wrappers.ts internal.
 export {
@@ -30,7 +79,6 @@ export {
   type TimestampValueWrapper,
   type DuckDBValueKind,
 } from './value-wrappers.ts';
-export * from './options.ts';
 export * from './operators.ts';
 export * from './pgduck.ts';
 export * from './motherduck.ts';

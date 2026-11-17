@@ -224,7 +224,7 @@ test('infinite timestamps survive typed column decoders', async () => {
 
 describe('placeholders encoded as SQL', () => {
   test('prepared inserts bind struct, empty list and literal timestamp values', async () => {
-    const db = await drizzle(':memory:', { pool: false, prepareCache: true });
+    const db = await drizzle(':memory:', { pool: false });
     const rows = pgTable('sweep2_placeholders', {
       id: integer('id'),
       struct: duckDbStruct<{ a: number }>('struct', { a: 'INTEGER' }),
@@ -467,9 +467,16 @@ test('migrate() tolerates duplicate rows from older journals', async () => {
     );
     await db.dialect.migrate(
       [
-        { hash: 'h', folderMillis: 1000, sql: ['select 1'], bps: true },
+        {
+          hash: 'h',
+          name: 'h',
+          folderMillis: 1000,
+          sql: ['select 1'],
+          bps: true,
+        },
         {
           hash: 'next',
+          name: 'next',
           folderMillis: 2000,
           sql: ['create table sweep2_migrated (id integer)'],
           bps: true,

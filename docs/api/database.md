@@ -7,16 +7,14 @@ nav_order: 2
 
 # DuckDBDatabase
 
-The `DuckDBDatabase` class extends Drizzle's `PgDatabase` with DuckDB-specific handling. It's the main interface for executing queries.
+The `DuckDBDatabase` class extends Drizzle's `PgAsyncDatabase` with DuckDB-specific handling. It's the main interface for executing queries.
 
 ## Class Overview
 
 ```typescript
-class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
-  DuckDBQueryResultHKT,
-  TFullSchema,
-  TSchema
-> {
+class DuckDBDatabase<
+  TRelations extends AnyRelations = EmptyRelations,
+> extends PgAsyncDatabase<DuckDBQueryResultHKT, TRelations> {
   select(): DuckDBSelectBuilder<undefined>;
   select<TSelection>(fields: TSelection): DuckDBSelectBuilder<TSelection>;
   insert<TTable>(table: TTable): InsertBuilder<TTable>;
@@ -25,14 +23,14 @@ class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
   execute<T>(query: SQL): Promise<T[]>;
   transaction<T>(
     fn: (tx: DuckDBTransaction) => Promise<T>,
-    config?: PgTransactionConfig // deprecated, ignored
+    config?: PgTransactionConfig // not supported, rejects
   ): Promise<T>;
   $with(alias: string): WithBuilder;
 
   // DuckDB additions
   appendRows<TTable>(
     table: TTable,
-    rows: readonly TTable['$inferInsert'][]
+    rows: readonly InferInsertModel<TTable>[]
   ): Promise<number>;
   executeBatches<T>(
     query: SQL,
@@ -218,7 +216,7 @@ await db.transaction(async (tx) => {
 
 A statement that fails inside the callback aborts the DuckDB transaction. If you catch it and continue, `db.transaction()` rolls back and rejects with `DuckDB aborted the transaction because a statement inside it failed. ...`, with the statement error as `cause`.
 
-The optional `config` argument (`isolationLevel`, `accessMode`, `deferrable`) is deprecated. DuckDB has no `SET TRANSACTION`, so the driver ignores it and prints a one-time warning. See [Transactions]({{ '/core/transactions' | relative_url }}).
+DuckDB has no `SET TRANSACTION`, so passing the optional `config` argument (`isolationLevel`, `accessMode`, `deferrable`) rejects before the transaction begins. See [Transactions]({{ '/core/transactions' | relative_url }}).
 
 ```typescript
 // This behaves differently than Postgres!

@@ -15,33 +15,33 @@ The `drizzle()` function is the main entry point for creating a Drizzle database
 
 ```typescript
 // 1. Connection string (async, creates a pool)
-function drizzle<TSchema>(
+function drizzle<TRelations>(
   connectionString: string
-): Promise<DuckDBDatabase<TSchema>>;
+): Promise<DuckDBDatabase<TRelations>>;
 
 // 2. Connection string plus config (async, creates a pool)
-function drizzle<TSchema>(
+function drizzle<TRelations>(
   connectionString: string,
-  config: DuckDBDrizzleConfig<TSchema>
-): Promise<DuckDBDatabase<TSchema>>;
+  config: DuckDBDrizzleConfig<TRelations>
+): Promise<DuckDBDatabase<TRelations>>;
 
 // 3. Config object with `connection` (async, creates a pool)
-function drizzle<TSchema>(
-  config: DuckDBDrizzleConfig<TSchema> & {
+function drizzle<TRelations>(
+  config: DuckDBDrizzleConfig<TRelations> & {
     connection: string | DuckDBConnectionConfig;
   }
-): Promise<DuckDBDatabase<TSchema>>;
+): Promise<DuckDBDatabase<TRelations>>;
 
 // 4. Config object with `client` (sync)
-function drizzle<TSchema>(
-  config: DuckDBDrizzleConfig<TSchema> & { client: DuckDBClientLike }
-): DuckDBDatabase<TSchema>;
+function drizzle<TRelations>(
+  config: DuckDBDrizzleConfig<TRelations> & { client: DuckDBClientLike }
+): DuckDBDatabase<TRelations>;
 
 // 5. Client instance plus optional config (sync)
-function drizzle<TSchema>(
+function drizzle<TRelations>(
   client: DuckDBClientLike,
-  config?: DuckDBDrizzleConfig<TSchema>
-): DuckDBDatabase<TSchema>;
+  config?: DuckDBDrizzleConfig<TRelations>
+): DuckDBDatabase<TRelations>;
 ```
 
 ```typescript
@@ -119,12 +119,12 @@ For SQL with several statements, node-postgres returns one result per statement.
 ### config (optional)
 
 ```typescript
-interface DuckDBDrizzleConfig<TSchema> {
+interface DuckDBDrizzleConfig<TRelations> {
   // Enable query logging (true uses Drizzle's DefaultLogger)
   logger?: Logger | boolean;
 
-  // Schema for relational queries
-  schema?: TSchema;
+  // Relations from defineRelations() for relational queries
+  relations?: TRelations;
 
   // Pool size preset, pool options, or false for a single connection.
   // Used only by the connection string and { connection } forms.
@@ -132,10 +132,6 @@ interface DuckDBDrizzleConfig<TSchema> {
 
   // Attach a DuckLake catalog on every connection
   ducklake?: DuckLakeConfig;
-
-  // Deprecated and ignored, with a one-time warning. Statements are
-  // prepared on every run.
-  prepareCache?: boolean | number | { size?: number };
 
   // How a bare Date in sql`...` binds: a naive UTC TIMESTAMP (default) or
   // a TIMESTAMPTZ instant.
@@ -146,9 +142,6 @@ interface DuckDBDrizzleConfig<TSchema> {
 
   // Receive the Postgres-style array literal warning instead of the logger
   arrayLiteralWarning?: (query: string) => void;
-
-  // Map TypeScript keys to column names (from Drizzle's DrizzleConfig)
-  casing?: 'snake_case' | 'camelCase';
 }
 
 interface DuckDBPoolConfig {
@@ -173,17 +166,21 @@ type PoolPreset =
 
 `ducklake` works with the async forms and with an explicit pool. Passing it with a single connection throws. Use `configureDuckLake(connection, config)` in that case. With a local catalog (`:memory:`, a `duckdb:` or `file:` catalog, or a path without a scheme such as `meta.db`) and no `pool` setting, the driver uses a pool of size 1. A larger `pool` also works, and the driver logs a warning for local catalogs. See [DuckLake]({{ '/integrations/ducklake' | relative_url }}).
 
-The config type extends Drizzle's `DrizzleConfig`, so it also accepts `casing` and `cache`. `casing: 'snake_case'` or `casing: 'camelCase'` maps TypeScript keys to column names as in other Drizzle drivers. The DuckDB driver does not apply `cache`.
+The config type takes `logger` and `relations` from Drizzle's `DrizzleConfig`. drizzle-orm 1.0 removed the `schema` and `casing` options, and `drizzle()` throws when it receives either one. Casing is set on the table definition instead:
 
 ```typescript
-const users = pgTable('users', {
+import { integer, snakeCase, text } from 'drizzle-orm/pg-core';
+
+const users = snakeCase.table('users', {
   id: integer().primaryKey(),
   userName: text(),
 });
-const db = drizzle(connection, { casing: 'snake_case' });
+const db = drizzle(connection);
 await db.insert(users).values({ id: 1, userName: 'ada' });
 // insert into "users" ("id", "user_name") values ($1, $2)
 ```
+
+See [Upgrading to v3]({{ '/reference/upgrading-to-v3' | relative_url }}#drizzle-orm-10).
 
 ## Return Value
 
@@ -224,13 +221,13 @@ const db = drizzle(connection, {
 });
 ```
 
-### With Schema for Relational Queries
+### With Relations for Relational Queries
 
 ```typescript
-import * as schema from './schema';
+import { relations } from './schema'; // built with defineRelations()
 
 const db = drizzle(connection, {
-  schema,
+  relations,
 });
 
 // Now you can use relational queries

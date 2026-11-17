@@ -12,16 +12,13 @@ const prices = pgTable('decimal_prices', {
 
 const WIDE = '12345678901234567890.1234567891';
 
-describe.each([
-  { name: 'run', prepareCache: undefined },
-  { name: 'prepared statement cache', prepareCache: true as const },
-])('DECIMAL precision ($name)', ({ prepareCache }) => {
+describe('DECIMAL precision', () => {
   let instance: DuckDBInstance;
   let db: DuckDBDatabase;
 
   beforeAll(async () => {
     instance = await DuckDBInstance.create(':memory:');
-    db = drizzle(await instance.connect(), { prepareCache });
+    db = drizzle(await instance.connect());
     await db.execute(sql`
       create table decimal_prices (
         id integer, wide decimal(38, 10), narrow decimal(10, 2)

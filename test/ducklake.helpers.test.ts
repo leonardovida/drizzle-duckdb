@@ -146,15 +146,6 @@ describe('DuckLake helpers', () => {
     }
   });
 
-  test('buildDuckLakeAttachSql rejects the metaParameterName placeholder', () => {
-    expect(() =>
-      buildDuckLakeAttachSql({
-        catalog: 'meta.ducklake',
-        attachOptions: { metaParameterName: 'postgres' },
-      })
-    ).toThrow(/metaParameterName is not supported.*Use metaParameters/);
-  });
-
   test('buildDuckLakeAttachSql rejects numbers that are not non-negative integers', () => {
     for (const value of [Infinity, -Infinity, NaN, -5, 1.5, 2 ** 53]) {
       expect(() =>

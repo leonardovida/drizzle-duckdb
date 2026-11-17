@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 // From drizzle codebase. Also lol @ the comment
 
 // shut up eslint you cannot possibly comprehend what's happening here
@@ -21,3 +24,30 @@ export const randomString = () =>
     { length: 10 },
     () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
   ).join('');
+
+export interface MigrationFixture {
+  /** Name after the timestamp, for example 'init'. */
+  tag: string;
+  /** Creation time in milliseconds. drizzle-orm 1.0 keeps whole seconds. */
+  when: number;
+  sql: string;
+}
+
+/**
+ * Write migrations in the drizzle-kit 1.0 folder layout that drizzle-orm 1.0
+ * reads: one `<YYYYMMDDHHMMSS>_<tag>/migration.sql` folder per migration.
+ */
+export function writeMigrationFolders(
+  folder: string,
+  migrations: readonly MigrationFixture[]
+): void {
+  for (const { tag, when, sql } of migrations) {
+    const stamp = new Date(when)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, '')
+      .replace(/\D/g, '');
+    const dir = join(folder, `${stamp}_${tag}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'migration.sql'), sql);
+  }
+}

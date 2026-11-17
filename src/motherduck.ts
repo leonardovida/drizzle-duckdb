@@ -155,14 +155,6 @@ export type MotherDuckFlightLogLineRow = {
   line: string | null;
 };
 
-/**
- * @deprecated Flight logs are returned one line per row. Use
- * MotherDuckFlightLogLineRow.
- */
-export type MotherDuckFlightLogsRow = {
-  logs: string;
-};
-
 export type MotherDuckFlightDeleteRow = {
   deleted_count: number | bigint;
 };
@@ -217,63 +209,6 @@ export type MotherDuckGrantedRoleRow = {
   is_direct: boolean;
   /** When the direct grant was made. NULL for an inherited role. */
   granted_at: Date | string | null;
-};
-
-/** @deprecated Use MotherDuckFlightSummaryRow. */
-export type MotherDuckJobSummaryRow = {
-  job_id: string;
-  job_name: string;
-  schedule_cron: string | null;
-  schedule_status: string | null;
-  status: string;
-  current_version: number;
-  created_at: Date | string;
-  updated_at: Date | string;
-};
-
-/** @deprecated Use MotherDuckFlightVersionRow. */
-export type MotherDuckJobVersionRow = {
-  version_id: string;
-  job_id: string;
-  version: number;
-  created_at: Date | string;
-  md_token_name: string;
-  md_secret_names: string[];
-  config: Record<string, string> | Map<string, string> | null;
-  source_code: string;
-  requirements_txt: string | null;
-};
-
-/** @deprecated Use MotherDuckFlightRunRow. */
-export type MotherDuckJobRunRow = {
-  run_id: string;
-  job_id: string;
-  job_name: string;
-  job_version: number;
-  run_number: number | bigint;
-  is_scheduled: boolean;
-  status: string;
-  created_at: Date | string;
-  started_at: Date | string | null;
-  ended_at: Date | string | null;
-  scheduled_at: Date | string | null;
-  cancelled_at: Date | string | null;
-  exit_code: number | null;
-};
-
-/** @deprecated Use MotherDuckFlightLogsRow. */
-export type MotherDuckJobRunLogsRow = {
-  logs: string;
-};
-
-/** @deprecated Use MotherDuckFlightDeleteRow. */
-export type MotherDuckJobDeleteRow = {
-  deleted_count: number | bigint;
-};
-
-/** @deprecated Use MotherDuckFlightCancelRunRow. */
-export type MotherDuckJobCancelRunRow = {
-  canceled_count: number | bigint;
 };
 
 export interface MotherDuckPaginationOptions {
@@ -364,31 +299,6 @@ export interface MotherDuckUpdateFlightOptions {
 
 export interface MotherDuckRunFlightOptions {
   config?: Record<string, string | null> | SQLWrapper | null;
-}
-
-/** @deprecated Use MotherDuckCreateFlightOptions. */
-export interface MotherDuckCreateJobOptions {
-  name: string | SQLWrapper;
-  mdTokenName: string | SQLWrapper;
-  sourceCode: string | SQLWrapper;
-  mdSecretNames?: readonly (string | null)[] | SQLWrapper | null;
-  scheduleCron?: string | SQLWrapper | null;
-  config?: Record<string, string | null> | SQLWrapper | null;
-  requirementsTxt?: string | SQLWrapper | null;
-  maxRuntimeSec?: number | SQLWrapper;
-}
-
-/** @deprecated Use MotherDuckUpdateFlightOptions. */
-export interface MotherDuckUpdateJobOptions {
-  jobId: string | SQLWrapper;
-  name?: string | SQLWrapper | null;
-  scheduleCron?: string | SQLWrapper | null;
-  config?: Record<string, string | null> | SQLWrapper | null;
-  sourceCode?: string | SQLWrapper | null;
-  requirementsTxt?: string | SQLWrapper | null;
-  mdTokenName?: string | SQLWrapper | null;
-  mdSecretNames?: readonly (string | null)[] | SQLWrapper | null;
-  maxRuntimeSec?: number | SQLWrapper;
 }
 
 export type MotherDuckRunMode = 'auto' | 'local' | 'remote';
@@ -640,96 +550,6 @@ function motherDuckNamedFunction(
   parameters: NamedParameter[] = []
 ): SQL {
   return sql`${sql.raw(name)}(${motherDuckNamedParams(parameters)})`;
-}
-
-type MotherDuckColumnAlias = readonly [sourceName: string, targetName: string];
-
-function motherDuckColumnProjection(
-  column: string | MotherDuckColumnAlias
-): SQL {
-  if (typeof column === 'string') {
-    return sql.raw(column);
-  }
-
-  const [sourceName, targetName] = column;
-  return sql`${sql.raw(sourceName)} as ${sql.raw(targetName)}`;
-}
-
-function motherDuckCompatibilityView(
-  source: SQL,
-  alias: string,
-  columns: readonly (string | MotherDuckColumnAlias)[]
-): SQL {
-  return sql`(select ${sql.join(
-    columns.map((column) => motherDuckColumnProjection(column)),
-    sql`, `
-  )} from ${source}) as ${sql.raw(alias)}`;
-}
-
-function motherDuckJobSummaryView(source: SQL): SQL {
-  return motherDuckCompatibilityView(source, 'md_jobs', [
-    ['flight_id', 'job_id'],
-    ['flight_name', 'job_name'],
-    'schedule_cron',
-    'schedule_status',
-    'status',
-    'current_version',
-    'created_at',
-    'updated_at',
-  ]);
-}
-
-function motherDuckJobRunView(source: SQL): SQL {
-  return motherDuckCompatibilityView(source, 'md_job_runs', [
-    'run_id',
-    ['flight_id', 'job_id'],
-    ['flight_name', 'job_name'],
-    ['flight_version', 'job_version'],
-    'run_number',
-    'is_scheduled',
-    'status',
-    'created_at',
-    'started_at',
-    'ended_at',
-    'scheduled_at',
-    'cancelled_at',
-    'exit_code',
-  ]);
-}
-
-function motherDuckJobVersionView(source: SQL): SQL {
-  return motherDuckCompatibilityView(source, 'md_job_versions', [
-    'version_id',
-    ['flight_id', 'job_id'],
-    ['flight_version', 'version'],
-    'created_at',
-    ['access_token_name', 'md_token_name'],
-    ['flight_secret_names', 'md_secret_names'],
-    'config',
-    'source_code',
-    'requirements_txt',
-  ]);
-}
-
-function motherDuckLegacyFlightLogsOrder(
-  order: MotherDuckFlightLogOptions['order']
-): SQL {
-  if (order === 'desc') {
-    return sql`line_number desc`;
-  }
-  if (order !== undefined && isSQLWrapper(order)) {
-    return sql`case when lower(${order}) = 'desc' then -line_number else line_number end`;
-  }
-  return sql`line_number`;
-}
-
-function motherDuckLegacyFlightLogsView(
-  source: SQL,
-  order: MotherDuckFlightLogOptions['order']
-): SQL {
-  return sql`(select coalesce(string_agg(coalesce(line, ''), chr(10) order by ${motherDuckLegacyFlightLogsOrder(
-    order
-  )}), '') as logs from ${source}) as md_flight_logs`;
 }
 
 function motherDuckPagedParams(
@@ -1048,11 +868,6 @@ export function mdListFlights(options: MotherDuckListFlightsOptions = {}): SQL {
   ]);
 }
 
-/** @deprecated Use mdListFlights. */
-export function mdFlights(options: MotherDuckPaginationOptions = {}): SQL {
-  return mdListFlights(options);
-}
-
 export function mdCreateFlight(options: MotherDuckCreateFlightOptions): SQL {
   return motherDuckNamedFunction('md_create_flight', [
     { name: 'name', value: options.name },
@@ -1151,14 +966,6 @@ export function mdGetFlightRun(
   );
 }
 
-/** @deprecated Use mdListFlightRuns. */
-export function mdFlightRuns(
-  flightId: string | SQLWrapper,
-  options: MotherDuckPaginationOptions = {}
-): SQL {
-  return mdListFlightRuns(flightId, options);
-}
-
 /** Return the run log as oldest-first line rows. */
 export function mdGetFlightLogs(
   flightId: string | SQLWrapper,
@@ -1171,21 +978,6 @@ export function mdGetFlightLogs(
   );
 }
 
-/**
- * @deprecated Use mdGetFlightLogs for line-oriented log rows. This alias keeps
- * returning the earlier single-row logs blob.
- */
-export function mdFlightLogs(
-  flightId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper,
-  options: MotherDuckFlightLogOptions = {}
-): SQL {
-  return motherDuckLegacyFlightLogsView(
-    mdGetFlightLogs(flightId, runNumber, options),
-    options.order
-  );
-}
-
 export function mdListFlightVersions(
   flightId: string | SQLWrapper,
   options: MotherDuckPaginationOptions = {}
@@ -1194,14 +986,6 @@ export function mdListFlightVersions(
     'md_list_flight_versions',
     motherDuckIdPagedParams('flight_id', flightId, options)
   );
-}
-
-/** @deprecated Use mdListFlightVersions. */
-export function mdFlightVersions(
-  flightId: string | SQLWrapper,
-  options: MotherDuckPaginationOptions = {}
-): SQL {
-  return mdListFlightVersions(flightId, options);
 }
 
 export function mdGetFlightVersion(
@@ -1221,104 +1005,4 @@ export function mdGetFlightVersion(
  */
 export function mdListFlightGrantees(flightId: string | SQLWrapper): SQL {
   return sql`md_list_flight_grantees(CAST(${motherDuckArg(flightId)} AS UUID))`;
-}
-
-/** @deprecated Use mdListFlights. */
-export function mdJobs(options: MotherDuckPaginationOptions = {}): SQL {
-  return motherDuckJobSummaryView(mdListFlights(options));
-}
-
-/** @deprecated Use mdCreateFlight. */
-export function mdCreateJob(options: MotherDuckCreateJobOptions): SQL {
-  return motherDuckJobSummaryView(
-    mdCreateFlight({
-      name: options.name,
-      accessTokenName: options.mdTokenName,
-      sourceCode: options.sourceCode,
-      flightSecretNames: options.mdSecretNames,
-      scheduleCron: options.scheduleCron,
-      config: options.config,
-      requirementsTxt: options.requirementsTxt,
-      maxRuntimeSec: options.maxRuntimeSec,
-    })
-  );
-}
-
-/** @deprecated Use mdGetFlight. */
-export function mdGetJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckJobSummaryView(mdGetFlight(jobId));
-}
-
-/** @deprecated Use mdUpdateFlight. */
-export function mdUpdateJob(options: MotherDuckUpdateJobOptions): SQL {
-  return motherDuckJobSummaryView(
-    mdUpdateFlight({
-      flightId: options.jobId,
-      name: options.name,
-      scheduleCron: options.scheduleCron,
-      config: options.config,
-      sourceCode: options.sourceCode,
-      requirementsTxt: options.requirementsTxt,
-      accessTokenName: options.mdTokenName,
-      flightSecretNames: options.mdSecretNames,
-      maxRuntimeSec: options.maxRuntimeSec,
-    })
-  );
-}
-
-/** @deprecated Use mdDeleteFlight. */
-export function mdDeleteJob(jobId: string | SQLWrapper): SQL {
-  return mdDeleteFlight(jobId);
-}
-
-/** @deprecated Use mdRunFlight. */
-export function mdRunJob(jobId: string | SQLWrapper): SQL {
-  return motherDuckJobRunView(mdRunFlight(jobId));
-}
-
-/** @deprecated Use mdCancelFlightRun. */
-export function mdCancelJobRun(
-  jobId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper
-): SQL {
-  return mdCancelFlightRun(jobId, runNumber);
-}
-
-/** @deprecated Use mdListFlightRuns. */
-export function mdJobRuns(
-  jobId: string | SQLWrapper,
-  options: MotherDuckPaginationOptions = {}
-): SQL {
-  return motherDuckJobRunView(mdListFlightRuns(jobId, options));
-}
-
-/**
- * @deprecated Use mdGetFlightLogs for line-oriented log rows. This alias keeps
- * returning the earlier single-row logs blob.
- */
-export function mdJobRunLogs(
-  jobId: string | SQLWrapper,
-  runNumber: number | bigint | SQLWrapper,
-  options: MotherDuckFlightLogOptions = {}
-): SQL {
-  return motherDuckLegacyFlightLogsView(
-    mdGetFlightLogs(jobId, runNumber, options),
-    options.order
-  );
-}
-
-/** @deprecated Use mdListFlightVersions. */
-export function mdJobVersions(
-  jobId: string | SQLWrapper,
-  options: MotherDuckPaginationOptions = {}
-): SQL {
-  return motherDuckJobVersionView(mdListFlightVersions(jobId, options));
-}
-
-/** @deprecated Use mdGetFlightVersion. */
-export function mdGetJobVersion(
-  jobId: string | SQLWrapper,
-  versionNumber: number | SQLWrapper
-): SQL {
-  return motherDuckJobVersionView(mdGetFlightVersion(jobId, versionNumber));
 }

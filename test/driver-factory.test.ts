@@ -197,10 +197,10 @@ describe('Driver Factory Tests', () => {
         new DuckDBSession(
           client as never,
           new DuckDBDialect(),
-          undefined,
+          {},
           {}
         ) as never,
-        undefined,
+        {},
         client as never,
         instance as never
       );
@@ -220,13 +220,8 @@ describe('Driver Factory Tests', () => {
       };
       const dbWithPool = new DuckDBDatabase(
         new DuckDBDialect(),
-        new DuckDBSession(
-          pool as never,
-          new DuckDBDialect(),
-          undefined,
-          {}
-        ) as never,
-        undefined,
+        new DuckDBSession(pool as never, new DuckDBDialect(), {}, {}) as never,
+        {},
         pool as never,
         instance as never
       );

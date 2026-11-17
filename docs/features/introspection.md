@@ -180,9 +180,6 @@ interface IntrospectResult {
     // Structured metadata about tables, columns, constraints.
     // Each table may include the `database` (catalog) that owns it.
     metaJson: IntrospectedTable[];
-
-    /** @deprecated Never populated. Will be removed in the next major version. */
-    relationsTs?: string;
   };
 }
 ```
@@ -349,10 +346,10 @@ bunx duckdb-introspect --url ./app.duckdb --out ./src/db/schema.ts
 // src/db/index.ts
 import { DuckDBInstance } from '@duckdb/node-api';
 import { drizzle } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema.ts';
 
 const instance = await DuckDBInstance.create('./app.duckdb');
 const connection = await instance.connect();
 
-export const db = drizzle(connection, { schema });
+export const db = drizzle(connection);
+// Query the generated tables, for example db.select().from(users)
 ```
