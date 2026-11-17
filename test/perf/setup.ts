@@ -1,5 +1,6 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
+import { test, type BenchFn } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../../src/index.ts';
 import {
   closeClientConnection,
@@ -23,6 +24,22 @@ export interface PooledPerfHarness {
 }
 
 export type AnyPerfHarness = PerfHarness | PooledPerfHarness;
+
+/**
+ * Registers one benchmark as its own test. The warmup and minimum iteration
+ * counts are the tinybench 2 defaults that Vitest 4 applied, pinned here so
+ * results stay comparable with the recorded benchmark history.
+ */
+export function perfBench(name: string, time: number, fn: BenchFn): void {
+  test(name, { timeout: 120_000 }, async ({ bench }) => {
+    await bench(name, fn).run({
+      time,
+      iterations: 10,
+      warmupTime: 100,
+      warmupIterations: 5,
+    });
+  });
+}
 
 export interface PerfHarnessOptions {
   /** Use connection pooling instead of single connection */

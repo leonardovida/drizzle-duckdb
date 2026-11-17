@@ -16,6 +16,7 @@ import {
 import {
   buildVitestArgs,
   parseArgs as parseRunArgs,
+  toActionRows,
 } from '../scripts/run-perf.ts';
 
 const tempDirs: string[] = [];
@@ -215,6 +216,59 @@ describe('run-perf', () => {
       'test/perf/query.bench.ts',
       'test/perf/pool.bench.ts',
     ]);
+  });
+
+  test('writes the JSON reporter output to the given file', () => {
+    const args = buildVitestArgs('/tmp/bench.json', []);
+
+    expect(args).toContain('--reporter=json');
+    expect(args).toContain('--outputFile.json=/tmp/bench.json');
+    expect(args).not.toContain('--outputJson');
+  });
+
+  test('reads ops/sec as 1000 over the mean latency in ms', () => {
+    const task = (name: string, mean: number, rme: number) => ({
+      name,
+      latency: { mean, rme },
+      // Mean of per-sample rates, which is not the recorded value.
+      throughput: { mean: 2000 / mean, rme: 1 },
+      period: mean,
+      totalTime: mean * 10,
+      rank: 1,
+    });
+    const report = {
+      testResults: [
+        {
+          assertionResults: [
+            {
+              title: 'scan',
+              benchmarks: [
+                { name: 'scans > scan', tasks: [task('scan', 4, 2)] },
+              ],
+            },
+            {
+              title: 'lookup',
+              benchmarks: [
+                {
+                  name: 'scans > lookup',
+                  tasks: [
+                    task('lookup', 0.5, 1.5),
+                    { ...task('stored', 1, 0), fromStore: true },
+                  ],
+                },
+              ],
+            },
+            { title: 'plain test', benchmarks: [] },
+          ],
+        },
+      ],
+    };
+
+    expect(toActionRows(report)).toEqual([
+      { name: 'lookup', unit: 'ops/s', value: 2000, range: 1.5 },
+      { name: 'scan', unit: 'ops/s', value: 250, range: 2 },
+    ]);
+    expect(toActionRows({})).toEqual([]);
   });
 
   test('parses benchmark output and filters separately', () => {
