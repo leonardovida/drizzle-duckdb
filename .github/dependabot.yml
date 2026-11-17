@@ -14,7 +14,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    versioning-strategy: increase
     ignore:
       # Peer ranges for these packages are maintained by hand, so major
       # updates of the dev copies need a deliberate change. drizzle-orm is
