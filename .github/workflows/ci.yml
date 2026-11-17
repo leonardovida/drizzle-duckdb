@@ -80,7 +80,7 @@ jobs:
         include:
           # Both peer floors together, which neither floor job covers alone.
           - node-api: '1.4.4-r.1'
-            drizzle: '0.40.1'
+            drizzle: '1.0.0-rc.5'
 
     steps:
       - name: Checkout repository
@@ -117,7 +117,7 @@ jobs:
             exit 1
           fi
           if [ -n "$DRIZZLE_VERSION" ]; then
-            # drizzle-orm 0.40 does not export ./package.json.
+            # drizzle-orm does not export ./package.json.
             installed=$(node -p "require('./node_modules/drizzle-orm/package.json').version")
             if [ "$installed" != "$DRIZZLE_VERSION" ]; then
               echo "::error::Expected drizzle-orm ${DRIZZLE_VERSION}, found ${installed}"
@@ -145,13 +145,13 @@ jobs:
         with:
           bun-version: '1.4.4'
       - run: bun install --frozen-lockfile
-      - run: bun add --dev --no-save drizzle-orm@0.40.1
+      - run: bun add --dev --no-save drizzle-orm@1.0.0-rc.5
       - run: bun run typecheck
       - run: CI=1 bun run test
       - run: bun run build
       - run: bun run check:package
         env:
-          CONSUMER_DRIZZLE_VERSION: '0.40.1'
+          CONSUMER_DRIZZLE_VERSION: '1.0.0-rc.5'
 
   runtime-floor:
     name: Packed consumer on minimum Node runtime

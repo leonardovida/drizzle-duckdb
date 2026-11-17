@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { defineRelations, sql } from 'drizzle-orm';
 import { integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../src/index.ts';
@@ -15,20 +15,19 @@ const posts = pgTable('rq_posts', {
   publishedAt: timestamp('published_at'),
 });
 
-const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
+const relations = defineRelations({ users, posts }, (r) => ({
+  users: {
+    posts: r.many.posts({ from: r.users.id, to: r.posts.authorId }),
+  },
+  posts: {
+    author: r.one.users({ from: r.posts.authorId, to: r.users.id }),
+  },
 }));
 
-const postsRelations = relations(posts, ({ one }) => ({
-  author: one(users, { fields: [posts.authorId], references: [users.id] }),
-}));
-
-const schema = { users, posts, usersRelations, postsRelations };
-
-let db: DuckDBDatabase<typeof schema>;
+let db: DuckDBDatabase<typeof relations>;
 
 beforeAll(async () => {
-  db = await drizzle(':memory:', { schema });
+  db = await drizzle(':memory:', { relations });
   await db.execute(sql`
     create table rq_users (id integer primary key, full_name text not null);
     create table rq_posts (
@@ -93,7 +92,7 @@ test('findMany loads many and one relations with DuckDB JSON functions', async (
   ]);
 
   const withAuthor = await db.query.posts.findFirst({
-    where: (p, { eq }) => eq(p.id, 10),
+    where: { id: 10 },
     columns: { title: true },
     with: { author: { with: { posts: { columns: { id: true } } } } },
   });

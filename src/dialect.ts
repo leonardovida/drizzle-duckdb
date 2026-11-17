@@ -141,34 +141,75 @@ async function isDuckLakeCurrentCatalog(
 }
 
 // drizzle-orm's relational builder loads each relation in a lateral join that
-// serializes the related rows with Postgres JSON functions. DuckDB returns the
-// subquery row "t" as a struct and list() collects structs, so relations keep
-// their native values, such as 64-bit integers past 2^53. drizzle-orm defines
-// these chunks privately, so they are matched by their text.
-const RELATIONAL_JOIN_CHUNKS = new Map([
-  [
-    ' left join lateral(select row_to_json("t".*) "r" from (',
-    ' left join lateral(select "t" "r" from (',
-  ],
-  [
-    ` left join lateral(select coalesce(json_agg(row_to_json("t".*)), '[]') as "r" from (`,
-    ' left join lateral(select coalesce(list("t"), []) as "r" from (',
-  ],
-]);
+// serializes the related rows with Postgres JSON functions. DuckDB packs the
+// row into a struct and list() collects structs, so relations keep their
+// native values, such as 64-bit integers past 2^53. drizzle-orm defines these
+// chunks privately, so they are matched by their text.
+const RELATIONAL_JOIN_ONE =
+  ' left join lateral(select row_to_json("t".*) "r" from (';
+const RELATIONAL_JOIN_MANY = ` left join lateral(select coalesce(json_agg(row_to_json("t".*)), '[]') as "r" from (`;
 
 // DuckDB rejects parameterized LIMIT/OFFSET in correlated subqueries, which
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * The struct of one related row. Fields are named explicitly: a bare "t"
+ * would resolve to a column of the related table named t, if it has one.
+ */
+function relatedRowStruct(item: RelationalSelectionItem): string {
+  const fields = item.selection!.map(
+    ({ key }) => `${quoteIdentifier(key)} := "t".${quoteIdentifier(key)}`
+  );
+  return `struct_pack(${fields.join(', ')})`;
+}
+
+/**
+ * Relations in the order drizzle-orm emits their lateral joins: depth first,
+ * each relation before the relations nested in it.
+ */
+function relationsInJoinOrder(
+  selection: readonly RelationalSelectionItem[],
+  result: RelationalSelectionItem[] = []
+): RelationalSelectionItem[] {
+  for (const item of selection) {
+    if (!item.selection) continue;
+    result.push(item);
+    relationsInJoinOrder(item.selection, result);
+  }
+  return result;
+}
+
+const UNMATCHED_JOIN_MESSAGE =
+  'drizzle-duckdb could not match a relational query join to its relation.';
+
 /** Rewrite the top-level chunks of a relational query in place. */
-function rewriteRelationalChunks(chunks: unknown[]): void {
+function rewriteRelationalChunks(
+  chunks: unknown[],
+  selection: readonly RelationalSelectionItem[]
+): void {
+  const relations = relationsInJoinOrder(selection);
+  let relationIndex = 0;
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
     if (!is(chunk, StringChunk)) continue;
-    const replacement = RELATIONAL_JOIN_CHUNKS.get(chunk.value);
-    if (replacement !== undefined) {
+    if (
+      chunk.value === RELATIONAL_JOIN_ONE ||
+      chunk.value === RELATIONAL_JOIN_MANY
+    ) {
+      const relation = relations[relationIndex++];
+      if (!relation) throw new Error(UNMATCHED_JOIN_MESSAGE);
+      const row = relatedRowStruct(relation);
       // Shared chunk instances must not be mutated.
-      chunks[index] = new StringChunk(replacement);
+      chunks[index] = new StringChunk(
+        chunk.value === RELATIONAL_JOIN_ONE
+          ? ` left join lateral(select ${row} "r" from (`
+          : ` left join lateral(select coalesce(list(${row}), []) as "r" from (`
+      );
       continue;
     }
     const next = chunks[index + 1];
@@ -178,6 +219,9 @@ function rewriteRelationalChunks(chunks: unknown[]): void {
     ) {
       chunks[index + 1] = new StringChunk(String(next));
     }
+  }
+  if (relationIndex !== relations.length) {
+    throw new Error(UNMATCHED_JOIN_MESSAGE);
   }
 }
 
@@ -421,7 +465,10 @@ export class DuckDBDialect extends PgDialect {
     config: Parameters<PgDialect['buildRelationalQuery']>[0]
   ): BuildRelationalQueryResult {
     const result = super.buildRelationalQuery(config);
-    rewriteRelationalChunks(result.sql.queryChunks);
+    rewriteRelationalChunks(
+      result.sql.queryChunks,
+      result.selection as unknown as readonly RelationalSelectionItem[]
+    );
     return result;
   }
 

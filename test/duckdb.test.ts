@@ -55,7 +55,6 @@ import {
   union,
   unionAll,
   unique,
-  uniqueKeyName,
   uuid as pgUuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -422,9 +421,8 @@ test('table configs: unique in column', async () => {
   const tableConfig = getTableConfig(cities1Table);
 
   const columnName = tableConfig.columns.find((it) => it.name === 'name');
-  assert(
-    columnName?.uniqueName === uniqueKeyName(cities1Table, [columnName!.name])
-  );
+  // drizzle-orm 1.0 leaves an unnamed column unique constraint without a name.
+  assert(columnName?.uniqueName === undefined);
   assert(columnName?.isUnique);
 
   const columnState = tableConfig.columns.find((it) => it.name === 'state');
@@ -2218,8 +2216,11 @@ test('select a field without joining its table', async () => {
   const query = db.select({ name: users2Table.name }).from(usersTable);
 
   expect(() => query.prepare('query')).not.toThrow();
-  const result = await db.select({ name: users2Table.name }).from(usersTable);
-  assert(Array.isArray(result));
+  // drizzle-orm 1.0 keeps the users2 qualifier, so DuckDB rejects the query
+  // instead of reading users.name.
+  await expect(
+    db.select({ name: users2Table.name }).from(usersTable)
+  ).rejects.toThrow(/users2/);
 });
 
 // DuckDB will bind and execute subqueries without forcing aliases.

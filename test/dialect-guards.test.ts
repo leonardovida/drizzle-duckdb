@@ -1,12 +1,13 @@
 import { eq, sql } from 'drizzle-orm';
 import { integer, json, jsonb, pgTable, text } from 'drizzle-orm/pg-core';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { DuckDBDialect } from '../src/dialect.ts';
 import { drizzle, type DuckDBDatabase } from '../src/driver.ts';
 import { migrate } from '../src/migrator.ts';
+import { writeMigrationFolders } from './utils.ts';
 
 let db: DuckDBDatabase;
 
@@ -63,27 +64,13 @@ test('migrations accept table names containing single quotes', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'drizzle-duckdb-migrations-'));
   const migrationDb = await drizzle(':memory:');
   try {
-    await mkdir(join(folder, 'meta'));
-    await writeFile(
-      join(folder, '0000_init.sql'),
-      'create table quoted_migration_target (id integer);'
-    );
-    await writeFile(
-      join(folder, 'meta', '_journal.json'),
-      JSON.stringify({
-        version: '7',
-        dialect: 'postgresql',
-        entries: [
-          {
-            idx: 0,
-            version: '7',
-            when: 1700000000000,
-            tag: '0000_init',
-            breakpoints: true,
-          },
-        ],
-      })
-    );
+    writeMigrationFolders(folder, [
+      {
+        tag: 'init',
+        when: 1700000000000,
+        sql: 'create table quoted_migration_target (id integer);',
+      },
+    ]);
 
     await migrate(migrationDb, {
       migrationsFolder: folder,

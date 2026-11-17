@@ -1,10 +1,11 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { drizzle, migrate, type DuckDBDatabase } from '../src/index.ts';
+import { writeMigrationFolders } from './utils.ts';
 
 describe('SQL that cannot be prepared as one statement', () => {
   let instance: DuckDBInstance;
@@ -16,32 +17,18 @@ describe('SQL that cannot be prepared as one statement', () => {
     db = drizzle(await instance.connect());
 
     migrationsDir = mkdtempSync(join(tmpdir(), 'drizzle-duckdb-cache-'));
-    mkdirSync(join(migrationsDir, 'meta'));
-    writeFileSync(
-      join(migrationsDir, 'meta', '_journal.json'),
-      JSON.stringify({
-        version: '5',
-        dialect: 'pg',
-        entries: [
-          {
-            idx: 0,
-            version: '5',
-            when: 1_700_000_000_000,
-            tag: '0000_no_breakpoints',
-            breakpoints: false,
-          },
-        ],
-      })
-    );
-    writeFileSync(
-      join(migrationsDir, '0000_no_breakpoints.sql'),
-      [
-        'CREATE TABLE cache_a (id INTEGER);',
-        'CREATE TABLE cache_b (id INTEGER);',
-        'INSERT INTO cache_a VALUES (1);',
-        '-- trailing comment',
-      ].join('\n')
-    );
+    writeMigrationFolders(migrationsDir, [
+      {
+        tag: 'no_breakpoints',
+        when: 1_700_000_000_000,
+        sql: [
+          'CREATE TABLE cache_a (id INTEGER);',
+          'CREATE TABLE cache_b (id INTEGER);',
+          'INSERT INTO cache_a VALUES (1);',
+          '-- trailing comment',
+        ].join('\n'),
+      },
+    ]);
   });
 
   afterAll(async () => {

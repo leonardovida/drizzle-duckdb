@@ -436,7 +436,18 @@ export function drizzle<TRelations extends AnyRelations = EmptyRelations>(
     | DuckDBDrizzleConfigWithClient<TRelations>,
   config?: DuckDBDrizzleConfig<TRelations>
 ): DuckDBDatabase<TRelations> | Promise<DuckDBDatabase<TRelations>> {
-  const target = resolveDrizzleTarget(clientOrConfigOrPath, config);
+  let target: ResolvedDrizzleTarget<TRelations>;
+  try {
+    target = resolveDrizzleTarget(clientOrConfigOrPath, config);
+  } catch (error) {
+    // The connection overloads return a promise, so they reject instead.
+    const opensConnection =
+      typeof clientOrConfigOrPath === 'string' ||
+      (isConfigObject(clientOrConfigOrPath) &&
+        'connection' in clientOrConfigOrPath);
+    if (opensConnection) return Promise.reject(error);
+    throw error;
+  }
 
   if (target.kind === 'connection') {
     return createFromConnectionString(
