@@ -13,30 +13,32 @@ Install Drizzle DuckDB and its peer dependencies, `drizzle-orm` and `@duckdb/nod
 
 > Install `@duckdbfan/drizzle-duckdb`.
 
+Version 3 is a release candidate published under the `next` tag. It requires drizzle-orm 1.0, which is also a release candidate. A plain install without `@next` selects version 2.6, which works with drizzle-orm 0.40.1 to 0.45 and is documented on the [`2.x` branch](https://github.com/leonardovida/drizzle-duckdb/tree/2.x).
+
 ## Package Installation
 
 **Using bun:**
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using npm:**
 
 ```bash
-npm install @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using pnpm:**
 
 ```bash
-pnpm add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+pnpm add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using yarn:**
 
 ```bash
-yarn add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+yarn add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 ## Peer Dependencies

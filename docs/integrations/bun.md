@@ -12,7 +12,7 @@ Drizzle DuckDB runs on Bun as well as Node.js. Bun runs TypeScript directly, whi
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 ## Basic Usage

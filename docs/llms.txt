@@ -9,7 +9,7 @@ Drizzle DuckDB (`@duckdbfan/drizzle-duckdb`) is a DuckDB dialect adapter for Dri
 ## Installation
 
 ```bash
-npm install @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 ```
 
 - Peer `drizzle-orm`: `>=1.0.0-rc.5 <=1.0.0-rc.99 || >=1.0.0 <2.0.0`, so release candidates from rc.5 and 1.x releases. npm snapshot builds such as 1.0.0-rc.4-5d5b77c do not match. drizzle-orm 1.0 is a release candidate, and npm `latest` still installs 0.45, so install it with the `rc` tag.

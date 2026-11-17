@@ -17,12 +17,14 @@
 
 > **Status:** Experimental. Query building, migrations and type inference are stable. Some DuckDB-specific types and edge cases are still being refined.
 
+> **Version 3 is a release candidate.** It requires drizzle-orm 1.0, which is itself a release candidate, and is published under the `next` tag. Version 2.6 remains the `latest` release and works with drizzle-orm 0.40.1 to 0.45. Its source and documentation are on the [`2.x` branch](https://github.com/leonardovida/drizzle-duckdb/tree/2.x). See [Upgrading to v3](https://leonardovida.github.io/drizzle-duckdb/reference/upgrading-to-v3).
+
 Every docs page has a **Markdown (raw)** button with LLM-friendly source.
 
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 # or: npm install / pnpm add with the same packages
 ```
 
