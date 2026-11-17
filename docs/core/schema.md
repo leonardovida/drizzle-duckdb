@@ -154,10 +154,10 @@ const posts = pgTable(
 
 ## Relations
 
-Define relations for relational queries:
+Define relations for relational queries with `defineRelations()` from drizzle-orm 1.0:
 
 ```typescript
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey(),
@@ -170,22 +170,20 @@ export const posts = pgTable('posts', {
   title: text('title'),
 });
 
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
-}));
-
-export const postsRelations = relations(posts, ({ one }) => ({
-  author: one(users, {
-    fields: [posts.userId],
-    references: [users.id],
-  }),
+export const relations = defineRelations({ users, posts }, (r) => ({
+  users: {
+    posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+  },
+  posts: {
+    author: r.one.users({ from: r.posts.userId, to: r.users.id }),
+  },
 }));
 ```
 
-Now you can use relational queries:
+Pass the result as the `relations` option to use relational queries:
 
 ```typescript
-const db = drizzle(connection, { schema });
+const db = drizzle(connection, { relations });
 
 const usersWithPosts = await db.query.users.findMany({
   with: {
@@ -198,9 +196,15 @@ const firstPost = await db.query.posts.findFirst({
   with: { author: true },
 });
 // { id: 1, userId: 1, title: '...', author: { id: 1, name: 'Alice' } }
+
+const recentPosts = await db.query.posts.findMany({
+  where: { userId: 1 },
+  orderBy: { id: 'desc' },
+  limit: 10,
+});
 ```
 
-`findMany()` returns an array and `findFirst()` returns one object or `undefined`. Result keys use the property names from your schema, such as `userId`, not the column names. Nested `with:` relations work. The driver rewrites Drizzle's Postgres JSON functions to DuckDB's `json_array` and `to_json(list(...))` for them.
+`findMany()` returns an array and `findFirst()` returns one object or `undefined`. Result keys use the property names from your schema, such as `userId`, not the column names. Nested `with:` relations work. `where` and `orderBy` take objects, as in the drizzle-orm 1.0 relational query API. The driver builds nested rows as DuckDB structs and lists rather than JSON, so nested values decode through their column definitions.
 
 ## Schema Organization
 
@@ -209,13 +213,12 @@ const firstPost = await db.query.posts.findFirst({
 ```typescript
 // schema.ts
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 
 export const users = pgTable('users', { ... });
 export const posts = pgTable('posts', { ... });
 
-export const usersRelations = relations(users, ...);
-export const postsRelations = relations(posts, ...);
+export const relations = defineRelations({ users, posts }, (r) => ({ ... }));
 ```
 
 ### Multiple Files (Larger Projects)
@@ -223,33 +226,36 @@ export const postsRelations = relations(posts, ...);
 ```typescript
 // schema/users.ts
 export const users = pgTable('users', { ... });
-export const usersRelations = relations(users, ...);
 
 // schema/posts.ts
 export const posts = pgTable('posts', { ... });
-export const postsRelations = relations(posts, ...);
 
-// schema/index.ts
-export * from './users';
-export * from './posts';
+// schema/relations.ts
+import { defineRelations } from 'drizzle-orm';
+import { users } from './users';
+import { posts } from './posts';
+
+export const relations = defineRelations({ users, posts }, (r) => ({ ... }));
 ```
 
 ## Column Name Casing
 
-Pass Drizzle's `casing` option to derive column names from the TypeScript keys, so you can leave out the name argument:
+drizzle-orm 1.0 sets casing on the table definition. Define the table with `snakeCase.table()` or `camelCase.table()` from `drizzle-orm/pg-core` to derive column names from the TypeScript keys, so you can leave out the name argument:
 
 ```typescript
-const users = pgTable('users', {
+import { integer, snakeCase, text } from 'drizzle-orm/pg-core';
+
+const users = snakeCase.table('users', {
   id: integer().primaryKey(),
   userName: text(),
 });
 
-const db = drizzle(connection, { casing: 'snake_case', schema: { users } });
+const db = drizzle(connection);
 await db.insert(users).values({ id: 1, userName: 'ada' });
 // insert into "users" ("id", "user_name") values ($1, $2)
 ```
 
-`casing` accepts `'snake_case'` and `'camelCase'`. Result keys still use the TypeScript names, such as `userName`.
+`snakeCase` and `camelCase` also provide `view`, `materializedView` and `schema`. `pgTableCreator((name) => name, 'snake_case')` works as well. Result keys still use the TypeScript names, such as `userName`. `drizzle()` no longer accepts a `casing` option.
 
 ## Custom Schemas
 
@@ -276,7 +282,7 @@ import {
   doublePrecision,
   boolean,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 import {
   duckDbJson,
   duckDbList,
@@ -322,15 +328,13 @@ export const orders = pgTable('orders', {
 });
 
 // Relations
-export const usersRelations = relations(users, ({ many }) => ({
-  orders: many(orders),
-}));
-
-export const ordersRelations = relations(orders, ({ one }) => ({
-  user: one(users, {
-    fields: [orders.userId],
-    references: [users.id],
-  }),
+export const relations = defineRelations({ users, products, orders }, (r) => ({
+  users: {
+    orders: r.many.orders({ from: r.users.id, to: r.orders.userId }),
+  },
+  orders: {
+    user: r.one.users({ from: r.orders.userId, to: r.users.id }),
+  },
 }));
 ```
 

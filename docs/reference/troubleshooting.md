@@ -423,12 +423,12 @@ const instance = await DuckDBInstance.create('md:', {
 
 **Symptom**: TypeScript shows wrong types for query results.
 
-**Solution**: Ensure you're passing schema to drizzle:
+**Solution**: Ensure you're passing the relations built with `defineRelations()` to drizzle:
 
 ```typescript
-import * as schema from './schema';
+import { relations } from './schema';
 
-const db = drizzle(connection, { schema });
+const db = drizzle(connection, { relations });
 
 // Now relational queries have correct types
 const users = await db.query.users.findMany();

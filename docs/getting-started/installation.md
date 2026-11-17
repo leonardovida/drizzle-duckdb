@@ -18,30 +18,30 @@ Install Drizzle DuckDB and its peer dependencies, `drizzle-orm` and `@duckdb/nod
 **Using bun:**
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using npm:**
 
 ```bash
-npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using pnpm:**
 
 ```bash
-pnpm add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+pnpm add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 ```
 
 **Using yarn:**
 
 ```bash
-yarn add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+yarn add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 ```
 
 ## Peer Dependencies
 
-- **`drizzle-orm`**: version 0.40.1 or newer, below 0.46.0.
+- **`drizzle-orm`**: version 1.0.0-rc.5 or newer, below 2.0.0. drizzle-orm 1.0 is a release candidate at the time of writing, and the `latest` tag on npm still installs 0.45. Install it with the `rc` tag, as in `drizzle-orm@rc`.
 - **`@duckdb/node-api`**: version 1.4.4 or newer, below 1.6.0. The `-r.N` release builds in that range, such as `1.4.4-r.1` and `1.5.6-r.2`, also match. The repository develops and tests against `1.5.6-r.2`.
 
 ## Requirements
@@ -102,7 +102,7 @@ npx tsx test.ts
 For migrations, you can also install Drizzle Kit:
 
 ```bash
-bun add -d drizzle-kit
+bun add -d drizzle-kit@rc
 ```
 
 See [Migrations]({{ '/features/migrations' | relative_url }}) for setup details.

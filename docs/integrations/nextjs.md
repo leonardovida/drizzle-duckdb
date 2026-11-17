@@ -63,9 +63,8 @@ The simplest approach uses connection strings with automatic pooling:
 ```typescript
 // lib/db.ts
 import { drizzle, DuckDBDatabase } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
 
-let db: Awaited<ReturnType<typeof drizzle<typeof schema>>> | null = null;
+let db: DuckDBDatabase | null = null;
 
 export async function getDb() {
   if (!db) {
@@ -77,11 +76,10 @@ export async function getDb() {
           path: 'md:',
           options: { motherduck_token: token },
         },
-        schema,
       });
     } else {
       // In-memory with auto-pooling
-      db = await drizzle(':memory:', { schema });
+      db = await drizzle(':memory:');
     }
   }
   return db;
@@ -103,7 +101,6 @@ db = await drizzle({
     options: { motherduck_token: token },
   },
   pool: 'jumbo', // 8 connections (or use { size: 8 })
-  schema,
 });
 ```
 
@@ -117,10 +114,13 @@ For more control, create the pool manually:
 
 ```typescript
 import { DuckDBInstance } from '@duckdb/node-api';
-import { drizzle, createDuckDBConnectionPool } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
+import {
+  drizzle,
+  createDuckDBConnectionPool,
+  type DuckDBDatabase,
+} from '@duckdbfan/drizzle-duckdb';
 
-let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+let db: DuckDBDatabase | null = null;
 
 export async function getDb() {
   if (!db) {
@@ -135,7 +135,7 @@ export async function getDb() {
       maxLifetimeMs: 10 * 60_000,
       idleTimeoutMs: 60_000,
     });
-    db = drizzle(pool, { schema });
+    db = drizzle(pool);
   }
   return db;
 }
@@ -339,10 +339,9 @@ export const users = pgTable('users', {
 **`lib/db.ts`**:
 
 ```typescript
-import { drizzle } from '@duckdbfan/drizzle-duckdb';
-import * as schema from './schema';
+import { drizzle, type DuckDBDatabase } from '@duckdbfan/drizzle-duckdb';
 
-let db: Awaited<ReturnType<typeof drizzle<typeof schema>>> | null = null;
+let db: DuckDBDatabase | null = null;
 
 export async function getDb() {
   if (!db) {
@@ -350,10 +349,9 @@ export async function getDb() {
     if (token) {
       db = await drizzle({
         connection: { path: 'md:', options: { motherduck_token: token } },
-        schema,
       });
     } else {
-      db = await drizzle(':memory:', { schema });
+      db = await drizzle(':memory:');
     }
   }
   return db;

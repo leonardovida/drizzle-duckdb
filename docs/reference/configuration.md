@@ -16,7 +16,7 @@ The `drizzle()` function accepts a configuration object:
 ```typescript
 const db = await drizzle(':memory:', {
   logger: true,
-  schema: mySchema,
+  relations,
   rejectStringArrayLiterals: false,
   pool: { size: 6, idleTimeoutMs: 60_000 },
 });
@@ -59,20 +59,20 @@ const db = drizzle(connection, {
 Query: SELECT * FROM users WHERE id = $1 -- params: [1]
 ```
 
-### schema
+### relations
 
-Schema definition for relational queries.
+Relations for relational queries, built with `defineRelations()` from drizzle-orm 1.0.
 
-| Type                      | Default     | Description                             |
-| ------------------------- | ----------- | --------------------------------------- |
-| `Record<string, unknown>` | `undefined` | Schema object with tables and relations |
+| Type                          | Default     | Description                         |
+| ----------------------------- | ----------- | ----------------------------------- |
+| Result of `defineRelations()` | `undefined` | Tables and relations for `db.query` |
 
 **Usage**:
 
 ```typescript
 // schema.ts
 import { pgTable, integer, text } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey(),
@@ -85,14 +85,16 @@ export const posts = pgTable('posts', {
   title: text('title'),
 });
 
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
+export const relations = defineRelations({ users, posts }, (r) => ({
+  users: {
+    posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+  },
 }));
 
 // db.ts
-import * as schema from './schema';
+import { relations } from './schema';
 
-const db = drizzle(connection, { schema });
+const db = drizzle(connection, { relations });
 
 // Now relational queries work
 const usersWithPosts = await db.query.users.findMany({
@@ -100,21 +102,19 @@ const usersWithPosts = await db.query.users.findMany({
 });
 ```
 
-### casing
+### Removed: schema and casing
 
-Map TypeScript keys to column names, as in other Drizzle drivers.
-
-| Type                          | Default     | Description                                 |
-| ----------------------------- | ----------- | ------------------------------------------- |
-| `'snake_case' \| 'camelCase'` | `undefined` | Derive column names from the TypeScript key |
+drizzle-orm 1.0 removed the `schema` and `casing` options, and `drizzle()` throws when it receives either one. Use `relations` for relational queries. Set casing on the table definition with `snakeCase.table()` or `camelCase.table()` from `drizzle-orm/pg-core`:
 
 ```typescript
-const users = pgTable('users', { id: integer(), userName: text() });
-const db = drizzle(connection, { casing: 'snake_case' });
+import { integer, snakeCase, text } from 'drizzle-orm/pg-core';
+
+const users = snakeCase.table('users', { id: integer(), userName: text() });
+const db = drizzle(connection);
 // db.select().from(users) reads "user_name" into userName
 ```
 
-`DrizzleConfig` also has a `cache` option. The DuckDB driver does not apply it.
+See [Upgrading to v3]({{ '/reference/upgrading-to-v3' | relative_url }}#drizzle-orm-10).
 
 ### Array SQL Handling
 

@@ -24,9 +24,10 @@ This is `@duckdbfan/drizzle-duckdb`, a DuckDB dialect adapter for drizzle-orm. I
 
 The package exports from `src/index.ts`, which re-exports most of these modules:
 
-- `driver.ts`: `drizzle()` factory and the `DuckDBDatabase` class extending `PgDatabase`, including `executeBatches()`, `executeBatchesRaw()`, `executeArrow()`, `appendRows()` and `close()`
+- `driver.ts`: `drizzle()` factory and the `DuckDBDatabase` class extending `PgAsyncDatabase`, including `executeBatches()`, `executeBatchesRaw()`, `executeArrow()`, `appendRows()` and `close()`
 - `session.ts`: `DuckDBSession` and `DuckDBPreparedQuery` for query execution and transaction handling
-- `dialect.ts`: `DuckDBDialect` extending `PgDialect` with DuckDB-specific SQL generation
+- `dialect.ts`: `DuckDBDialect` extending `PgDialect` with DuckDB-specific SQL generation, result mappers and the relational query rewrite to `struct_pack` and `list`
+- `codecs.ts`: DuckDB codecs for column decoding, parameter kind recording and the Pg JSON guard
 - `select-builder.ts`: select builders that apply duplicate-column aliasing
 - `columns.ts`: DuckDB column helpers (`duckDbList`, `duckDbArray`, `duckDbStruct`, `duckDbMap`, `duckDbJson`, `duckDbTimestamp`, etc.) and the array predicate helpers (`duckDbArrayContains`, `duckDbArrayContained`, `duckDbArrayOverlaps`)
 - `operators.ts`: aliases for the array predicate helpers (`arrayHasAll`, `arrayHasAny`, `arrayContainedBy`)
@@ -65,7 +66,7 @@ The package exports from `src/index.ts`, which re-exports most of these modules:
 
 ### Key Design Decisions
 
-1. **Built on Postgres Driver**: Extends `PgDialect`, `PgSession`, `PgDatabase` from `drizzle-orm/pg-core` since DuckDB's SQL is largely Postgres-compatible
+1. **Built on Postgres Driver**: Extends `PgDialect` and the async `PgAsyncSession`, `PgAsyncTransaction`, `PgAsyncPreparedQuery` and `PgAsyncDatabase` from `drizzle-orm/pg-core` (drizzle-orm 1.0), since DuckDB's SQL is largely Postgres-compatible
 
 2. **Array Operators Pass Through**: DuckDB supports `@>`, `<@` and `&&` on LIST and ARRAY natively, so the driver sends them unchanged. The `duckDbArray*` helpers emit `array_has_all` and `array_has_any`
 

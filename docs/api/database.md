@@ -7,16 +7,14 @@ nav_order: 2
 
 # DuckDBDatabase
 
-The `DuckDBDatabase` class extends Drizzle's `PgDatabase` with DuckDB-specific handling. It's the main interface for executing queries.
+The `DuckDBDatabase` class extends Drizzle's `PgAsyncDatabase` with DuckDB-specific handling. It's the main interface for executing queries.
 
 ## Class Overview
 
 ```typescript
-class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
-  DuckDBQueryResultHKT,
-  TFullSchema,
-  TSchema
-> {
+class DuckDBDatabase<
+  TRelations extends AnyRelations = EmptyRelations,
+> extends PgAsyncDatabase<DuckDBQueryResultHKT, TRelations> {
   select(): DuckDBSelectBuilder<undefined>;
   select<TSelection>(fields: TSelection): DuckDBSelectBuilder<TSelection>;
   insert<TTable>(table: TTable): InsertBuilder<TTable>;
@@ -32,7 +30,7 @@ class DuckDBDatabase<TFullSchema, TSchema> extends PgDatabase<
   // DuckDB additions
   appendRows<TTable>(
     table: TTable,
-    rows: readonly TTable['$inferInsert'][]
+    rows: readonly InferInsertModel<TTable>[]
   ): Promise<number>;
   executeBatches<T>(
     query: SQL,

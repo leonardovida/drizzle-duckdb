@@ -22,13 +22,13 @@ Every docs page has a **Markdown (raw)** button with LLM-friendly source.
 ## Installation
 
 ```bash
-bun add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+bun add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 # or: npm install / pnpm add with the same packages
 ```
 
 | Requirement        | Supported versions                                                                  |
 | ------------------ | ----------------------------------------------------------------------------------- |
-| `drizzle-orm`      | 0.40.1 or newer, below 0.46.0                                                       |
+| `drizzle-orm`      | 1.0.0-rc.5 or newer, below 2.0.0                                                    |
 | `@duckdb/node-api` | 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as `1.5.6-r.2`            |
 | Runtime            | Node.js 18.17 or newer (22, 24 or 26 recommended), or Bun                           |
 
@@ -174,11 +174,8 @@ const db = await drizzle(':memory:', {
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals: false,
 
-  // Map camelCase keys to snake_case column names
-  casing: 'snake_case',
-
-  // Schema for relational queries
-  schema: mySchema,
+  // Relations from defineRelations() for relational queries
+  relations,
 });
 ```
 

@@ -9,10 +9,10 @@ Drizzle DuckDB (`@duckdbfan/drizzle-duckdb`) is a DuckDB dialect adapter for Dri
 ## Installation
 
 ```bash
-npm install @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
+npm install @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 ```
 
-- Peer `drizzle-orm`: 0.40.1 or newer, below 0.46.0.
+- Peer `drizzle-orm`: 1.0.0-rc.5 or newer, below 2.0.0. drizzle-orm 1.0 is a release candidate, and npm `latest` still installs 0.45, so install it with the `rc` tag.
 - Peer `@duckdb/node-api` (required): 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as 1.4.4-r.1 and 1.5.6-r.1. The repository develops against 1.5.6-r.1.
 - Node.js 18.17 or newer (22 or 24 recommended). Bun also works.
 
@@ -56,7 +56,7 @@ await db.close();
 ## Configuration
 
 - `logger`: `true` or a Drizzle `Logger`.
-- `schema`: tables and relations for `db.query`. Relational queries work: `findMany` returns an array, `findFirst` returns an object or undefined, and `with:` loads relations.
+- `relations`: the result of drizzle-orm 1.0 `defineRelations()`, for `db.query`. Relational queries work: `findMany` returns an array, `findFirst` returns an object or undefined, `with:` loads relations, and `where`/`orderBy` take objects such as `{ id: 1 }`. The `schema` and `casing` options were removed with drizzle-orm 1.0 and throw. Set casing with `snakeCase.table()` from `drizzle-orm/pg-core`.
 - `pool`: preset name ('pulse' 4, 'standard' 6, 'jumbo' 8, 'mega' 12, 'giga' 16, 'local' 8, 'memory' 4), an object `{ size, acquireTimeout, maxWaitingRequests, maxLifetimeMs, idleTimeoutMs }`, or `false` for one connection. Default size 4. `acquireTimeout` defaults to 30000 ms, and 0 or Infinity means no timeout. `maxWaitingRequests` defaults to 100 and must be a non-negative integer or Infinity. Negative or NaN values throw. Applies only to the connection-string and `{ connection }` forms.
 - `dateParams`: 'timestamp' (default) or 'timestamptz'. The DuckDB type of a bare Date parameter, one written into a sql template without a column. See Parameter Binding.
 - `decimalMode`: 'number' (default) or 'string'. 'string' reads every DECIMAL as exact text in raw, streaming, columnar and nested reads.
@@ -108,7 +108,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 - Each column is converted on its own. TIMESTAMP_NS, TIMETZ and TIME_NS columns come back as DuckDB text, other columns keep their JS values (BLOB as Buffer, BIGINT and HUGEINT as bigint, DATE as Date).
 - Infinite values read as the strings 'infinity' and '-infinity' for DATE and timestamp columns, also in `mode: 'date'` columns.
 - pg-core `date()` in string mode prints DuckDB's text, such as '10000-01-01' and '0044-03-15 (BC)'.
-- Relational queries (`db.query` with `with:`) keep `bigint({ mode: 'bigint' })` and numeric() columns exact inside nested relations. Other nested numbers pass through JSON and are doubles.
+- Relational queries (`db.query` with `with:`) build nested rows as DuckDB structs and lists, not JSON. Nested columns decode through their column definitions, so `bigint({ mode: 'bigint' })` and numeric() stay exact, and a nested DECIMAL extra follows `decimalMode`.
 - Raw db.execute() results have no column decoders. COUNT(*) and integer SUM return bigint, INTERVAL returns { months, days, micros }.
 - A SQL field uses its own .mapWith() decoder even when it mentions a DuckDB column. Only a bare ``sql`${column}` `` without mapWith uses the column decoder.
 - Subquery (.as()), CTE ($with) and view fields render qualified by their alias, such as "sq"."id", so joins on shared column names are not ambiguous.
@@ -159,7 +159,7 @@ Import from '@duckdbfan/drizzle-duckdb' (browser-safe copies in '@duckdbfan/driz
 import { migrate } from '@duckdbfan/drizzle-duckdb';
 
 await migrate(db, {
-  migrationsFolder: './drizzle', // drizzle-kit output: SQL files plus meta/_journal.json
+  migrationsFolder: './drizzle', // drizzle-kit 1.0 output: <YYYYMMDDHHMMSS>_<name>/migration.sql folders
   migrationsSchema: 'drizzle',
 });
 ```

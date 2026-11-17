@@ -7,12 +7,112 @@ nav_order: 7
 
 # Upgrading to v3
 
-Version 3.0 removes the APIs that 2.x marked as deprecated, together with internal helpers that the package entry point exported by accident. Most removals surface as TypeScript compile errors. The tables below map each removed name or option to its replacement.
+Version 3.0 moves the driver to drizzle-orm 1.0 and removes the APIs that 2.x marked as deprecated, together with internal helpers that the package entry point exported by accident. Most removals surface as TypeScript compile errors. The sections below map each removed name or option to its replacement.
 
-Two removals change runtime behavior for code that compiles:
+These changes affect runtime behavior for code that compiles:
 
+- `drizzle()` throws when it receives the `schema` or `casing` option. See [drizzle-orm 1.0](#drizzle-orm-10).
+- `migrate()` throws for a migrations folder in the layout of Drizzle Kit before 1.0. See [Migration folders](#migration-folders).
+- A select that reads a column of a table missing from the FROM clause fails in DuckDB. See [Other drizzle-orm 1.0 changes](#other-drizzle-orm-10-changes).
 - Transaction config now rejects instead of logging a warning. See [Transaction config](#transaction-config).
 - JavaScript callers that still pass `prepareCache` or `metaParameterName` no longer receive a warning or an error. The driver ignores the unknown option.
+
+## drizzle-orm 1.0
+
+Version 3.0 requires drizzle-orm 1.0. The peer range is `>=1.0.0-rc.5 <2.0.0`, and drizzle-orm 0.x is no longer supported. At the time of writing, drizzle-orm 1.0 is a release candidate, and the `latest` tag on npm still installs 0.45. Projects install the release candidate with the `rc` tag, together with the matching Drizzle Kit:
+
+```bash
+bun add drizzle-orm@rc
+bun add -d drizzle-kit@rc
+```
+
+The [drizzle-orm upgrade guide](https://orm.drizzle.team/docs/upgrade-v1) describes the changes in drizzle-orm itself. This section covers the changes that affect code using this driver.
+
+### Relational Queries
+
+`db.query` uses the relational query API of drizzle-orm 1.0. Relations are built with `defineRelations()` and passed as the `relations` option. The `schema` option and the `relations()` helper of drizzle-orm 0.x are no longer accepted, and `drizzle()` throws `The schema option was removed in 3.0 with drizzle-orm 1.0` when it receives `schema`.
+
+Before, with 2.x:
+
+```typescript
+import { relations } from 'drizzle-orm';
+
+export const usersRelations = relations(users, ({ many }) => ({
+  posts: many(posts),
+}));
+
+const db = drizzle(connection, { schema });
+const rows = await db.query.users.findMany({
+  where: (u, { eq }) => eq(u.id, 1),
+  with: { posts: true },
+});
+```
+
+After, with 3.0:
+
+```typescript
+import { defineRelations } from 'drizzle-orm';
+
+export const relations = defineRelations({ users, posts }, (r) => ({
+  users: {
+    posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+  },
+}));
+
+const db = drizzle(connection, { relations });
+const rows = await db.query.users.findMany({
+  where: { id: 1 },
+  with: { posts: true },
+});
+```
+
+In the 1.0 API, `where` and `orderBy` take objects such as `{ id: 1 }` and `{ id: 'desc' }`, and each entry of `extras` is a function such as ``(t) => sql`...` ``. The drizzle-orm guide [Relational Queries v1 to v2](https://orm.drizzle.team/docs/relations-v1-v2) covers the full syntax.
+
+The driver now builds nested relation rows as DuckDB structs and lists instead of JSON. Nested values decode through their column definitions. A DECIMAL extra inside a nested relation follows `decimalMode` like any other DECIMAL result.
+
+### Column Name Casing
+
+The `casing` option of `drizzle()` is removed, because drizzle-orm 1.0 sets casing on the table definition. `drizzle()` throws `The casing option was removed in 3.0 with drizzle-orm 1.0` when it receives `casing`. Tables are defined with `snakeCase.table()` or `camelCase.table()` from `drizzle-orm/pg-core`, or with `pgTableCreator((name) => name, 'snake_case')`:
+
+```typescript
+import { integer, snakeCase, text } from 'drizzle-orm/pg-core';
+
+const users = snakeCase.table('users', {
+  id: integer().primaryKey(),
+  userName: text(),
+});
+// userName maps to the user_name column
+```
+
+The `casing` option of the `DuckDBDialect` constructor is removed as well.
+
+### Migration Folders
+
+drizzle-orm 1.0 reads the folder layout of Drizzle Kit 1.0, with one `<YYYYMMDDHHMMSS>_<name>/migration.sql` folder per migration. For a folder that still contains `meta/_journal.json`, `migrate()` throws `We detected that you have old drizzle-kit migration folders. You must upgrade drizzle-kit and run "drizzle-kit up"`. Running `drizzle-kit up` with Drizzle Kit 1.0 converts the folder in place.
+
+The tracking table keeps its columns `id`, `hash` and `created_at`, and databases migrated with 2.x need no change. `drizzle-kit up` names each folder after the UTC second of the original journal timestamp. That time is never later than the `created_at` value that 2.x recorded, so `migrate()` does not apply converted migrations a second time. Migrations generated after the conversion are applied as usual.
+
+`migrate()` now splits every migration file on `--> statement-breakpoint`. The `breakpoints` flag of the old journal no longer applies.
+
+### Types and Constructors
+
+| Changed in 3.0                                                                                  | Replacement                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DuckDBDatabase<TSchema>` and `DuckDBDrizzleConfig<TSchema>`                                    | `DuckDBDatabase<TRelations>` and `DuckDBDrizzleConfig<TRelations>`, where `TRelations` is the type of the `defineRelations()` result, for example `typeof relations`       |
+| `DuckDBSession` and `DuckDBTransaction` with two schema types                                   | One `TRelations` type parameter                                                                                                                                            |
+| `schema` argument of the `DuckDBDatabase`, `DuckDBSession` and `DuckDBTransaction` constructors | The relations object at the same position. `{}` stands for no relations.                                                                                                   |
+| `DuckDBPreparedQuery` constructor                                                               | Takes the rendered query, the query mode and a row mapper, following drizzle-orm 1.0. Code that builds prepared queries directly can call `session.prepareQuery()` instead |
+| `DuckDBDrizzleConfig` extending all of `DrizzleConfig`                                          | It takes `logger` and `relations` from `DrizzleConfig`. `casing`, `schema` and `cache` are not accepted                                                                    |
+| Base classes `PgDatabase`, `PgSession`, `PgTransaction` and `PgPreparedQuery`                   | `PgAsyncDatabase`, `PgAsyncSession`, `PgAsyncTransaction` and `PgAsyncPreparedQuery` from drizzle-orm 1.0                                                                  |
+| `rows` type of `appendRows()`                                                                   | `readonly InferInsertModel<TTable>[]`. Accepted rows do not change                                                                                                         |
+
+### Other drizzle-orm 1.0 Changes
+
+- In drizzle-orm 1.0, `.array().array()` on a pg-core column declares one dimension. A two-dimensional array column is declared with `.array('[][]')`.
+- A select that reads a column of a table missing from the FROM clause keeps the table qualifier in drizzle-orm 1.0. DuckDB rejects such a query with a binder error that names the table. With 2.x the qualifier was dropped and the column was read from the table in the FROM clause.
+- An unnamed `.unique()` column has no generated constraint name in its column metadata. drizzle-orm 1.0 leaves `uniqueName` undefined.
+- Query errors from DuckDB are thrown unchanged. They are not wrapped in the `DrizzleQueryError` that other drizzle-orm 1.0 drivers use.
+- drizzle-orm query caching through the `cache` option is not supported.
 
 ## MotherDuck Flight Helpers
 
