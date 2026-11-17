@@ -154,7 +154,7 @@ const network = publicSchema.table('network_table', {
 const salEmp = publicSchema.table('sal_emp', {
   name: text('name'),
   payByQuarter: integer('pay_by_quarter').array(),
-  schedule: text('schedule').array().array(),
+  schedule: text('schedule').array('[][]'),
 });
 
 const usersMigratorTable = publicSchema.table('users12', {
@@ -4636,7 +4636,7 @@ test('array mapping and parsing', async () => {
   const arrays = publicSchema.table('arrays_tests', {
     id: integer('id').primaryKey(),
     tags: text('tags').array(),
-    nested: text('nested').array().array(),
+    nested: text('nested').array('[][]'),
     numbers: integer('numbers').notNull().array(),
   });
 

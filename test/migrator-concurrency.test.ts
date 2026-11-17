@@ -45,6 +45,7 @@ test('concurrent migrators succeed on a fresh database', async () => {
   const migrations = [
     {
       hash: 'fresh-migration',
+      name: 'fresh-migration',
       folderMillis: 1000,
       sql: ['create table if not exists fresh_effects (id integer)'],
       bps: true,
@@ -66,12 +67,14 @@ test('concurrent migrators succeed with DDL migrations', async () => {
   const migrations = [
     {
       hash: 'ddl-users',
+      name: 'ddl-users',
       folderMillis: 1000,
       sql: ['create table users (id integer)'],
       bps: true,
     },
     {
       hash: 'ddl-posts',
+      name: 'ddl-posts',
       folderMillis: 2000,
       sql: ['create table posts (id integer)', 'insert into posts values (1)'],
       bps: true,
@@ -148,6 +151,7 @@ test('concurrent migrators apply each migration once', async () => {
   const migrations = [
     {
       hash: 'concurrent-migration',
+      name: 'concurrent-migration',
       bps: false,
       folderMillis: 1000,
       sql: ['insert into migration_effects values (1)'],

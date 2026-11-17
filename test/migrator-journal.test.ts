@@ -9,6 +9,7 @@ import { drizzle } from '../src/driver.ts';
 const migrations = [
   {
     hash: 'journal-migration',
+    name: 'journal-migration',
     folderMillis: 1000,
     sql: ['create table journal_effects (id integer)'],
     bps: true,
@@ -84,6 +85,7 @@ describe.skipIf(!(await canLoadDuckLake()))('migrate() with DuckLake', () => {
     });
     const later = {
       hash: 'journal-migration-2',
+      name: 'journal-migration-2',
       folderMillis: 2000,
       sql: ['insert into journal_effects values (1)'],
       bps: true,

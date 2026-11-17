@@ -467,9 +467,16 @@ test('migrate() tolerates duplicate rows from older journals', async () => {
     );
     await db.dialect.migrate(
       [
-        { hash: 'h', folderMillis: 1000, sql: ['select 1'], bps: true },
+        {
+          hash: 'h',
+          name: 'h',
+          folderMillis: 1000,
+          sql: ['select 1'],
+          bps: true,
+        },
         {
           hash: 'next',
+          name: 'next',
           folderMillis: 2000,
           sql: ['create table sweep2_migrated (id integer)'],
           bps: true,
