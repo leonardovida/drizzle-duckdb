@@ -86,7 +86,7 @@ bun run scripts/introspect.ts
 }
 ```
 
-`bun add` writes the current versions for you. Keep `drizzle-orm` at 1.0.0-rc.5 or newer and below 2.0.0, and `@duckdb/node-api` at 1.4.4 or newer and below 1.6.0. See [Installation]({{ '/getting-started/installation' | relative_url }}#peer-dependencies).
+`bun add` writes the current versions for you. Keep `drizzle-orm` at 1.0.0-rc.5 or a later release candidate, or at a 1.x release, and `@duckdb/node-api` at 1.4.4 or newer and below 1.6.0. See [Installation]({{ '/getting-started/installation' | relative_url }}#peer-dependencies).
 
 ### tsconfig.json
 

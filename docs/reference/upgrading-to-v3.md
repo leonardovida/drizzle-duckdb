@@ -20,7 +20,7 @@ These changes affect runtime behavior for code that compiles:
 
 ## drizzle-orm 1.0
 
-Version 3.0 requires drizzle-orm 1.0. The peer range is `>=1.0.0-rc.5 <2.0.0`, and drizzle-orm 0.x is no longer supported. At the time of writing, drizzle-orm 1.0 is a release candidate, and the `latest` tag on npm still installs 0.45. Projects install the release candidate with the `rc` tag, together with the matching Drizzle Kit:
+Version 3.0 requires drizzle-orm 1.0. The peer range is `>=1.0.0-rc.5 <=1.0.0-rc.99 || >=1.0.0 <2.0.0`, and drizzle-orm 0.x is no longer supported. The range accepts the release candidates from 1.0.0-rc.5 and the 1.x releases. It excludes npm snapshot builds such as `1.0.0-rc.4-5d5b77c`, which semver orders above `1.0.0-rc.5`. At the time of writing, drizzle-orm 1.0 is a release candidate, and the `latest` tag on npm still installs 0.45. Projects install the release candidate with the `rc` tag, together with the matching Drizzle Kit:
 
 ```bash
 bun add drizzle-orm@rc

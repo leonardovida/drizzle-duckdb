@@ -41,7 +41,7 @@ yarn add @duckdbfan/drizzle-duckdb drizzle-orm@rc @duckdb/node-api
 
 ## Peer Dependencies
 
-- **`drizzle-orm`**: version 1.0.0-rc.5 or newer, below 2.0.0. drizzle-orm 1.0 is a release candidate at the time of writing, and the `latest` tag on npm still installs 0.45. Install it with the `rc` tag, as in `drizzle-orm@rc`.
+- **`drizzle-orm`**: version 1.0.0-rc.5 or a later release candidate, or a 1.x release from 1.0.0. npm snapshot builds such as `1.0.0-rc.4-5d5b77c` are outside the range. drizzle-orm 1.0 is a release candidate at the time of writing, and the `latest` tag on npm still installs 0.45. Install it with the `rc` tag, as in `drizzle-orm@rc`.
 - **`@duckdb/node-api`**: version 1.4.4 or newer, below 1.6.0. The `-r.N` release builds in that range, such as `1.4.4-r.1` and `1.5.6-r.2`, also match. The repository develops and tests against `1.5.6-r.2`.
 
 ## Requirements

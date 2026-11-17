@@ -45,6 +45,26 @@ describe('package.json configuration', () => {
     }
   });
 
+  // npm snapshot builds such as 1.0.0-rc.4-5d5b77c sort above rc.5, because
+  // an alphanumeric prerelease identifier sorts above a numeric one, so the
+  // release candidates are bounded explicitly.
+  test.each([
+    ['1.0.0-rc.5', true],
+    ['1.0.0-rc.6', true],
+    ['1.0.0-rc.10', true],
+    ['1.0.0', true],
+    ['1.2.0', true],
+    ['1.0.0-rc.4-5d5b77c', false],
+    ['1.0.0-rc.5-5935859', false],
+    ['1.0.0-rc.4', false],
+    ['1.0.0-beta.22', false],
+    ['0.45.4', false],
+    ['2.0.0', false],
+  ])('the drizzle-orm peer range accepts %s: %s', (version, accepted) => {
+    const range = packageJson.peerDependencies['drizzle-orm'];
+    expect(semver.satisfies(version, range)).toBe(accepted);
+  });
+
   // A new -r.N build needs its own clause in the peer range. Bumping the dev
   // copy past the range fails here instead of in a consumer's install.
   test('the installed peers satisfy the declared peer ranges', () => {
