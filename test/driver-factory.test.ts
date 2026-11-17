@@ -271,4 +271,31 @@ describe('Driver Factory Tests', () => {
       expect(instance.closeSync).toHaveBeenCalledTimes(1);
     });
   });
+  describe('config objects without connection or client', () => {
+    test.each([
+      ['driver options only', { decimalMode: 'string' }],
+      ['an empty object', {}],
+      ['undefined values only', { dateParams: undefined }],
+    ])('%s throws instead of being used as a client', (_name, config) => {
+      expect(() => drizzle(config as never)).toThrow(
+        'Invalid drizzle config: either connection or client must be provided'
+      );
+    });
+
+    test('a plain object with client methods is still a client', async () => {
+      const instance = await DuckDBInstance.create(':memory:');
+      const connection = await instance.connect();
+      const client = {
+        run: connection.run.bind(connection),
+        prepare: connection.prepare.bind(connection),
+        closeSync: connection.closeSync.bind(connection),
+      };
+      try {
+        expect(() => drizzle(client as never)).not.toThrow();
+      } finally {
+        connection.closeSync();
+        instance.closeSync();
+      }
+    });
+  });
 });
