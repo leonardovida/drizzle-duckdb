@@ -41,6 +41,7 @@ export {
   executeInBatchesRaw,
   executeArrowOnClient,
   appendRowsOnClient,
+  APPEND_DEFAULT,
   type DuckDBExecutionClient,
   type DuckDBClientLike,
   type RowData,

@@ -207,7 +207,12 @@ const TRANSACTION_CONFIG_ERROR =
 
 /** Any config object, even an empty one, is rejected. */
 function assertNoTransactionConfig(config: unknown): void {
-  if (config) {
+  // An object with no option set asks for nothing, so it is accepted.
+  if (
+    config &&
+    (typeof config !== 'object' ||
+      Object.values(config).some((value) => value !== undefined))
+  ) {
     throw new Error(TRANSACTION_CONFIG_ERROR);
   }
 }

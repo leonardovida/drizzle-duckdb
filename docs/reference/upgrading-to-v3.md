@@ -89,11 +89,11 @@ Since 2.5 the driver prepares every query for one run and ignores `prepareCache`
 
 DuckDB has no `SET TRANSACTION` statement. Version 2.6 ignored transaction config with a one-time warning. Version 3.0 rejects it with `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).`
 
-| Removed or changed                            | Behavior in 3.0                                                                                                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `db.transaction(fn, config)`                  | Rejects before a connection is leased or the transaction begins. The callback does not run. Remove the `config` argument. An empty object `{}` also rejects. |
-| `tx.setTransaction(config)`                   | Rejects. `tx.setTransaction()` without config resolves and sends nothing.                                                                                    |
-| `DuckDBTransaction.getTransactionConfigSQL()` | Removed, no replacement                                                                                                                                      |
+| Removed or changed                            | Behavior in 3.0                                                                                                                                                                    |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db.transaction(fn, config)`                  | Rejects before a connection is leased or the transaction begins. The callback does not run. Remove the `config` argument. An object with no option set, such as `{}`, is accepted. |
+| `tx.setTransaction(config)`                   | Rejects. `tx.setTransaction()` without config resolves and sends nothing.                                                                                                          |
+| `DuckDBTransaction.getTransactionConfigSQL()` | Removed, no replacement                                                                                                                                                            |
 
 ## Other Removals
 
@@ -113,4 +113,4 @@ The package entry point no longer exports these internal helpers. They were not 
 | `coerceArrayString`, `normalizeArrayPredicateValue`                                         | Removed, no replacement |
 | `buildDefault`, `normalizeTypeLiteral`, `parseMapKey`, `parseMapValue`, `parseStructFields` | Removed, no replacement |
 | `splitTopLevel`, `toIdentifier`, `normalizePositiveInteger`                                 | Removed, no replacement |
-| `APPEND_DEFAULT`, `DEFAULT_IMPORT_BASE`                                                     | Removed, no replacement |
+| `DEFAULT_IMPORT_BASE`                                                                       | Removed, no replacement |

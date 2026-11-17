@@ -24,6 +24,7 @@ test('types used in public signatures are exported by name', async () => {
 test('the runtime exports of the package entry point are pinned', () => {
   expect(Object.keys(publicApi).sort()).toMatchInlineSnapshot(`
     [
+      "APPEND_DEFAULT",
       "DUCKDB_VALUE_MARKER",
       "DuckDBDatabase",
       "DuckDBDialect",

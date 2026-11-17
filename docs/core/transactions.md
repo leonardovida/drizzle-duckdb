@@ -148,7 +148,7 @@ If `COMMIT` itself fails, `db.transaction()` rejects with the commit error.
 
 > **Not Supported**
 >
-> DuckDB has no `SET TRANSACTION` statement. When `db.transaction(fn, config)` receives a `config` argument, with options such as `isolationLevel`, `accessMode` and `deferrable`, it rejects before the transaction begins: `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).` An empty object `{}` counts as config. `tx.setTransaction(config)` rejects with the same error, and `tx.setTransaction()` without config resolves. Remove the config argument.
+> DuckDB has no `SET TRANSACTION` statement. When `db.transaction(fn, config)` receives a `config` argument, with options such as `isolationLevel`, `accessMode` and `deferrable`, it rejects before the transaction begins: `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).` An object with no option set, such as `{}`, is accepted. `tx.setTransaction(config)` rejects with the same error, and `tx.setTransaction()` without config resolves. Remove the config argument.
 
 ## Important Limitation: No Savepoints
 

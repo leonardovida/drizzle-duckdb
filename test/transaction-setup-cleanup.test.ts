@@ -26,7 +26,6 @@ test('transaction config rejects before the transaction begins', async () => {
       { isolationLevel: 'serializable' },
       { accessMode: 'read only' },
       { isolationLevel: 'invalid' as PgTransactionConfig['isolationLevel'] },
-      {},
     ];
 
     for (const config of configs) {
@@ -45,6 +44,13 @@ test('transaction config rejects before the transaction begins', async () => {
     // Nothing was sent, and the single pooled connection is still free.
     expect(queries).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
+    // A config with no option set asks for nothing and is accepted.
+    await expect(db.transaction(async () => 'empty', {})).resolves.toBe(
+      'empty'
+    );
+    await expect(
+      db.transaction(async () => 'unset', { isolationLevel: undefined })
+    ).resolves.toBe('unset');
     await expect(
       db.transaction(async (tx) => {
         const rows = await tx.execute<{ value: number }>(
