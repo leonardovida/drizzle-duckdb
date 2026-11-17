@@ -67,7 +67,7 @@ await db.close();
 
 ## DuckDBDatabase Methods
 
-Everything from Drizzle's PgDatabase, plus:
+Everything from Drizzle's PgAsyncDatabase, plus:
 
 - `db.executeBatches(sql, { rowsPerChunk })`: async generator of row-object chunks (default 100,000 rows per chunk). While the loop is open, other queries on the same connection (a single connection, or `tx` in a transaction) throw "This connection is streaming a result from executeBatches()". Pools outside a transaction use other connections.
 - `db.executeBatchesRaw(sql, { rowsPerChunk })`: chunks of `{ columns, rows }` with array rows.

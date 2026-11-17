@@ -120,6 +120,13 @@ describe('relational query root rows', () => {
 });
 
 describe('relational query nested rows', () => {
+  test('decode like a flat select', async () => {
+    const rows = await db.query.owners.findMany({
+      with: { readings: true },
+    });
+    expect(rows).toEqual([{ id: 1, readings: [expected] }]);
+  });
+
   test('keep numeric() digits', async () => {
     const rows = await db.query.owners.findMany({
       with: { readings: { columns: { amount: true } } },

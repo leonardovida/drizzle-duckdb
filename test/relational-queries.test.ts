@@ -1,7 +1,15 @@
 import { defineRelations, sql } from 'drizzle-orm';
 import { integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
-import { drizzle, type DuckDBDatabase } from '../src/index.ts';
+import {
+  drizzle,
+  duckDbJson,
+  duckDbList,
+  duckDbMap,
+  duckDbStruct,
+  duckDbTimestamp,
+  type DuckDBDatabase,
+} from '../src/index.ts';
 
 const users = pgTable('rq_users', {
   id: integer('id').primaryKey(),
@@ -169,6 +177,78 @@ test('related columns named like the join aliases keep their values', async () =
     ).toEqual({ t: 'tee', r: 'arr', parent: { id: 1 } });
   } finally {
     await aliasDb.close();
+  }
+});
+
+test('DuckDB column helpers decode in relations like a flat select', async () => {
+  const docs = pgTable('rq_docs', { id: integer('id').primaryKey() });
+  const attrs = pgTable('rq_doc_attrs', {
+    id: integer('id').primaryKey(),
+    docId: integer('doc_id').notNull(),
+    payload: duckDbJson<{ a: number; b: string[] }>('payload'),
+    seenAt: duckDbTimestamp('seen_at'),
+    seenAtText: duckDbTimestamp('seen_at_text', { mode: 'string' }),
+    tags: duckDbList<string>('tags', 'TEXT'),
+    meta: duckDbStruct<{ k: string; n: number }>('meta', {
+      k: 'TEXT',
+      n: 'INTEGER',
+    }),
+    counts: duckDbMap<Record<string, number>>('counts', 'INTEGER', {
+      mode: 'object',
+    }),
+  });
+  const docRelations = defineRelations({ docs, attrs }, (r) => ({
+    docs: { attrs: r.many.attrs({ from: r.docs.id, to: r.attrs.docId }) },
+    attrs: { doc: r.one.docs({ from: r.attrs.docId, to: r.docs.id }) },
+  }));
+  const docDb = await drizzle(':memory:', { relations: docRelations });
+  try {
+    await docDb.execute(sql`
+      create table rq_docs (id integer primary key);
+      create table rq_doc_attrs (
+        id integer primary key,
+        doc_id integer not null,
+        payload json,
+        seen_at timestamp,
+        seen_at_text timestamp,
+        tags text[],
+        meta struct(k text, n integer),
+        counts map(varchar, integer)
+      );
+      insert into rq_docs values (1);
+    `);
+    await docDb.insert(attrs).values({
+      id: 10,
+      docId: 1,
+      payload: { a: 1, b: ['x', 'y'] },
+      seenAt: new Date('2024-01-02T03:04:05.123Z'),
+      seenAtText: '2024-01-02 03:04:05.123456',
+      tags: ['red', 'blue'],
+      meta: { k: 'key', n: 7 },
+      counts: { one: 1, two: 2 },
+    });
+
+    const [flat] = await docDb.select().from(attrs);
+    expect(flat).toEqual({
+      id: 10,
+      docId: 1,
+      payload: { a: 1, b: ['x', 'y'] },
+      seenAt: new Date('2024-01-02T03:04:05.123Z'),
+      seenAtText: '2024-01-02 03:04:05.123456',
+      tags: ['red', 'blue'],
+      meta: { k: 'key', n: 7 },
+      counts: { one: 1, two: 2 },
+    });
+    expect(await docDb.query.docs.findMany({ with: { attrs: true } })).toEqual([
+      { id: 1, attrs: [flat] },
+    ]);
+    expect(
+      await docDb.query.docs.findFirst({
+        with: { attrs: { with: { doc: true } } },
+      })
+    ).toEqual({ id: 1, attrs: [{ ...flat, doc: { id: 1 } }] });
+  } finally {
+    await docDb.close();
   }
 });
 
