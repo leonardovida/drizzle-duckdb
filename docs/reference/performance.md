@@ -44,7 +44,7 @@ Rules:
 
 ## Prepared Statements Are Not Cached
 
-Each query is prepared, run once and released. The `prepareCache` option is deprecated and ignored, with a one-time warning.
+Each query is prepared, run once and released. Version 3.0 removed the `prepareCache` option.
 
 DuckDB plans a prepared statement from the table statistics it sees at prepare time. When the statement runs again after the data changed, the old plan can return wrong results. With DuckDB 1.4.4 and 1.5.6, a statement prepared on a small table returned a wrong `count(*)`, corrupted `ORDER BY` values and a "statistics are corrupt" error after rows were added. Preparing per run costs about 50 microseconds per query and avoids this.
 

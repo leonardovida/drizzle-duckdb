@@ -55,9 +55,6 @@ interface IntrospectResult {
 
     // Metadata about introspected tables
     metaJson: IntrospectedTable[];
-
-    /** @deprecated Never populated. Will be removed in the next major version. */
-    relationsTs?: string;
   };
 }
 

@@ -175,9 +175,9 @@ try {
 
 If you catch a failed statement inside the callback, `db.transaction()` still rolls back and rejects with `DuckDB aborted the transaction because a statement inside it failed. ...`.
 
-### Transaction Config Is Ignored
+### Transaction Config Is Not Supported
 
-`db.transaction(fn, { isolationLevel: 'serializable' })` and the other config options are deprecated. DuckDB has no `SET TRANSACTION`, so the driver ignores the config and prints a one-time warning. The next major version will throw.
+DuckDB has no `SET TRANSACTION`, so `db.transaction(fn, { isolationLevel: 'serializable' })` and the other config options reject before the transaction begins. Remove the config argument.
 
 ## Connection Setup
 
@@ -236,7 +236,7 @@ These features work the same in both:
 - Joins (all types)
 - Subqueries
 - CTEs (`$with()`, `.with()`)
-- Transactions (single-level, without `isolationLevel` or other transaction config, which DuckDB ignores)
+- Transactions (single-level, without `isolationLevel` or other transaction config, which DuckDB does not support)
 - Schema definitions (with noted exceptions)
 
 ## Performance Considerations
@@ -269,7 +269,7 @@ for (const user of manyUsers) {
 - [ ] Consider `duckDbTimestamp()` for timestamp columns
 - [ ] Update DDL: Replace `SERIAL` with sequences
 - [ ] Review nested transaction usage
-- [ ] Remove `db.transaction()` config such as `isolationLevel` (deprecated and ignored)
+- [ ] Remove `db.transaction()` config such as `isolationLevel` (it rejects)
 - [ ] Stop catching statement errors inside a transaction to continue it
 - [ ] Test array operations
 - [ ] Update connection code

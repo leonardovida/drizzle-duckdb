@@ -117,13 +117,13 @@ try {
 
 **Solution**: Rethrow the statement error, or catch it outside `db.transaction()`. Validate data before writing, or move the risky write into its own `db.transaction()`. Parser and catalog errors, such as a SQL typo or a missing table, do not abort the transaction.
 
-### "Transaction config is not supported by DuckDB and is ignored"
+### "Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement"
 
-**Symptom**: A one-time console warning when calling `db.transaction(fn, config)`.
+**Symptom**: `db.transaction(fn, config)` or `tx.setTransaction(config)` rejects with this error, and the callback does not run.
 
-**Cause**: DuckDB has no `SET TRANSACTION`. Options such as `isolationLevel`, `accessMode` and `deferrable` are deprecated and ignored.
+**Cause**: DuckDB has no `SET TRANSACTION`, so options such as `isolationLevel`, `accessMode` and `deferrable` are not supported. Versions before 3.0 ignored them with a warning.
 
-**Solution**: Remove the config argument. The next major version will throw when it is passed.
+**Solution**: Remove the config argument, including an empty object `{}`.
 
 ## Query Result Issues
 
@@ -182,14 +182,6 @@ try {
 **Cause**: A `Date` written straight into a `sql` template has no column type, so it binds as a naive `TIMESTAMP` holding the UTC time. DuckDB reads that value in the session `TimeZone` when it compares it with a `TIMESTAMPTZ`, and the default zone is the system zone.
 
 **Solution**: Use typed operators such as `gte(column, date)`, or set `dateParams: 'timestamptz'` in the `drizzle()` config. See [dateParams]({{ '/reference/configuration' | relative_url }}#dateparams).
-
-### "The prepareCache option is deprecated and ignored"
-
-**Symptom**: This warning is logged once when a database is created.
-
-**Cause**: The config passes `prepareCache`. The driver no longer caches prepared statements, because DuckDB can return wrong results when a prepared statement runs again after the data changed.
-
-**Solution**: Remove `prepareCache` from the config. Query results are unchanged.
 
 ### Ambiguous column reference in a join
 

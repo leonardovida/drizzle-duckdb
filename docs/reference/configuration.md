@@ -140,12 +140,6 @@ const results = await db
 // Generated: WHERE "products"."tags" @> $1
 ```
 
-### prepareCache
-
-Deprecated and ignored. Passing it logs a one-time warning, and it will be removed in the next major version.
-
-DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. The driver prepares every query for one run instead. See [Prepared Statements Are Not Cached]({{ '/reference/performance' | relative_url }}#prepared-statements-are-not-cached).
-
 ### dateParams
 
 How a bare `Date` parameter binds. A bare parameter is one without a column type, as in ``sql`${new Date()}` ``.
@@ -308,7 +302,7 @@ Options:
 - `use` boolean. Optional. Defaults to `true`.
 - `install` boolean. Optional. Defaults to `false`.
 - `load` boolean. Optional. Defaults to `false`.
-- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. The deprecated `metaParameterName` field throws, because DuckLake has no `META_PARAMETER_NAME` option.
+- `attachOptions` object with fields `createIfNotExists`, `dataInliningRowLimit`, `dataPath`, `encrypted`, `metaParameters`, `metadataCatalog`, `overrideDataPath`, and `readOnly`. `dataInliningRowLimit` must be a non-negative integer. `metaParameters` is a `Record<string, string>` and each entry becomes `META_<KEY> 'value'`, for example `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`. Keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 Connection setup throws after the attach when the alias already names a different database, such as a main database file named `ducklake.duckdb` or another DuckLake catalog. Set `alias` to a different name in that case. Pooled connections are set up on first use, so with a pool these errors, and invalid `attachOptions`, come from the first query.
 

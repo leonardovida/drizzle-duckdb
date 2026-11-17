@@ -133,10 +133,6 @@ interface DuckDBDrizzleConfig<TSchema> {
   // Attach a DuckLake catalog on every connection
   ducklake?: DuckLakeConfig;
 
-  // Deprecated and ignored, with a one-time warning. Statements are
-  // prepared on every run.
-  prepareCache?: boolean | number | { size?: number };
-
   // How a bare Date in sql`...` binds: a naive UTC TIMESTAMP (default) or
   // a TIMESTAMPTZ instant.
   dateParams?: 'timestamp' | 'timestamptz';

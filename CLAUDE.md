@@ -33,8 +33,6 @@ The package exports from `src/index.ts`, which re-exports most of these modules:
 - `pool.ts`: `createDuckDBConnectionPool()`, pool presets and pool size resolution
 - `client.ts`: low-level execution against a connection or pool, parameter preparation, streaming and appender writes
 - `pgduck.ts`: pg_duckdb client and pool adapter
-- `options.ts`: parsing of the deprecated `prepareCache` option
-- `prepared-statement-cache.ts`: deprecated statement cache, no longer used for execution
 - `array-literals.ts`: detection and parsing of Postgres-style array literal strings
 - `time.ts`: TIME and TIMESTAMP string helpers
 - `olap.ts`: OLAP helpers (`sumN`, `percentileCont`, window helpers, the `olap()` builder, Lance search)

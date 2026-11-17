@@ -19,7 +19,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | Subqueries                           | Full    | Fields are qualified by the subquery alias                                                                                                         |
 | CTEs (WITH clauses)                  | Full    | Fields are qualified by the CTE name                                                                                                               |
 | Aggregations                         | Full    |                                                                                                                                                    |
-| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config is ignored                                   |
+| Transactions                         | Partial | No savepoints in current 1.4.x/1.5.x builds (driver probes once, then falls back). Transaction config rejects                                      |
 | Concurrent queries                   | Partial | One query per connection. Use pooling for parallelism                                                                                              |
 | Prepared statements                  | Partial | Prepared on every run. No statement cache and no named statements                                                                                  |
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                                         |
@@ -52,9 +52,9 @@ await db.transaction(async (tx) => {
 
 DuckDB also aborts the whole transaction when any statement fails. Catching the error does not keep earlier writes. Validate before writing, or run the risky write in its own `db.transaction()`. If a failed statement was caught inside the callback, `db.transaction()` rejects with `DuckDB aborted the transaction because a statement inside it failed. No changes were committed. ...` and the statement error as `cause`. Parser and catalog errors do not abort the transaction.
 
-### Transaction Config Is Ignored (Deprecated)
+### Transaction Config Is Not Supported
 
-DuckDB has no `SET TRANSACTION` statement. The `config` argument of `db.transaction(fn, config)` (`isolationLevel`, `accessMode`, `deferrable`) is ignored with a one-time warning: `Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.` `DuckDBTransaction.setTransaction()` and `getTransactionConfigSQL()` are deprecated. See [Transactions]({{ '/core/transactions' | relative_url }}#transaction-config-deprecated).
+DuckDB has no `SET TRANSACTION` statement. When `db.transaction(fn, config)` receives a `config` argument (`isolationLevel`, `accessMode`, `deferrable`), it rejects before the transaction begins with `Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).` `tx.setTransaction(config)` rejects with the same error. See [Transactions]({{ '/core/transactions' | relative_url }}#transaction-config).
 
 ## DuckDB 1.5 Core Types
 
@@ -125,7 +125,7 @@ The driver checks for Postgres JSON columns and throws a descriptive error if fo
 
 Prepared statements are not cached. Each query is prepared, run once and released, and there are no named statements. Drizzle's `.prepare()` still works: it builds the SQL once and the driver prepares it on every `execute()`.
 
-The `prepareCache` option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a statement kept across data changes can return wrong results.
+DuckDB plans a prepared statement from the table statistics at prepare time, so a statement kept across data changes can return wrong results. Version 3.0 removed the `prepareCache` option.
 
 ## Result Handling
 

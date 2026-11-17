@@ -180,9 +180,6 @@ interface IntrospectResult {
     // Structured metadata about tables, columns, constraints.
     // Each table may include the `database` (catalog) that owns it.
     metaJson: IntrospectedTable[];
-
-    /** @deprecated Never populated. Will be removed in the next major version. */
-    relationsTs?: string;
   };
 }
 ```

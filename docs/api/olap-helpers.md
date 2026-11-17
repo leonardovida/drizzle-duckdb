@@ -282,12 +282,11 @@ const latestLogs = await db.execute(sql`
 `);
 ```
 
-The older Job helper names remain exported as deprecated compatibility aliases.
-They call the supported Flight table functions and preserve the older `job_*`
-result column names where the Flight result uses `flight_*`. The earlier
-`mdFlights()`, `mdFlightRuns()`, `mdFlightLogs()`, and `mdFlightVersions()`
-TypeScript helper names remain as deprecated aliases too. New code should use
-the verb-style Flight helpers.
+Version 3.0 removed the older Job helpers, such as `mdJobs()` and
+`mdCreateJob()`, and the earlier `mdFlights()`, `mdFlightRuns()`,
+`mdFlightLogs()` and `mdFlightVersions()` aliases. See
+[Upgrading to v3]({{ '/reference/upgrading-to-v3' | relative_url }}) for the
+verb-style Flight helper that replaces each one.
 `mdGetFlightRun()` fetches one run by Flight ID and run number. Run rows from
 `mdRunFlight()`, `mdListFlightRuns()` and `mdGetFlightRun()` include
 `started_by_id` and `started_by_name`, which are `NULL` for scheduled runs.
@@ -298,8 +297,6 @@ emits an explicit SQL `NULL`. MotherDuck treats explicit `NULL` values as clear
 or empty values for nullable Flight options such as `requirementsTxt`, `config`,
 and `flightSecretNames`. An empty `config: {}` is sent as a typed empty map and
 an empty `flightSecretNames: []` as a typed empty `VARCHAR[]` list.
-The deprecated `mdFlightLogs()` and `mdJobRunLogs()` blobs join lines in
-`line_number` order, descending when `order` is `'desc'`.
 Use `maxRuntimeSec` on `mdCreateFlight()` or `mdUpdateFlight()` to cap each run
 in seconds. Set it to `0` for no timeout, or omit it to use the plan default.
 Use `instanceType` (`'F4'`, `'F8'`, `'F16'` or `'F32'`) to pick the Flight

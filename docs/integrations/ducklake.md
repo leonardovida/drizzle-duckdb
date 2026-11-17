@@ -87,7 +87,7 @@ const db = await drizzle(':memory:', {
 // ATTACH IF NOT EXISTS 'ducklake:./meta.ducklake' AS "ducklake" (DATA_PATH './ducklake-data', META_TYPE 'duckdb')
 ```
 
-`metaParameterName` is deprecated. It emitted `META_PARAMETER_NAME`, which DuckLake always rejected, so setting it now throws. Use `metaParameters` instead.
+Version 3.0 removed the `metaParameterName` option, which emitted `META_PARAMETER_NAME`. DuckLake has no such option. Use `metaParameters` instead.
 
 ## Manual Setup
 
