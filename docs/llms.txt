@@ -14,7 +14,7 @@ npm install @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 
 - Peer `drizzle-orm`: `>=1.0.0-rc.5 <=1.0.0-rc.99 || >=1.0.0 <2.0.0`, so release candidates from rc.5 and 1.x releases. npm snapshot builds such as 1.0.0-rc.4-5d5b77c do not match. drizzle-orm 1.0 is a release candidate, and npm `latest` still installs 0.45, so install it with the `rc` tag.
 - Peer `@duckdb/node-api` (required): 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as 1.4.4-r.1 and 1.5.6-r.1. The repository develops against 1.5.6-r.1.
-- Node.js 18.17 or newer (22 or 24 recommended). Bun also works.
+- Node.js 22 or newer. Bun also works.
 
 ## Quick Start
 

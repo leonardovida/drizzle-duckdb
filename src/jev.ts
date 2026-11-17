@@ -148,9 +148,7 @@ type JevSingleQuestionOptions = {
 );
 
 export type MotherDuckPromptJevOptions =
-  | JevQuestionOptions
-  | JevBoxOptions
-  | JevSingleQuestionOptions;
+  JevQuestionOptions | JevBoxOptions | JevSingleQuestionOptions;
 
 type JevQuestionResult<Q> = Q extends { type: 'choice' }
   ? MotherDuckJevChoiceResult

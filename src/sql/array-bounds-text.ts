@@ -79,7 +79,7 @@ function readArguments(
   const args: string[] = [];
   let depth = 0;
   let start = open + 1;
-  for (let i = open + 1; i < query.length; ) {
+  for (let i = open + 1; i < query.length;) {
     const skipped = skipQuotedOrComment(query, i);
     if (skipped !== i) {
       i = skipped;
@@ -122,7 +122,7 @@ export function rewriteArrayBoundsText(query: string): string {
   let output = '';
   let copied = 0;
 
-  for (let i = 0; i < query.length; ) {
+  for (let i = 0; i < query.length;) {
     const skipped = skipQuotedOrComment(query, i);
     if (skipped !== i) {
       i = skipped;

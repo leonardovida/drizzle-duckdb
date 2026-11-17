@@ -22,12 +22,7 @@ export type MotherDuckPromptModel =
   | (string & {});
 
 export type MotherDuckPromptReasoningEffort =
-  | 'none'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh';
+  'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface MotherDuckPromptOptions {
   /** Defaults to `gpt-4o-mini` on MotherDuck. */

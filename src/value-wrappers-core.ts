@@ -6,13 +6,7 @@
 export const DUCKDB_VALUE_MARKER = Symbol.for('drizzle-duckdb:value');
 
 export type DuckDBValueKind =
-  | 'list'
-  | 'array'
-  | 'struct'
-  | 'map'
-  | 'timestamp'
-  | 'blob'
-  | 'json';
+  'list' | 'array' | 'struct' | 'map' | 'timestamp' | 'blob' | 'json';
 
 export interface DuckDBValueWrapper<
   TKind extends DuckDBValueKind = DuckDBValueKind,

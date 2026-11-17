@@ -32,7 +32,7 @@ bun add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 | ------------------ | ----------------------------------------------------------------------------------- |
 | `drizzle-orm`      | 1.0.0-rc.5 to 1.0.0-rc.99, or 1.x from 1.0.0. npm snapshot builds do not match      |
 | `@duckdb/node-api` | 1.4.4 or newer, below 1.6.0, including `-r.N` builds such as `1.5.6-r.2`            |
-| Runtime            | Node.js 18.17 or newer (22, 24 or 26 recommended), or Bun                           |
+| Runtime            | Node.js 22 or newer, or Bun                                                         |
 
 ## Quick Start
 

@@ -48,7 +48,7 @@ yarn add @duckdbfan/drizzle-duckdb@next drizzle-orm@rc @duckdb/node-api
 
 ## Requirements
 
-- **Node.js** 18.17 or newer. Node.js 22, 24 or 26 is recommended.
+- **Node.js** 22 or newer.
 - **Bun** 1.0 or newer also works.
 - Native module support. The DuckDB client does not run in browser or edge environments.
 

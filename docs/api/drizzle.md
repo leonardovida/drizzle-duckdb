@@ -153,13 +153,7 @@ interface DuckDBPoolConfig {
 }
 
 type PoolPreset =
-  | 'pulse'
-  | 'standard'
-  | 'jumbo'
-  | 'mega'
-  | 'giga'
-  | 'local'
-  | 'memory';
+  'pulse' | 'standard' | 'jumbo' | 'mega' | 'giga' | 'local' | 'memory';
 ```
 
 `pool` applies only to the connection-string and `{ connection }` forms. It is ignored when you pass a connection or pool instance.

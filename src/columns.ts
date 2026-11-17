@@ -95,10 +95,7 @@ interface MapOptions {
 }
 
 type ArrayDriverValue =
-  | unknown[]
-  | string
-  | ListValueWrapper
-  | ArrayValueWrapper;
+  unknown[] | string | ListValueWrapper | ArrayValueWrapper;
 
 export type ArrayPredicateValue<T> = T[] | SQLWrapper;
 
@@ -641,11 +638,7 @@ export const duckDbInterval = (name: string) =>
 type TimestampMode = 'date' | 'string';
 
 type DuckDbTimestampType =
-  | 'TIMESTAMP'
-  | 'TIMESTAMPTZ'
-  | 'TIMESTAMP_S'
-  | 'TIMESTAMP_MS'
-  | 'TIMESTAMP_NS';
+  'TIMESTAMP' | 'TIMESTAMPTZ' | 'TIMESTAMP_S' | 'TIMESTAMP_MS' | 'TIMESTAMP_NS';
 
 type DuckDbTimeType = 'TIME' | 'TIMETZ' | 'TIME_NS';
 
