@@ -42,11 +42,11 @@ yarn add @duckdbfan/drizzle-duckdb drizzle-orm @duckdb/node-api
 ## Peer Dependencies
 
 - **`drizzle-orm`**: version 0.40.1 or newer, below 0.46.0.
-- **`@duckdb/node-api`**: version 1.4.4 or newer, below 1.6.0. The `-r.N` release builds in that range, such as `1.4.4-r.1` and `1.5.6-r.1`, also match. The repository develops and tests against `1.5.6-r.1`.
+- **`@duckdb/node-api`**: version 1.4.4 or newer, below 1.6.0. The `-r.N` release builds in that range, such as `1.4.4-r.1` and `1.5.6-r.2`, also match. The repository develops and tests against `1.5.6-r.2`.
 
 ## Requirements
 
-- **Node.js** 18.17 or newer. Node.js 22 or 24 is recommended.
+- **Node.js** 18.17 or newer. Node.js 22, 24 or 26 is recommended.
 - **Bun** 1.0 or newer also works.
 - Native module support. The DuckDB client does not run in browser or edge environments.
 

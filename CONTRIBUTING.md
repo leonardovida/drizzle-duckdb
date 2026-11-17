@@ -17,6 +17,7 @@ Run these before opening a pull request. CI runs the same commands.
 
 ```sh
 bun run test                                      # Vitest suite
+bun run test:coverage                             # Vitest suite with coverage thresholds
 bun run typecheck                                 # type check (source and tests)
 bunx prettier --check .                           # formatting
 bun run build                                     # build dist/
@@ -44,10 +45,20 @@ instead. It uses `.pre-commit-config.yaml`, which adds file checks and gitleaks.
 - Use short, imperative commit subjects, for example `Add migrator to exports`.
 - Describe behavior changes and schema or migration updates in the PR.
 
+## Peer dependency range
+
+Every `@duckdb/node-api` build is published as `X.Y.Z-r.N`, which semver treats
+as a prerelease. A range matches such a build only through a clause on the same
+`X.Y.Z`, so each new DuckDB patch release needs its own clause in
+`peerDependencies`. The `Peer range watch` workflow runs
+`bun run check:peer-range` daily and fails when a published build is not
+covered. To extend the range, add the clause in `package.json` and in
+`test/package-config.test.ts`, bump the dev copy, and release.
+
 ## Releases
 
 1. Bump `version` in `package.json`.
-2. Run `bun run build` and `bun run test`.
+2. Run `bun run typecheck`, `bun run test`, `bun run build` and `bun run check:package`.
 3. Commit with a message like `Release v1.3.2` and merge the release PR.
 4. Tag the merged commit as `v1.3.2` and push the tag. This triggers the publish
    workflow, which creates a GitHub release after publication succeeds.

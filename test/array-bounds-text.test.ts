@@ -23,7 +23,7 @@ test('binds a possibly volatile array once and handles nesting', () => {
       'select array_upper(list_value(array_upper(x, 1), random()), 1)'
     )
   ).toBe(
-    'select list_extract(list_transform(list_value(array_length(list_value(nullif(array_length(x), 0), random()))), __drizzle_array_length -> nullif(__drizzle_array_length, 0)), 1)'
+    'select list_extract(list_transform(list_value(array_length(list_value(nullif(array_length(x), 0), random()))), lambda __drizzle_array_length: nullif(__drizzle_array_length, 0)), 1)'
   );
 });
 

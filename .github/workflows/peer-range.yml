@@ -1,0 +1,30 @@
+name: Peer range watch
+
+# Each @duckdb/node-api patch release needs its own clause in the peer range.
+# This fails when a published build on a supported release line is not
+# covered, so the range is extended before users hit an install conflict.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check published builds against the peer range
+        run: bun run check:peer-range
