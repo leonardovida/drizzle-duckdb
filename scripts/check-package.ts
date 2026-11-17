@@ -60,9 +60,12 @@ try {
   );
   await writeFile(path.join(directory, 'consumer.ts'), consumer);
   execFileSync('node', ['consumer.mjs'], { cwd: directory, stdio: 'inherit' });
+  // Run the compiler under Bun. The TypeScript 7 launcher does not start on
+  // the minimum Node runtime, where this script checks the packed consumer.
   execFileSync(
-    path.resolve('node_modules/.bin/tsc'),
+    'bun',
     [
+      path.resolve('node_modules/.bin/tsc'),
       '--noEmit',
       '--strict',
       '--skipLibCheck',
