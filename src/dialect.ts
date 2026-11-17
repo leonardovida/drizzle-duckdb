@@ -105,6 +105,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * A local migration that is neither recorded in the journal nor newer than
+ * the last applied migration. The journal orders migrations by their
+ * timestamp, so applying it out of order is not possible and skipping it
+ * would leave the database without it.
+ */
+class MigrationOutOfOrderError extends Error {
+  constructor(migration: MigrationMeta, lastAppliedMillis: number) {
+    super(
+      `Migration ${JSON.stringify(migration.name)} is not newer than the last applied migration (created_at ${lastAppliedMillis}) and is not recorded in the migration journal. migrate() applies migrations in timestamp order, so it cannot apply this one. Rename its folder to a timestamp later than the last applied migration. If this migration was already applied and its file was edited since, restore the original file.`
+    );
+    this.name = 'MigrationOutOfOrderError';
+  }
+}
+
 // DuckDB's nextval() parses its string argument as a qualified name and drops
 // escaped "" quotes, so the journal sequence cannot be found for such names.
 function assertMigrationJournalName(option: string, name: string): void {
@@ -475,6 +490,7 @@ export class DuckDBDialect extends PgDialect {
     };
 
     const latestMigrationQuery = sql`select hash, created_at from ${migrationTable} order by created_at desc limit 1`;
+    const appliedHashesQuery = sql`select distinct hash from ${migrationTable}`;
 
     const applyPendingMigrations = () =>
       session.transaction(async (tx) => {
@@ -485,11 +501,20 @@ export class DuckDBDialect extends PgDialect {
           created_at: string;
         }[];
         const lastDbMigration = dbMigrations[0];
+        let lastAppliedMillis =
+          lastDbMigration === undefined
+            ? undefined
+            : Number(lastDbMigration.created_at);
+        const appliedHashes = new Set(
+          ((await tx.execute(appliedHashesQuery)) as { hash: string }[]).map(
+            (row) => row.hash
+          )
+        );
 
         for (const migration of migrations) {
           if (
-            !lastDbMigration ||
-            Number(lastDbMigration.created_at) < migration.folderMillis
+            lastAppliedMillis === undefined ||
+            lastAppliedMillis < migration.folderMillis
           ) {
             for (const stmt of migration.sql) {
               await tx.execute(sql.raw(stmt));
@@ -502,6 +527,10 @@ export class DuckDBDialect extends PgDialect {
                     migration.folderMillis
                   })`
             );
+            lastAppliedMillis = migration.folderMillis;
+            appliedHashes.add(migration.hash);
+          } else if (!appliedHashes.has(migration.hash)) {
+            throw new MigrationOutOfOrderError(migration, lastAppliedMillis);
           }
         }
       });
@@ -535,6 +564,7 @@ export class DuckDBDialect extends PgDialect {
         await applyPendingMigrations();
         return;
       } catch (error) {
+        if (error instanceof MigrationOutOfOrderError) throw error;
         // Another migrator may have committed while this run failed.
         if (await isLatestMigrationApplied()) {
           return;

@@ -148,7 +148,7 @@ The driver records a SHA-256 hash and the folder timestamp, in milliseconds, for
 
 - Migrations only run once
 - Migrations run in folder name order. A migration is pending when its folder timestamp is later than the newest `created_at` in the tracking table
-- The stored hash is not compared on later runs. Editing a migration that was already applied has no effect, so add a new migration instead
+- A migration that is not newer than the newest `created_at` must already be recorded with the same hash. Otherwise `migrate()` throws and names it. This happens for a folder that shares its timestamp with an applied migration, a branch migration with an older timestamp, and an applied migration whose file was edited. Give a new migration a later timestamp, and put changes to an applied migration in a new migration
 
 To check which migrations have been applied:
 

@@ -148,7 +148,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "__drizzle_migrations_created_at_unique"
   ON "drizzle"."__drizzle_migrations" (created_at);
 ```
 
-All pending migrations, and the rows that record them, run in one transaction. A migration is pending when the timestamp in its folder name is later than the newest `created_at` already recorded.
+All pending migrations, and the rows that record them, run in one transaction. A migration is pending when the timestamp in its folder name is later than the newest `created_at` already recorded. A migration that is not pending and whose hash is not recorded makes `migrate()` throw before anything commits, because applying it out of timestamp order is not possible.
 
 Concurrent `migrate()` calls in one process on the same database run one after another, including separate `drizzle(path)` databases on one file. Calls from other processes retry on DuckDB write-write conflicts and skip migrations the other call already applied. See [Concurrent migrations]({{ '/features/migrations' | relative_url }}#concurrent-migrations).
 

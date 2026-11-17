@@ -1,5 +1,6 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,17 +50,20 @@ test('folders converted by drizzle-kit up skip migrations a 2.x journal recorded
   // 2.x stored the millisecond `when` of meta/_journal.json as created_at.
   // drizzle-kit up names each folder after the UTC second of that `when`, so
   // the folder time never exceeds the recorded created_at.
+  // Both versions record the SHA-256 of the migration file, which
+  // drizzle-kit up copies unchanged.
   const when = 1_680_271_923_328;
+  const initSql = 'create table upgraded_init (id integer);';
   const folder = await mkdtemp(join(tmpdir(), 'drizzle-duckdb-up-'));
   const db = await drizzle(':memory:');
   try {
     await db.dialect.migrate(
       [
         {
-          hash: 'applied-by-2x',
-          name: 'applied-by-2x',
+          hash: createHash('sha256').update(initSql).digest('hex'),
+          name: '0000_init',
           folderMillis: when,
-          sql: ['create table upgraded_init (id integer)'],
+          sql: [initSql],
           bps: true,
         },
       ],
@@ -67,7 +71,7 @@ test('folders converted by drizzle-kit up skip migrations a 2.x journal recorded
       { migrationsFolder: folder }
     );
     writeMigrationFolders(folder, [
-      { tag: 'init', when, sql: 'create table upgraded_init (id integer);' },
+      { tag: 'init', when, sql: initSql },
       {
         tag: 'next',
         when: when + 1000,
@@ -97,6 +101,123 @@ test('folders converted by drizzle-kit up skip migrations a 2.x journal recorded
     await db.close();
     await rm(folder, { recursive: true, force: true });
   }
+});
+
+describe('migrations that are not newer than the last applied one', () => {
+  const second = Date.UTC(2024, 0, 1);
+
+  async function withFolder(
+    run: (
+      db: Awaited<ReturnType<typeof drizzle>>,
+      folder: string
+    ) => Promise<void>
+  ) {
+    const folder = await mkdtemp(join(tmpdir(), 'drizzle-duckdb-order-'));
+    const db = await drizzle(':memory:');
+    try {
+      await run(db, folder);
+    } finally {
+      await db.close();
+      await rm(folder, { recursive: true, force: true });
+    }
+  }
+
+  const tables = (db: Awaited<ReturnType<typeof drizzle>>) =>
+    db.execute(
+      sql`select table_name from information_schema.tables where table_name like 'order_%' order by table_name`
+    );
+
+  test('a migration added later in the same second throws', () =>
+    withFolder(async (db, folder) => {
+      writeMigrationFolders(folder, [
+        {
+          tag: 'init',
+          when: second,
+          sql: 'create table order_init (id integer);',
+        },
+      ]);
+      await migrate(db, { migrationsFolder: folder });
+
+      writeMigrationFolders(folder, [
+        {
+          tag: 'second',
+          when: second + 500,
+          sql: 'create table order_second (id integer);',
+        },
+      ]);
+      await expect(migrate(db, { migrationsFolder: folder })).rejects.toThrow(
+        'Migration "20240101000000_second" is not newer than the last applied migration'
+      );
+      expect(await tables(db)).toEqual([{ table_name: 'order_init' }]);
+    }));
+
+  test('an older branch migration merged after a newer one throws', () =>
+    withFolder(async (db, folder) => {
+      writeMigrationFolders(folder, [
+        { tag: 'a', when: second, sql: 'create table order_a (id integer);' },
+        {
+          tag: 'c',
+          when: second + 20_000,
+          sql: 'create table order_c (id integer);',
+        },
+      ]);
+      await migrate(db, { migrationsFolder: folder });
+
+      writeMigrationFolders(folder, [
+        {
+          tag: 'b',
+          when: second + 10_000,
+          sql: 'create table order_b (id integer);',
+        },
+      ]);
+      await expect(migrate(db, { migrationsFolder: folder })).rejects.toThrow(
+        /Migration "20240101000010_b" is not newer than the last applied migration \(created_at 1704067220000\).*Rename its folder/
+      );
+      expect(await tables(db)).toEqual([
+        { table_name: 'order_a' },
+        { table_name: 'order_c' },
+      ]);
+      // A later run reports it again instead of skipping it.
+      await expect(migrate(db, { migrationsFolder: folder })).rejects.toThrow(
+        /20240101000010_b/
+      );
+    }));
+
+  test('two pending migrations in the same second throw before either commits', () =>
+    withFolder(async (db, folder) => {
+      writeMigrationFolders(folder, [
+        { tag: 'a', when: second, sql: 'create table order_a (id integer);' },
+        {
+          tag: 'b',
+          when: second + 500,
+          sql: 'create table order_b (id integer);',
+        },
+      ]);
+      await expect(migrate(db, { migrationsFolder: folder })).rejects.toThrow(
+        'Migration "20240101000000_b" is not newer than the last applied migration'
+      );
+      expect(await tables(db)).toEqual([]);
+    }));
+
+  test('an applied migration whose file was edited throws', () =>
+    withFolder(async (db, folder) => {
+      writeMigrationFolders(folder, [
+        { tag: 'a', when: second, sql: 'create table order_a (id integer);' },
+      ]);
+      await migrate(db, { migrationsFolder: folder });
+      await migrate(db, { migrationsFolder: folder });
+
+      writeMigrationFolders(folder, [
+        {
+          tag: 'a',
+          when: second,
+          sql: 'create table order_a (id integer, name text);',
+        },
+      ]);
+      await expect(migrate(db, { migrationsFolder: folder })).rejects.toThrow(
+        /"20240101000000_a".*restore the original file/
+      );
+    }));
 });
 
 test('journal names with other special characters still work', async () => {
