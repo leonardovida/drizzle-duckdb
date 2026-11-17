@@ -17,7 +17,7 @@ A short map of the source tree for contributors.
 
 ## Drizzle Integration Points
 
-- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Installs the DuckDB codecs and result mappers, rewrites the lateral joins of relational queries to build nested rows with `struct_pack` and `list`, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`. `migrate()` retries on write-write conflicts and uses a plain journal table when DuckLake is the current catalog.
+- `src/dialect.ts`: `DuckDBDialect` extends `PgDialect`. Installs the DuckDB codecs and result mappers, rewrites the lateral joins of relational queries to build nested rows with `struct_pack` and `list` from positional column names, aggregating ordered many relations by a `row_number()` ordinal, tracks savepoint support per instance, and runs every generated query through the AST transformer in `sqlToQuery()`. `migrate()` retries on write-write conflicts and uses a plain journal table when DuckLake is the current catalog.
 - `src/codecs.ts`: DuckDB codecs for drizzle-orm 1.0. They decode column values, reject `PgJson` and `PgJsonb` parameters, record which parameters bind to array columns, and cast `numeric()` columns to text inside nested relations.
 - `src/migrator.ts`: `migrate()`, which queues calls on the same database file or client before calling the dialect.
 - `src/instance-keys.ts`: records which database path each shared DuckDB instance points at, so `migrate()` can queue per database.
