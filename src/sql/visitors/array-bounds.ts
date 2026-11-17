@@ -406,9 +406,7 @@ function walkSelectImpl(select: Select): boolean {
 
   // The parser returns GROUP BY as { columns: [...] }.
   const groupby = select.groupby as
-    | { columns?: ExpressionValue[] | null }
-    | null
-    | undefined;
+    { columns?: ExpressionValue[] | null } | null | undefined;
   if (Array.isArray(groupby?.columns)) {
     transformed = walkList(groupby.columns) || transformed;
   }

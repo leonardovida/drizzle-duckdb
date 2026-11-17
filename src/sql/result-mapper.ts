@@ -82,8 +82,7 @@ function getFieldSql(field: SQLCarrier): SQLInternal | undefined {
 
 function findColumnInSql(sqlValue: SQL | undefined): AnyColumn | undefined {
   return sqlValue?.queryChunks.find((chunk: unknown) => is(chunk, Column)) as
-    | AnyColumn
-    | undefined;
+    AnyColumn | undefined;
 }
 
 // Drizzle's default decoder, shared by every SQL that has no mapWith().
@@ -219,7 +218,7 @@ function formatIpv6(address: bigint): string {
 
   let runStart = -1;
   let runLength = 0;
-  for (let index = 0; index < hexGroups.length; ) {
+  for (let index = 0; index < hexGroups.length;) {
     if (hexGroups[index] !== 0) {
       index += 1;
       continue;

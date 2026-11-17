@@ -265,8 +265,7 @@ async function assertDuckLakeAttached(
     [config.alias]
   );
   const row = reader.getRowObjects()[0] as
-    | { type?: unknown; path?: unknown }
-    | undefined;
+    { type?: unknown; path?: unknown } | undefined;
   const catalog = stripDuckLakePrefix(config.catalog);
   const alias = quoteIdentifier(config.alias);
 

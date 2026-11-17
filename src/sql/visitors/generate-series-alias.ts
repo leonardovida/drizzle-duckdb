@@ -33,8 +33,7 @@ function getGenerateSeriesAliases(from: Select['from']): Set<string> {
       if (exprObj.type === 'function' && 'name' in exprObj) {
         const nameObj = exprObj.name as Record<string, unknown> | undefined;
         const nameParts = nameObj?.name as
-          | Array<Record<string, unknown>>
-          | undefined;
+          Array<Record<string, unknown>> | undefined;
         const fnName = nameParts?.[0]?.value;
         if (
           typeof fnName === 'string' &&

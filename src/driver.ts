@@ -178,8 +178,7 @@ interface ResolvedClientTarget<
 }
 
 type ResolvedDrizzleTarget<TRelations extends AnyRelations = EmptyRelations> =
-  | ResolvedConnectionTarget<TRelations>
-  | ResolvedClientTarget<TRelations>;
+  ResolvedConnectionTarget<TRelations> | ResolvedClientTarget<TRelations>;
 
 function resolveConnectionTarget(
   connection: string | DuckDBConnectionConfig

@@ -7,13 +7,7 @@ import {
 
 /** Pool size presets for different MotherDuck instance types */
 export type PoolPreset =
-  | 'pulse'
-  | 'standard'
-  | 'jumbo'
-  | 'mega'
-  | 'giga'
-  | 'local'
-  | 'memory';
+  'pulse' | 'standard' | 'jumbo' | 'mega' | 'giga' | 'local' | 'memory';
 
 /** Pool sizes optimized for each MotherDuck instance type */
 export const POOL_PRESETS: Record<PoolPreset, number> = {

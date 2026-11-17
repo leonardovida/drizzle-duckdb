@@ -42,11 +42,7 @@ export const anyValue = <T = unknown>(expr: SQLWrapper) =>
   sql<T>`any_value(${expr})`;
 
 type LanceSqlArgument =
-  | SQLWrapper
-  | string
-  | number
-  | boolean
-  | readonly unknown[];
+  SQLWrapper | string | number | boolean | readonly unknown[];
 
 export interface LanceVectorSearchOptions {
   k?: number;

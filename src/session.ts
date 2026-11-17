@@ -342,7 +342,7 @@ function inlineSqlParams(
   });
 
   let text = '';
-  for (let i = 0; i < queryString.length; ) {
+  for (let i = 0; i < queryString.length;) {
     const skipped = skipQuotedOrComment(queryString, i);
     if (skipped !== i) {
       text += queryString.slice(i, skipped);
