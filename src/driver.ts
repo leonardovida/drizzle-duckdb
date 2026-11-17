@@ -131,7 +131,7 @@ export interface DuckDBDrizzleConfigWithClient<
 function isConfigObject(data: unknown): data is Record<string, unknown> {
   if (typeof data !== 'object' || data === null) return false;
   if (data.constructor?.name !== 'Object') return false;
-  return (
+  if (
     'connection' in data ||
     'client' in data ||
     'pool' in data ||
@@ -140,7 +140,12 @@ function isConfigObject(data: unknown): data is Record<string, unknown> {
     // Removed options, so they reach the error that explains the removal.
     'schema' in data ||
     'casing' in data
-  );
+  ) {
+    return true;
+  }
+  // A client has methods. A plain object without any is a config that lacks
+  // connection and client, such as `{ decimalMode: 'string' }` or `{}`.
+  return !Object.values(data).some((value) => typeof value === 'function');
 }
 
 /**
