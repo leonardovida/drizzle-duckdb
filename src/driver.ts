@@ -136,8 +136,10 @@ function isConfigObject(data: unknown): data is Record<string, unknown> {
     'client' in data ||
     'pool' in data ||
     'relations' in data ||
+    'logger' in data ||
+    // Removed options, so they reach the error that explains the removal.
     'schema' in data ||
-    'logger' in data
+    'casing' in data
   );
 }
 

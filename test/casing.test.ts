@@ -94,6 +94,13 @@ test('drizzle() rejects the removed casing and schema options', async () => {
     expect(() =>
       drizzle({ client: connection, ...(schema as object) })
     ).toThrow(/schema option was removed in 3\.0/);
+    // A config object with only a removed option is not a client.
+    expect(() => drizzle({ casing: 'snake_case' } as never)).toThrow(
+      /casing option was removed in 3\.0/
+    );
+    expect(() => drizzle({ schema: {} } as never)).toThrow(
+      /schema option was removed in 3\.0/
+    );
   } finally {
     connection.closeSync();
     instance.closeSync();
