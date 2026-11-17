@@ -479,10 +479,20 @@ export interface RelationalSelectionItem {
 }
 
 /**
+ * Name of the column, and struct field, at a position of a related row.
+ * DuckDB matches identifiers case-insensitively, so keys such as userId and
+ * userid cannot name the columns or the struct fields of a relation.
+ */
+export function relationColumnName(position: number): string {
+  return `c${position}`;
+}
+
+/**
  * Normalize the values of relational query rows (`db.query`) in place, so
  * they reach drizzle-orm's relational mapper the way flat selects see them.
  * Relations arrive as native DuckDB structs and lists, whose fields are
- * normalized the same way. Root rows are arrays, nested rows are objects.
+ * normalized the same way and renamed from their positions to their keys.
+ * Root rows are arrays, nested rows are objects.
  */
 export function compileRelationalRowNormalizer(
   selection: readonly RelationalSelectionItem[]
@@ -500,7 +510,9 @@ export function compileRelationalRowNormalizer(
   };
 }
 
-type ObjectNormalizer = (row: Record<string, unknown>) => void;
+type ObjectNormalizer = (
+  row: Record<string, unknown>
+) => Record<string, unknown>;
 
 function compileNestedNormalizer(
   selection: readonly RelationalSelectionItem[]
@@ -511,8 +523,9 @@ function compileNestedNormalizer(
     const inner = item.selection;
     const nested = compileNestedNormalizer(inner);
     const steps = inner.map(
-      (child) =>
+      (child, position) =>
         [
+          relationColumnName(position),
           child.key,
           child.selection
             ? nestedValueNormalizer(child, nested.get(child)!)
@@ -520,9 +533,11 @@ function compileNestedNormalizer(
         ] as const
     );
     result.set(item, (row) => {
-      for (const [key, step] of steps) {
-        if (Object.hasOwn(row, key)) row[key] = step(row[key]);
+      const normalized: Record<string, unknown> = {};
+      for (const [field, key, step] of steps) {
+        assignOwnProperty(normalized, key, step(row[field]));
       }
+      return normalized;
     });
   }
   return result;
@@ -535,13 +550,16 @@ function nestedValueNormalizer(
   return (value) => {
     if (value === null || typeof value !== 'object') return value;
     if (item.isArray && Array.isArray(value)) {
-      for (const row of value) {
+      for (let index = 0; index < value.length; index += 1) {
+        const row = value[index];
         if (row && typeof row === 'object') {
-          normalizeObject(row as Record<string, unknown>);
+          value[index] = normalizeObject(row as Record<string, unknown>);
         }
       }
-    } else if (!Array.isArray(value)) {
-      normalizeObject(value as Record<string, unknown>);
+      return value;
+    }
+    if (!Array.isArray(value)) {
+      return normalizeObject(value as Record<string, unknown>);
     }
     return value;
   };

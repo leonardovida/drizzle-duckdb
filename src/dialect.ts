@@ -1,7 +1,7 @@
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { MigrationConfig, MigrationMeta } from 'drizzle-orm/migrator';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { sql, StringChunk, type SQL } from 'drizzle-orm';
+import { commonStringChunks, sql, StringChunk, type SQL } from 'drizzle-orm';
 import {
   makeDefaultRqbMapper,
   type BuildRelationalQueryResult,
@@ -20,6 +20,7 @@ import { transformSQL } from './sql/ast-transformer.ts';
 import {
   compileRelationalRowNormalizer,
   compileResultMapper,
+  relationColumnName,
   type RelationalSelectionItem,
   type SelectionFieldEntry,
   type ValueCodec,
@@ -148,68 +149,133 @@ async function isDuckLakeCurrentCatalog(
 const RELATIONAL_JOIN_ONE =
   ' left join lateral(select row_to_json("t".*) "r" from (';
 const RELATIONAL_JOIN_MANY = ` left join lateral(select coalesce(json_agg(row_to_json("t".*)), '[]') as "r" from (`;
+const RELATIONAL_JOIN_CLOSE = ') as "t") as ';
 
 // DuckDB rejects parameterized LIMIT/OFFSET in correlated subqueries, which
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
-function quoteIdentifier(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
 /**
- * The struct of one related row. Fields are named explicitly: a bare "t"
- * would resolve to a column of the related table named t, if it has one.
+ * Name of the ordinal column of an ordered many relation. The columns of the
+ * related row are renamed by position, so no user column can take this name.
  */
-function relatedRowStruct(item: RelationalSelectionItem): string {
-  const fields = item.selection!.map(
-    ({ key }) => `${quoteIdentifier(key)} := "t".${quoteIdentifier(key)}`
-  );
-  return `struct_pack(${fields.join(', ')})`;
-}
-
-/**
- * Relations in the order drizzle-orm emits their lateral joins: depth first,
- * each relation before the relations nested in it.
- */
-function relationsInJoinOrder(
-  selection: readonly RelationalSelectionItem[],
-  result: RelationalSelectionItem[] = []
-): RelationalSelectionItem[] {
-  for (const item of selection) {
-    if (!item.selection) continue;
-    result.push(item);
-    relationsInJoinOrder(item.selection, result);
-  }
-  return result;
-}
+const RELATION_ORDINAL = '"ord"';
 
 const UNMATCHED_JOIN_MESSAGE =
   'drizzle-duckdb could not match a relational query join to its relation.';
 
-/** Rewrite the top-level chunks of a relational query in place. */
-function rewriteRelationalChunks(
+/** The closing chunk each rewritten join needs, keyed by its opening chunk. */
+const relationJoinClosings = new WeakMap<StringChunk, string>();
+
+type CollectRelationalQueryConfig = {
+  depth?: number;
+  mode?: 'first' | 'many';
+  queryConfig?: true | { orderBy?: unknown; comment?: unknown };
+};
+
+type CollectRelationalQuery = (
+  config: CollectRelationalQueryConfig,
+  collectTo: unknown[]
+) => readonly RelationalSelectionItem[];
+
+/**
+ * The chunks of the ORDER BY of one relation, which drizzle-orm writes after
+ * the relation's nested joins and before its LIMIT, OFFSET and comment.
+ */
+function relationOrderChunks(
+  chunks: readonly unknown[],
+  start: number,
+  config: CollectRelationalQueryConfig
+): unknown[] | undefined {
+  const params = config.queryConfig === true ? undefined : config.queryConfig;
+  if (!params?.orderBy) return undefined;
+  let end = chunks.length;
+  if (params.comment) end -= 2;
+  if (chunks[end - 2] === commonStringChunks[' offset ']) end -= 2;
+  if (chunks[end - 2] === commonStringChunks[' limit ']) end -= 2;
+  const orderBy = chunks.lastIndexOf(commonStringChunks[' order by '], end - 1);
+  if (orderBy < start) return undefined;
+  return chunks.slice(orderBy + 1, end);
+}
+
+/**
+ * Rewrite the lateral join of one nested relation, right after drizzle-orm
+ * collected its select. The related row becomes a struct of positional
+ * columns. A many relation with an orderBy also numbers its rows in that
+ * order and aggregates them in it: DuckDB decorrelates the lateral join into
+ * a grouped aggregate, and list() on several threads does not keep the order
+ * of the subquery.
+ */
+function rewriteNestedRelation(
   chunks: unknown[],
+  start: number,
+  config: CollectRelationalQueryConfig,
   selection: readonly RelationalSelectionItem[]
 ): void {
-  const relations = relationsInJoinOrder(selection);
-  let relationIndex = 0;
+  const join = chunks[start - 1];
+  if (
+    !is(join, StringChunk) ||
+    (join.value !== RELATIONAL_JOIN_ONE && join.value !== RELATIONAL_JOIN_MANY)
+  ) {
+    throw new Error(UNMATCHED_JOIN_MESSAGE);
+  }
+  const isMany = join.value === RELATIONAL_JOIN_MANY;
+  const order = isMany ? relationOrderChunks(chunks, start, config) : undefined;
+
+  const columns = selection.map((_, position) =>
+    quoteIdentifier(relationColumnName(position))
+  );
+  const row = `struct_pack(${columns
+    .map((column) => `${column} := "t".${column}`)
+    .join(', ')})`;
+
+  let open: string;
+  if (!isMany) {
+    open = ` left join lateral(select ${row} "r" from (`;
+  } else if (order) {
+    // The select starts with drizzle-orm's "select " chunk.
+    chunks.splice(
+      start + 1,
+      0,
+      new StringChunk('row_number() over (order by '),
+      ...order,
+      new StringChunk(`) as ${RELATION_ORDINAL}, `)
+    );
+    columns.unshift(RELATION_ORDINAL);
+    open = ` left join lateral(select coalesce(list(${row} order by "t".${RELATION_ORDINAL}), []) as "r" from (`;
+  } else {
+    open = ` left join lateral(select coalesce(list(${row}), []) as "r" from (`;
+  }
+  // Shared chunk instances must not be mutated.
+  const opening = new StringChunk(open);
+  chunks[start - 1] = opening;
+  relationJoinClosings.set(opening, `) as "t"(${columns.join(', ')})) as `);
+}
+
+/**
+ * Close each rewritten join with the positional column names of its row,
+ * and inline numeric LIMIT and OFFSET values.
+ */
+function finishRelationalChunks(chunks: unknown[]): void {
+  const closings: string[] = [];
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
     if (!is(chunk, StringChunk)) continue;
+    const closing = relationJoinClosings.get(chunk);
+    if (closing !== undefined) {
+      closings.push(closing);
+      continue;
+    }
     if (
       chunk.value === RELATIONAL_JOIN_ONE ||
       chunk.value === RELATIONAL_JOIN_MANY
     ) {
-      const relation = relations[relationIndex++];
-      if (!relation) throw new Error(UNMATCHED_JOIN_MESSAGE);
-      const row = relatedRowStruct(relation);
-      // Shared chunk instances must not be mutated.
-      chunks[index] = new StringChunk(
-        chunk.value === RELATIONAL_JOIN_ONE
-          ? ` left join lateral(select ${row} "r" from (`
-          : ` left join lateral(select coalesce(list(${row}), []) as "r" from (`
-      );
+      throw new Error(UNMATCHED_JOIN_MESSAGE);
+    }
+    if (chunk.value === RELATIONAL_JOIN_CLOSE) {
+      const replacement = closings.pop();
+      if (replacement === undefined) throw new Error(UNMATCHED_JOIN_MESSAGE);
+      chunks[index] = new StringChunk(replacement);
       continue;
     }
     const next = chunks[index + 1];
@@ -220,9 +286,11 @@ function rewriteRelationalChunks(
       chunks[index + 1] = new StringChunk(String(next));
     }
   }
-  if (relationIndex !== relations.length) {
-    throw new Error(UNMATCHED_JOIN_MESSAGE);
-  }
+  if (closings.length > 0) throw new Error(UNMATCHED_JOIN_MESSAGE);
+}
+
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 export class DuckDBDialect extends PgDialect {
@@ -279,6 +347,27 @@ export class DuckDBDialect extends PgDialect {
         return mapper;
       }) as PgDialect['mapperGenerators']['relationalRows'],
     };
+
+    // drizzle-orm collects each nested relation of a relational query in a
+    // recursive call of this private method. Wrapping it on the instance lets
+    // the dialect rewrite every relation with its own config and selection.
+    const collect = (
+      PgDialect.prototype as unknown as {
+        collectRelationalQuery?: CollectRelationalQuery;
+      }
+    ).collectRelationalQuery;
+    if (typeof collect === 'function') {
+      (
+        this as unknown as { collectRelationalQuery: CollectRelationalQuery }
+      ).collectRelationalQuery = (config, collectTo) => {
+        const start = collectTo.length;
+        const selection = collect.call(this, config, collectTo);
+        if (config.depth) {
+          rewriteNestedRelation(collectTo, start, config, selection);
+        }
+        return selection;
+      };
+    }
   }
 
   // Drizzle passes escapeName unbound, so it must not use `this`. drizzle-orm
@@ -465,10 +554,7 @@ export class DuckDBDialect extends PgDialect {
     config: Parameters<PgDialect['buildRelationalQuery']>[0]
   ): BuildRelationalQueryResult {
     const result = super.buildRelationalQuery(config);
-    rewriteRelationalChunks(
-      result.sql.queryChunks,
-      result.selection as unknown as readonly RelationalSelectionItem[]
-    );
+    finishRelationalChunks(result.sql.queryChunks);
     return result;
   }
 

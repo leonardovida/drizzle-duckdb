@@ -252,6 +252,92 @@ test('DuckDB column helpers decode in relations like a flat select', async () =>
   }
 });
 
+test('related keys that differ only in case keep their values', async () => {
+  const owners = pgTable('rq_case_owners', { id: integer('id').primaryKey() });
+  const items = pgTable('rq_case_items', {
+    id: integer('id').primaryKey(),
+    ownerId: integer('owner_id').notNull(),
+    userId: integer('user_id_a'),
+    userid: integer('user_id_b'),
+    // Named like the driver's ordinal and positional columns.
+    ord: integer('ord'),
+    c0: text('c0'),
+  });
+  const caseRelations = defineRelations({ owners, items }, (r) => ({
+    owners: {
+      items: r.many.items({ from: r.owners.id, to: r.items.ownerId }),
+    },
+    items: {
+      owner: r.one.owners({ from: r.items.ownerId, to: r.owners.id }),
+    },
+  }));
+  const caseDb = await drizzle(':memory:', { relations: caseRelations });
+  try {
+    await caseDb.execute(sql`
+      create table rq_case_owners (id integer primary key);
+      create table rq_case_items (
+        id integer primary key,
+        owner_id integer not null,
+        user_id_a integer,
+        user_id_b integer,
+        ord integer,
+        c0 text
+      );
+      insert into rq_case_owners values (1);
+      insert into rq_case_items values
+        (10, 1, 1, 2, 30, 'x'),
+        (11, 1, 3, 4, 10, 'y'),
+        (12, 1, 5, 6, 20, 'z');
+    `);
+
+    expect(
+      await caseDb.query.owners.findFirst({
+        with: {
+          items: {
+            columns: { userId: true, userid: true, ord: true, c0: true },
+            orderBy: { ord: 'asc' },
+          },
+        },
+      })
+    ).toEqual({
+      id: 1,
+      items: [
+        { userId: 3, userid: 4, ord: 10, c0: 'y' },
+        { userId: 5, userid: 6, ord: 20, c0: 'z' },
+        { userId: 1, userid: 2, ord: 30, c0: 'x' },
+      ],
+    });
+    expect(
+      await caseDb.query.items.findFirst({
+        columns: { id: true },
+        where: { id: 10 },
+        with: {
+          owner: {
+            with: {
+              items: {
+                columns: { userId: true, userid: true },
+                orderBy: { id: 'desc' },
+              },
+            },
+          },
+        },
+      })
+    ).toEqual({
+      id: 10,
+      owner: {
+        id: 1,
+        items: [
+          { userId: 5, userid: 6 },
+          { userId: 3, userid: 4 },
+          { userId: 1, userid: 2 },
+        ],
+      },
+    });
+  } finally {
+    await caseDb.close();
+  }
+});
+
 test('nested DECIMAL extras follow decimalMode', async () => {
   const extras = {
     amount: () => sql`cast(1234567890123456789.5 as decimal(38, 2))`,
