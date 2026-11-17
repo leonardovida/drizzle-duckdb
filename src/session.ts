@@ -2,29 +2,26 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { Logger } from 'drizzle-orm/logger';
 import { NoopLogger } from 'drizzle-orm/logger';
-import { getTableConfig, PgArray, PgTransaction } from 'drizzle-orm/pg-core';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
+import {
+  PgAsyncPreparedQuery,
+  PgAsyncSession,
+  PgAsyncTransaction,
+} from 'drizzle-orm/pg-core/async/session';
+import type { PgAsyncSelectBuilder } from 'drizzle-orm/pg-core/async/select';
+import type { InferInsertModel } from 'drizzle-orm/table';
+import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders/select.types';
 import type {
-  PgSelectBuilder,
-  SelectedFields,
-} from 'drizzle-orm/pg-core/query-builders';
-import type { SelectedFieldsOrdered } from 'drizzle-orm/pg-core/query-builders/select.types';
-import type {
+  PgQueryResultHKT,
+  PgRawRow,
   PgTransactionConfig,
   PreparedQueryConfig,
-  PgQueryResultHKT,
 } from 'drizzle-orm/pg-core/session';
-import { PgPreparedQuery, PgSession } from 'drizzle-orm/pg-core/session';
-import type {
-  RelationalSchemaConfig,
-  TablesRelationalConfig,
-} from 'drizzle-orm/relations';
+import type { AnyRelations, EmptyRelations } from 'drizzle-orm/relations';
 import {
   fillPlaceholders,
-  Param,
-  Placeholder,
   type Query,
-  type QueryWithTypings,
   SQL,
   sql,
   type SQLWrapper,
@@ -32,23 +29,19 @@ import {
 import type { WithSubquery } from 'drizzle-orm/subquery';
 import { Column } from 'drizzle-orm/column';
 import type { Assume } from 'drizzle-orm/utils';
+import type {
+  WithCacheConfig,
+  QueryMetadata,
+} from 'drizzle-orm/cache/core/types';
 import { skipQuotedOrComment } from './sql/array-bounds-text.ts';
-import {
-  compileRelationalRowNormalizer,
-  compileResultMapper,
-  resolveFieldDecoder,
-  type RelationalSelectionItem,
-} from './sql/result-mapper.ts';
+import { resolveFieldDecoder } from './sql/result-mapper.ts';
 import { TransactionRollbackError } from 'drizzle-orm/errors';
+import type { ParamKind } from './codecs.ts';
 import type { DuckDBDialect } from './dialect.ts';
-import {
-  DUCKDB_ARRAY_COLUMN_TYPING,
-  relationalSelectionOf,
-} from './dialect.ts';
+import { mapperFieldsOf, paramKindsOf } from './dialect.ts';
 import type {
   DuckDBClientLike,
   DuckDBConnectionPool,
-  DuckDBExecutionClient,
   RowData,
 } from './client.ts';
 import {
@@ -173,18 +166,6 @@ function isNoActiveTransactionError(error: unknown): boolean {
   );
 }
 
-type QueryMetadata = {
-  type: 'select' | 'update' | 'delete' | 'insert';
-  tables: string[];
-};
-
-type CacheConfig = {
-  enable?: boolean;
-  autoInvalidate?: boolean;
-  tag?: string;
-  config?: unknown;
-};
-
 function isSavepointSyntaxError(error: unknown): boolean {
   if (!(error instanceof Error) || !error.message) {
     return false;
@@ -220,26 +201,14 @@ function assertNoTransactionConfig(config: unknown): void {
 /**
  * Params bound to a non-array column must keep their string value even when
  * it looks like a Postgres array literal, for example `{}` in a text column
- * or a braced UUID in a uuid column. The dialect types untyped params as
- * 'none', so every typing except an array column marks a scalar column.
+ * or a braced UUID in a uuid column. Params without a column are coerced.
  */
 function getScalarParamIndexes(
-  params: unknown[],
-  typings: QueryWithTypings['typings']
+  kinds: ReadonlyMap<number, ParamKind> | undefined
 ): Set<number> | undefined {
   let indexes: Set<number> | undefined;
-  for (let index = 0; index < params.length; index += 1) {
-    const param = params[index];
-    const typing = typings?.[index];
-    const isScalar =
-      (typing !== undefined &&
-        typing !== 'none' &&
-        typing !== DUCKDB_ARRAY_COLUMN_TYPING) ||
-      (is(param, Param) &&
-        is(param.value, Placeholder) &&
-        is(param.encoder, Column) &&
-        !is(param.encoder, PgArray));
-    if (isScalar) {
+  for (const [index, kind] of kinds ?? []) {
+    if (kind === 'scalar') {
       indexes ??= new Set();
       indexes.add(index);
     }
@@ -248,24 +217,22 @@ function getScalarParamIndexes(
 }
 
 /**
- * Drizzle encodes an empty pg-core array as '{}', which has no item type to
- * bind a list with. DuckDB casts the string '[]' to an empty list of the
- * column type instead. `source` holds the built params, whose placeholders
- * are still Param objects with their column encoder.
+ * An empty array has no item type to bind a list with. DuckDB casts the
+ * string '[]' to an empty list of the column type instead, so params bound to
+ * a pg-core array column bind their empty array that way.
  */
 function bindEmptyArrays(
-  source: unknown[],
   values: unknown[],
-  typings?: QueryWithTypings['typings']
+  kinds: ReadonlyMap<number, ParamKind> | undefined
 ): unknown[] {
+  if (!kinds) return values;
   let result = values;
-  for (let index = 0; index < values.length; index += 1) {
-    if (values[index] !== '{}') continue;
-    const param = source[index];
-    const isArrayParam =
-      typings?.[index] === DUCKDB_ARRAY_COLUMN_TYPING ||
-      (is(param, Param) && is(param.encoder, PgArray));
-    if (!isArrayParam) continue;
+  for (const [index, kind] of kinds) {
+    if (kind !== 'array') continue;
+    const value = values[index];
+    if (value !== '{}' && !(Array.isArray(value) && value.length === 0)) {
+      continue;
+    }
     if (result === values) result = values.slice();
     result[index] = '[]';
   }
@@ -286,13 +253,13 @@ function isNumericColumn(decoder: unknown): boolean {
  */
 function restoreNonNumericDecimals(
   rows: unknown[][],
-  fields: readonly { field: unknown }[],
+  fields: readonly unknown[],
   decimalColumns: readonly number[]
 ): void {
   const toNumber = decimalColumns.filter(
     (index) =>
       !isNumericColumn(
-        fields[index] && resolveFieldDecoder(fields[index].field)
+        fields[index] !== undefined && resolveFieldDecoder(fields[index])
       )
   );
   if (toNumber.length === 0) {
@@ -412,140 +379,123 @@ function inlineSqlParams(
   };
 }
 
+type QueryMode = 'arrays' | 'objects' | 'raw';
+
+interface DuckDBPreparedQueryOptions {
+  rejectStringArrayLiterals: boolean;
+  warnOnStringArrayLiteral?: (sql: string) => void;
+  paramKinds?: ReadonlyMap<number, ParamKind>;
+  onStatementError?: (error: unknown) => void;
+  decimalMode?: 'number' | 'string';
+  waitForTransactions: boolean;
+  dateParams?: DateParamType;
+}
+
 export class DuckDBPreparedQuery<
   T extends PreparedQueryConfig,
-> extends PgPreparedQuery<T> {
-  static readonly [entityKind]: string = 'DuckDBPreparedQuery';
-  private resultMapper?: (row: unknown[]) => T['execute'];
-  private relationalRowNormalizer?: (row: unknown[]) => void;
+> extends PgAsyncPreparedQuery<T> {
+  static override readonly [entityKind]: string = 'DuckDBPreparedQuery';
 
   constructor(
     private client: DuckDBClientLike,
     private dialect: DuckDBDialect,
-    private queryString: string,
-    private params: unknown[],
-    private logger: Logger,
-    private fields: SelectedFieldsOrdered | undefined,
-    private _isResponseInArrayMode: boolean,
-    private customResultMapper:
-      | ((rows: unknown[][]) => T['execute'])
-      | undefined,
-    private rejectStringArrayLiterals: boolean,
+    query: Query,
+    private queryMode: QueryMode,
+    private rowsMapper: ((rows: unknown[]) => unknown) | undefined,
+    logger: Logger,
+    private duckOptions: DuckDBPreparedQueryOptions,
     queryMetadata?: QueryMetadata,
-    cacheConfig?: CacheConfig,
-    private warnOnStringArrayLiteral?: (sql: string) => void,
-    private scalarParamIndexes?: ReadonlySet<number>,
-    private onStatementError?: (error: unknown) => void,
-    private decimalMode: 'number' | 'string' = 'number',
-    private waitForTransactions = false,
-    private relationalSelection?: readonly RelationalSelectionItem[],
-    private dateParams?: DateParamType
+    cacheConfig?: WithCacheConfig
   ) {
     super(
-      ...([
-        { sql: queryString, params },
-        undefined,
-        queryMetadata,
-        cacheConfig,
-      ] as unknown as ConstructorParameters<typeof PgPreparedQuery>)
+      (params) => this.run(query.sql, params ?? []),
+      query,
+      rowsMapper,
+      queryMode,
+      logger,
+      undefined,
+      queryMetadata,
+      cacheConfig,
+      false
     );
   }
 
-  async execute(
+  /**
+   * Runs the statement directly, as 2.x did: errors keep DuckDB's own error
+   * instead of drizzle-orm's DrizzleQueryError wrapper, and the logger sees
+   * the params as they are bound.
+   */
+  override async execute(
     placeholderValues: Record<string, unknown> | undefined = {}
   ): Promise<T['execute']> {
     try {
-      return await this.executeQuery(placeholderValues);
+      return (await this.executeQuery(placeholderValues)) as T['execute'];
     } catch (error) {
-      this.onStatementError?.(error);
+      this.duckOptions.onStatementError?.(error);
       throw error;
     }
   }
 
   private async executeQuery(
     placeholderValues: Record<string, unknown>
-  ): Promise<T['execute']> {
-    if (this.waitForTransactions) {
+  ): Promise<unknown> {
+    const options = this.duckOptions;
+    if (options.waitForTransactions) {
       await waitForOpenTransaction(this.client);
     }
+    const scalarParamIndexes = getScalarParamIndexes(options.paramKinds);
     const filled = inlineSqlParams(
       this.dialect,
-      this.queryString,
+      this.query.sql,
       bindEmptyArrays(
-        this.params,
-        fillPlaceholders(this.params, placeholderValues)
+        fillPlaceholders(this.query.params, placeholderValues),
+        options.paramKinds
       ),
-      this.scalarParamIndexes
+      scalarParamIndexes
     );
-    const queryString = filled.queryString;
     const params = prepareQueryParams({
       logger: this.logger,
-      queryString,
+      queryString: filled.queryString,
       params: filled.params,
-      rejectStringArrayLiterals: this.rejectStringArrayLiterals,
-      warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
+      rejectStringArrayLiterals: options.rejectStringArrayLiterals,
+      warnOnStringArrayLiteral: options.warnOnStringArrayLiteral,
       scalarParamIndexes: filled.scalarParamIndexes,
     });
+    const rows = await this.run(filled.queryString, params);
+    return this.rowsMapper ? this.rowsMapper(rows) : rows;
+  }
 
-    const { fields, joinsNotNullableMap, customResultMapper } =
-      this as typeof this & { joinsNotNullableMap?: Record<string, boolean> };
-
-    // Match PgPreparedQuery: relational queries pass a result mapper without
-    // fields and expect array rows, including for empty results.
-    if (!fields && !customResultMapper) {
-      const rows = await executeOnClient(this.client, queryString, params, {
-        decimalMode: this.decimalMode,
-        dateParams: this.dateParams,
+  private async run(
+    queryString: string,
+    params: unknown[]
+  ): Promise<unknown[]> {
+    const { decimalMode, dateParams } = this.duckOptions;
+    if (this.queryMode !== 'arrays') {
+      return executeOnClient(this.client, queryString, params, {
+        decimalMode,
+        dateParams,
       });
-
-      return rows as T['execute'];
     }
 
-    // Relational queries without a known selection cannot tell DECIMAL
-    // columns from other DECIMAL fields, so they keep doubles.
-    const relationalSelection = customResultMapper
-      ? this.relationalSelection
+    // Rows of selects and relational queries keep exact DECIMAL text for
+    // numeric() columns. Raw array queries, such as $count(), keep doubles.
+    const fields = this.rowsMapper
+      ? mapperFieldsOf(this.rowsMapper)
       : undefined;
     const { rows, exactDecimalColumns } = await executeArraysOnClient(
       this.client,
       queryString,
       params,
       {
-        exactDecimals: !customResultMapper || relationalSelection !== undefined,
-        decimalMode: this.decimalMode,
-        dateParams: this.dateParams,
+        exactDecimals: fields !== undefined,
+        decimalMode,
+        dateParams,
       }
     );
-
-    const decimalFields = relationalSelection ?? fields;
-    if (exactDecimalColumns && decimalFields && this.decimalMode !== 'string') {
-      restoreNonNumericDecimals(rows, decimalFields, exactDecimalColumns);
+    if (exactDecimalColumns && fields && decimalMode !== 'string') {
+      restoreNonNumericDecimals(rows, fields, exactDecimalColumns);
     }
-
-    if (customResultMapper) {
-      if (relationalSelection) {
-        this.relationalRowNormalizer ??=
-          compileRelationalRowNormalizer(relationalSelection);
-        for (const row of rows) this.relationalRowNormalizer(row);
-      }
-      return customResultMapper(rows);
-    }
-
-    this.resultMapper ??= compileResultMapper<T['execute']>(
-      fields!,
-      joinsNotNullableMap
-    );
-    return rows.map(this.resultMapper);
-  }
-
-  all(
-    placeholderValues: Record<string, unknown> | undefined = {}
-  ): Promise<T['all']> {
-    return this.execute(placeholderValues);
-  }
-
-  isResponseInArrayMode(): boolean {
-    return this._isResponseInArrayMode;
+    return rows;
   }
 }
 
@@ -558,10 +508,9 @@ export interface DuckDBSessionOptions {
 }
 
 export class DuckDBSession<
-  TFullSchema extends Record<string, unknown> = Record<string, never>,
-  TSchema extends TablesRelationalConfig = Record<string, never>,
-> extends PgSession<DuckDBQueryResultHKT, TFullSchema, TSchema> {
-  static readonly [entityKind]: string = 'DuckDBSession';
+  TRelations extends AnyRelations = EmptyRelations,
+> extends PgAsyncSession<DuckDBQueryResultHKT, TRelations> {
+  static override readonly [entityKind]: string = 'DuckDBSession';
 
   protected override dialect: DuckDBDialect;
   private logger: Logger;
@@ -578,7 +527,7 @@ export class DuckDBSession<
   constructor(
     private client: DuckDBClientLike,
     dialect: DuckDBDialect,
-    private schema: RelationalSchemaConfig<TSchema> | undefined,
+    private relations: TRelations,
     private options: DuckDBSessionOptions = {}
   ) {
     super(dialect);
@@ -589,41 +538,36 @@ export class DuckDBSession<
 
   prepareQuery<T extends PreparedQueryConfig = PreparedQueryConfig>(
     query: Query,
-    fields: SelectedFieldsOrdered | undefined,
-    name: string | undefined,
-    isResponseInArrayMode: boolean,
-    customResultMapper?: (rows: unknown[][]) => T['execute'],
+    mode: QueryMode,
+    name: string | boolean,
+    mapper?: (rows: any[]) => any,
     queryMetadata?: QueryMetadata,
-    cacheConfig?: CacheConfig
-  ): PgPreparedQuery<T> {
+    cacheConfig?: WithCacheConfig
+  ): DuckDBPreparedQuery<T> {
     void name; // DuckDB doesn't support prepared statement names but the signature must match.
-    return new DuckDBPreparedQuery(
+    return new DuckDBPreparedQuery<T>(
       this.client,
       this.dialect,
-      query.sql,
-      bindEmptyArrays(
-        query.params,
-        query.params,
-        (query as QueryWithTypings).typings
-      ),
+      query,
+      mode,
+      mapper,
       this.logger,
-      fields,
-      isResponseInArrayMode,
-      customResultMapper,
-      this.rejectStringArrayLiterals,
+      {
+        rejectStringArrayLiterals: this.rejectStringArrayLiterals,
+        warnOnStringArrayLiteral: this.rejectStringArrayLiterals
+          ? undefined
+          : this.warnOnStringArrayLiteral,
+        paramKinds: paramKindsOf(query),
+        onStatementError:
+          this.statementFailures || this.waitsForTransactions()
+            ? this.recordStatementFailure
+            : undefined,
+        decimalMode: this.options.decimalMode,
+        waitForTransactions: this.waitsForTransactions(),
+        dateParams: this.options.dateParams,
+      },
       queryMetadata,
-      cacheConfig,
-      this.rejectStringArrayLiterals
-        ? undefined
-        : this.warnOnStringArrayLiteral,
-      getScalarParamIndexes(query.params, (query as QueryWithTypings).typings),
-      this.statementFailures || this.waitsForTransactions()
-        ? this.recordStatementFailure
-        : undefined,
-      this.options.decimalMode,
-      this.waitsForTransactions(),
-      relationalSelectionOf(query),
-      this.options.dateParams
+      cacheConfig
     );
   }
 
@@ -633,7 +577,7 @@ export class DuckDBSession<
   }
 
   override async transaction<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
+    transaction: (tx: DuckDBTransaction<TRelations>) => Promise<T>,
     config?: PgTransactionConfig
   ): Promise<T> {
     // Reject before a connection is leased or BEGIN runs.
@@ -655,15 +599,15 @@ export class DuckDBSession<
   }
 
   private async runTransaction<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
+    transaction: (tx: DuckDBTransaction<TRelations>) => Promise<T>,
     pool?: DuckDBConnectionPool
   ): Promise<T> {
     const pinnedConnection = pool ? await pool.acquire() : undefined;
 
-    const session = new DuckDBSession<TFullSchema, TSchema>(
+    const session = new DuckDBSession<TRelations>(
       pinnedConnection ?? this.client,
       this.dialect,
-      this.schema,
+      this.relations,
       this.options
     );
     session.statementFailures = [];
@@ -674,10 +618,10 @@ export class DuckDBSession<
       scopeEntry.openStreams = session.openStreams;
     }
 
-    const tx = new DuckDBTransaction<TFullSchema, TSchema>(
+    const tx = new DuckDBTransaction<TRelations>(
       this.dialect,
       session,
-      this.schema
+      this.relations
     );
 
     // A connection whose ROLLBACK failed may still be inside the transaction
@@ -810,20 +754,14 @@ export class DuckDBSession<
     params: unknown[];
   } {
     const builtQuery = this.dialect.sqlToQuery(query);
+    const kinds = paramKindsOf(builtQuery);
     const params = prepareQueryParams({
       logger: this.logger,
       queryString: builtQuery.sql,
-      params: bindEmptyArrays(
-        builtQuery.params,
-        builtQuery.params,
-        builtQuery.typings
-      ),
+      params: bindEmptyArrays(builtQuery.params, kinds),
       rejectStringArrayLiterals: this.rejectStringArrayLiterals,
       warnOnStringArrayLiteral: this.warnOnStringArrayLiteral,
-      scalarParamIndexes: getScalarParamIndexes(
-        builtQuery.params,
-        builtQuery.typings
-      ),
+      scalarParamIndexes: getScalarParamIndexes(kinds),
     });
     return { sql: builtQuery.sql, params };
   }
@@ -1016,43 +954,31 @@ export class DuckDBSession<
   }
 }
 
-type PgTransactionInternals<
-  TFullSchema extends Record<string, unknown> = Record<string, never>,
-  TSchema extends TablesRelationalConfig = Record<string, never>,
-> = {
+type PgTransactionInternals<TRelations extends AnyRelations> = {
   dialect: DuckDBDialect;
-  session: DuckDBSession<TFullSchema, TSchema>;
+  session: DuckDBSession<TRelations>;
 };
 
-type DuckDBTransactionWithInternals<
-  TFullSchema extends Record<string, unknown> = Record<string, never>,
-  TSchema extends TablesRelationalConfig = Record<string, never>,
-> = PgTransactionInternals<TFullSchema, TSchema> &
-  DuckDBTransaction<TFullSchema, TSchema>;
-
 export class DuckDBTransaction<
-  TFullSchema extends Record<string, unknown>,
-  TSchema extends TablesRelationalConfig,
-> extends PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema> {
-  static readonly [entityKind]: string = 'DuckDBTransaction';
+  TRelations extends AnyRelations = EmptyRelations,
+> extends PgAsyncTransaction<DuckDBQueryResultHKT, TRelations> {
+  static override readonly [entityKind]: string = 'DuckDBTransaction';
 
   constructor(
     dialect: DuckDBDialect,
-    session: DuckDBSession<TFullSchema, TSchema>,
-    schema: RelationalSchemaConfig<TSchema> | undefined,
+    session: DuckDBSession<TRelations>,
+    relations: TRelations,
     nestedIndex = 0
   ) {
-    super(dialect, session, schema, nestedIndex);
+    // Relations arrive as native DuckDB values, so they are not JSON text.
+    super(dialect, session, relations, nestedIndex, false);
     this.$with = new DuckDBQueryBuilder(dialect).$with;
   }
 
-  private getInternals(): DuckDBTransactionWithInternals<TFullSchema, TSchema> {
-    // PgTransaction keeps dialect/session private, but DuckDB transaction
+  private getInternals(): PgTransactionInternals<TRelations> {
+    // drizzle-orm keeps dialect and session internal, but DuckDB transaction
     // helpers need the session for DuckDB-specific execution paths.
-    return this as unknown as DuckDBTransactionWithInternals<
-      TFullSchema,
-      TSchema
-    >;
+    return this as unknown as PgTransactionInternals<TRelations>;
   }
 
   private markRollbackOnly(cause?: unknown): void {
@@ -1061,23 +987,17 @@ export class DuckDBTransaction<
 
   private selectMethods(withList?: WithSubquery[]) {
     const { dialect, session } = this.getInternals();
-    return createDuckDBSelectMethods(
-      session as unknown as PgSession<DuckDBQueryResultHKT>,
-      dialect,
-      withList
-    );
+    return createDuckDBSelectMethods(session, dialect, withList);
   }
 
   override with(
     ...queries: WithSubquery[]
-  ): ReturnType<
-    PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
-  > {
+  ): ReturnType<PgAsyncTransaction<DuckDBQueryResultHKT, TRelations>['with']> {
     return {
       ...super.with(...queries),
       ...this.selectMethods(queries),
-    } as ReturnType<
-      PgTransaction<DuckDBQueryResultHKT, TFullSchema, TSchema>['with']
+    } as unknown as ReturnType<
+      PgAsyncTransaction<DuckDBQueryResultHKT, TRelations>['with']
     >;
   }
 
@@ -1091,31 +1011,31 @@ export class DuckDBTransaction<
     return this.selectMethods().select(fields);
   }
 
-  override selectDistinct(): PgSelectBuilder<undefined>;
+  override selectDistinct(): PgAsyncSelectBuilder<undefined>;
   override selectDistinct<TSelection extends SelectedFields>(
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): PgAsyncSelectBuilder<TSelection>;
   override selectDistinct(
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): PgAsyncSelectBuilder<SelectedFields | undefined> {
     return this.selectMethods().selectDistinct(fields);
   }
 
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[]
-  ): PgSelectBuilder<undefined>;
+  ): PgAsyncSelectBuilder<undefined>;
   override selectDistinctOn<TSelection extends SelectedFields>(
     on: (PgColumn | SQLWrapper)[],
     fields: TSelection
-  ): PgSelectBuilder<TSelection>;
+  ): PgAsyncSelectBuilder<TSelection>;
   override selectDistinctOn(
     on: (PgColumn | SQLWrapper)[],
     fields?: SelectedFields
-  ): PgSelectBuilder<SelectedFields | undefined> {
+  ): PgAsyncSelectBuilder<SelectedFields | undefined> {
     return this.selectMethods().selectDistinctOn(on, fields);
   }
 
-  rollback(): never {
+  override rollback(): never {
     throw new TransactionRollbackError();
   }
 
@@ -1148,13 +1068,13 @@ export class DuckDBTransaction<
   /** Append rows inside this transaction. See `db.appendRows()`. */
   appendRows<TTable extends PgTable>(
     table: TTable,
-    rows: readonly TTable['$inferInsert'][]
+    rows: readonly InferInsertModel<TTable>[]
   ): Promise<number> {
     return this.getInternals().session.appendRows(table, rows);
   }
 
   override async transaction<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>
+    transaction: (tx: DuckDBTransaction<TRelations>) => Promise<T>
   ): Promise<T> {
     const internals = this.getInternals();
     const savepoint = `drizzle_savepoint_${this.nestedIndex + 1}`;
@@ -1162,10 +1082,10 @@ export class DuckDBTransaction<
     const releaseSql = sql.raw(`release savepoint ${savepoint}`);
     const rollbackSql = sql.raw(`rollback to savepoint ${savepoint}`);
 
-    const nestedTx = new DuckDBTransaction<TFullSchema, TSchema>(
+    const nestedTx = new DuckDBTransaction<TRelations>(
       internals.dialect,
       internals.session,
-      this.schema,
+      this._.relations,
       this.nestedIndex + 1
     );
 
@@ -1206,8 +1126,8 @@ export class DuckDBTransaction<
   }
 
   private runNestedWithoutSavepoint<T>(
-    transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
-    nestedTx: DuckDBTransaction<TFullSchema, TSchema>
+    transaction: (tx: DuckDBTransaction<TRelations>) => Promise<T>,
+    nestedTx: DuckDBTransaction<TRelations>
   ): Promise<T> {
     return transaction(nestedTx).catch((error) => {
       this.markRollbackOnly(error);
@@ -1224,5 +1144,5 @@ const arrayLiteralWarning =
   'Received a stringified Postgres-style array literal. Use duckDbList()/duckDbArray() or pass native arrays instead. You can also set rejectStringArrayLiterals=true to throw.';
 
 export interface DuckDBQueryResultHKT extends PgQueryResultHKT {
-  type: GenericTableData<Assume<this['row'], RowData>>;
+  type: GenericTableData<Assume<PgRawRow<this['row']>, RowData>>;
 }

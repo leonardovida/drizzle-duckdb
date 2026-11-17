@@ -1,38 +1,29 @@
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { MigrationConfig, MigrationMeta } from 'drizzle-orm/migrator';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { sql, StringChunk, type SQL } from 'drizzle-orm';
 import {
-  PgArray,
-  PgDate,
-  PgDateString,
-  PgDialect,
-  PgJson,
-  PgJsonb,
-  PgNumeric,
-  PgTime,
-  PgTimestamp,
-  PgTimestampString,
-  PgUUID,
-  type PgColumn,
-  type PgTable,
-} from 'drizzle-orm/pg-core';
-import {
-  Column,
-  sql,
-  SQL,
-  Subquery,
-  type DriverValueEncoder,
-  type QueryTypingsValue,
-} from 'drizzle-orm';
-import type { BuildRelationalQueryResult } from 'drizzle-orm/relations';
-import {
-  StringChunk,
-  type QueryWithTypings,
-  type SQLChunk,
-} from 'drizzle-orm/sql/sql';
+  makeDefaultRqbMapper,
+  type BuildRelationalQueryResult,
+  type RelationalQueryMapperConfig,
+} from 'drizzle-orm/relations';
+import type { Query } from 'drizzle-orm/sql/sql';
 
+import {
+  DuckDBCodecsCollection,
+  duckDbCodecs,
+  recordParamKinds,
+  type ParamKind,
+} from './codecs.ts';
 import { normalizeMigrationConfig } from './migration-config.ts';
 import { transformSQL } from './sql/ast-transformer.ts';
-import type { RelationalSelectionItem } from './sql/result-mapper.ts';
+import {
+  compileRelationalRowNormalizer,
+  compileResultMapper,
+  type RelationalSelectionItem,
+  type SelectionFieldEntry,
+  type ValueCodec,
+} from './sql/result-mapper.ts';
 
 const enum SavepointSupport {
   Unknown = 0,
@@ -40,42 +31,30 @@ const enum SavepointSupport {
   No = 2,
 }
 
-const PG_JSON_UNSUPPORTED_MESSAGE =
-  "Pg JSON/JSONB columns are not supported in DuckDB. Replace them with duckDbJson() to use DuckDB's native JSON type.";
-
 /**
- * Query typing for params bound to a non-array column. DuckDB sessions never
- * coerce these params from Postgres array literal strings.
- * @internal
+ * Kinds of the params of each query rendered by the dialect, keyed by the
+ * Query object, so sessions can tell column params from untyped ones.
  */
-export const DUCKDB_SCALAR_COLUMN_TYPING =
-  'duckdb:scalar' as unknown as QueryTypingsValue;
-
-/**
- * Root selections of relational queries (`db.query`), keyed first by the
- * built SQL and then by the Query that sqlToQuery() renders from it. Drizzle
- * calls both dialect methods before it prepares the query, and the session
- * reads the selection to normalize top-level values.
- */
-const relationalSelections = new WeakMap<
-  object,
-  readonly RelationalSelectionItem[]
->();
+const queryParamKinds = new WeakMap<object, ReadonlyMap<number, ParamKind>>();
 
 /** @internal */
-export function relationalSelectionOf(
+export function paramKindsOf(
   query: object
-): readonly RelationalSelectionItem[] | undefined {
-  return relationalSelections.get(query);
+): ReadonlyMap<number, ParamKind> | undefined {
+  return queryParamKinds.get(query);
 }
 
 /**
- * Query typing for params bound to a pg-core array column, so sessions can
- * bind its empty array as an empty list.
- * @internal
+ * The selected field of each result column, keyed by the row mappers the
+ * dialect generates. Sessions read exact DECIMAL text only for such queries,
+ * and turn it back into numbers for fields that are not numeric() columns.
  */
-export const DUCKDB_ARRAY_COLUMN_TYPING =
-  'duckdb:array' as unknown as QueryTypingsValue;
+const mapperFields = new WeakMap<object, readonly unknown[]>();
+
+/** @internal */
+export function mapperFieldsOf(mapper: object): readonly unknown[] | undefined {
+  return mapperFields.get(mapper);
+}
 
 const MIGRATION_CONFLICT_MAX_ATTEMPTS = 10;
 const MIGRATION_RETRY_BASE_DELAY_MS = 20;
@@ -142,7 +121,7 @@ function assertMigrationJournalName(option: string, name: string): void {
  */
 type MigrationSession = {
   execute(query: SQL): PromiseLike<unknown>;
-  all<T>(query: SQL): PromiseLike<T[]>;
+  objects<T>(query: SQL): PromiseLike<T[]>;
   transaction<T>(
     callback: (tx: { execute(query: SQL): PromiseLike<unknown> }) => Promise<T>
   ): Promise<T>;
@@ -152,7 +131,7 @@ async function isDuckLakeCurrentCatalog(
   session: MigrationSession
 ): Promise<boolean> {
   try {
-    const [row] = await session.all<{ type: string }>(
+    const [row] = await session.objects<{ type: string }>(
       sql`select type from duckdb_databases() where database_name = current_database()`
     );
     return row?.type === 'ducklake';
@@ -161,90 +140,45 @@ async function isDuckLakeCurrentCatalog(
   }
 }
 
-// Drizzle's relational builder emits Postgres JSON functions. DuckDB names
-// them differently, so rewrite the exact template chunks it produces.
-// json_group_array is a macro and rejects ORDER BY, so aggregate with list().
-const RELATIONAL_JSON_CHUNKS = new Map([
-  ['json_build_array(', 'json_array('],
-  ['coalesce(json_agg(', 'coalesce(to_json(list('],
-  ["), '[]'::json)", ")), '[]'::json)"],
+// drizzle-orm's relational builder loads each relation in a lateral join that
+// serializes the related rows with Postgres JSON functions. DuckDB returns the
+// subquery row "t" as a struct and list() collects structs, so relations keep
+// their native values, such as 64-bit integers past 2^53. drizzle-orm defines
+// these chunks privately, so they are matched by their text.
+const RELATIONAL_JOIN_CHUNKS = new Map([
+  [
+    ' left join lateral(select row_to_json("t".*) "r" from (',
+    ' left join lateral(select "t" "r" from (',
+  ],
+  [
+    ` left join lateral(select coalesce(json_agg(row_to_json("t".*)), '[]') as "r" from (`,
+    ' left join lateral(select coalesce(list("t"), []) as "r" from (',
+  ],
 ]);
 
 // DuckDB rejects parameterized LIMIT/OFFSET in correlated subqueries, which
 // is how relational queries load nested relations.
 const RELATIONAL_LIMIT_CHUNKS = new Set([' limit ', ' offset ']);
 
-// pg-core bigint columns that decode with BigInt(), which also reads text.
-const EXACT_BIGINT_COLUMN_TYPES = new Set(['PgBigInt64', 'PgBigSerial64']);
-
-function rewriteRelationalJsonChunks(
-  chunks: SQLChunk[],
-  exactDecimals = false
-): void {
+/** Rewrite the top-level chunks of a relational query in place. */
+function rewriteRelationalChunks(chunks: unknown[]): void {
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    if (is(chunk, StringChunk)) {
-      const value = chunk.value.length === 1 ? chunk.value[0] : undefined;
-      const replacement =
-        value === undefined ? undefined : RELATIONAL_JSON_CHUNKS.get(value);
-      const next = chunks[index + 1] as unknown;
-      if (replacement) {
-        if (value === 'json_build_array(' && is(next, SQL)) {
-          // JSON numbers lose DECIMAL digits. numeric() columns read exact
-          // text, as in flat selects, and decimalMode 'string' reads every
-          // DECIMAL column as text.
-          const fields = next.queryChunks.map((item) => {
-            if (!is(item, Column)) {
-              return item;
-            }
-            // JSON numbers are doubles, which round 64-bit integers past
-            // 2^53. bigint columns in 'bigint' mode read exact text instead.
-            if (EXACT_BIGINT_COLUMN_TYPES.has(item.columnType)) {
-              return sql`cast(${item} as VARCHAR)`;
-            }
-            if (!exactDecimals && !item.columnType.startsWith('PgNumeric')) {
-              return item;
-            }
-            const originalType = item.getSQLType();
-            const exactType = decimalStringType(originalType);
-            return exactType === originalType
-              ? item
-              : sql`cast(${item} as ${sql.raw(exactType)})`;
-          });
-          next.queryChunks.splice(0, next.queryChunks.length, ...fields);
-        }
-        chunks[index] = new StringChunk(replacement);
-      } else if (
-        value !== undefined &&
-        RELATIONAL_LIMIT_CHUNKS.has(value) &&
-        Number.isSafeInteger(next)
-      ) {
-        chunks[index + 1] = new StringChunk(String(next));
-      }
-    } else if (Array.isArray(chunk)) {
-      rewriteRelationalJsonChunks(chunk, exactDecimals);
-    } else if (is(chunk, SQL)) {
-      rewriteRelationalJsonChunks(chunk.queryChunks, exactDecimals);
-    } else if (is(chunk, SQL.Aliased)) {
-      rewriteRelationalJsonChunks(chunk.sql.queryChunks, exactDecimals);
-    } else if (is(chunk, Subquery)) {
-      rewriteRelationalJsonChunks(
-        (chunk._.sql as SQL).queryChunks,
-        exactDecimals
-      );
+    if (!is(chunk, StringChunk)) continue;
+    const replacement = RELATIONAL_JOIN_CHUNKS.get(chunk.value);
+    if (replacement !== undefined) {
+      // Shared chunk instances must not be mutated.
+      chunks[index] = new StringChunk(replacement);
+      continue;
+    }
+    const next = chunks[index + 1];
+    if (
+      RELATIONAL_LIMIT_CHUNKS.has(chunk.value) &&
+      Number.isSafeInteger(next)
+    ) {
+      chunks[index + 1] = new StringChunk(String(next));
     }
   }
-}
-
-// Cast DECIMAL leaves before relational JSON serialization. Native nested
-// casts retain list/struct/map shape while preserving decimal digits as text.
-// Quoted field names and ENUM labels must remain literal catalog text.
-function decimalStringType(type: string): string {
-  return type.replace(
-    /"(?:""|[^"])*"|'(?:''|[^'])*'|\b(?:DECIMAL|NUMERIC)\b(?:\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\))?/gi,
-    (token) =>
-      token.startsWith('"') || token.startsWith("'") ? token : 'VARCHAR'
-  );
 }
 
 export class DuckDBDialect extends PgDialect {
@@ -254,12 +188,53 @@ export class DuckDBDialect extends PgDialect {
   private savepointsSupported: SavepointSupport = SavepointSupport.Unknown;
 
   constructor(
-    private options: ConstructorParameters<typeof PgDialect>[0] & {
+    private options: {
       qualifyRawJoinColumns?: boolean;
       decimalMode?: 'number' | 'string';
     } = {}
   ) {
-    super(options);
+    super({ codecs: duckDbCodecs, useJitMappers: false });
+    const codecs = new DuckDBCodecsCollection();
+    const codecOf = (column: Parameters<typeof codecs.get>[0]) =>
+      codecs.get(column, 'normalize') as ValueCodec | undefined;
+    const internals = this as unknown as {
+      codecs: DuckDBCodecsCollection;
+      mapperGenerators: PgDialect['mapperGenerators'];
+    };
+    internals.codecs = codecs;
+    internals.mapperGenerators = {
+      // Rows arrive as arrays in selection order. The driver's mapper also
+      // turns node-api values into what each column decodes, and assigns
+      // keys such as __proto__ as own properties.
+      rows: ((fields: readonly SelectionFieldEntry[], nullableObjectPaths) => {
+        const mapRow = compileResultMapper(
+          fields,
+          nullableObjectPaths,
+          codecOf
+        );
+        const mapper = (rows: unknown[][]) => rows.map(mapRow);
+        mapperFields.set(
+          mapper,
+          fields.map(({ field }) => field)
+        );
+        return mapper;
+      }) as PgDialect['mapperGenerators']['rows'],
+      relationalRows: ((config: RelationalQueryMapperConfig) => {
+        const selection =
+          config.selection as unknown as readonly RelationalSelectionItem[];
+        const normalize = compileRelationalRowNormalizer(selection);
+        const map = makeDefaultRqbMapper(config);
+        const mapper = (rows: unknown[][]) => {
+          for (const row of rows) normalize(row);
+          return map(rows);
+        };
+        mapperFields.set(
+          mapper,
+          selection.map((item) => (item.selection ? undefined : item.field))
+        );
+        return mapper;
+      }) as PgDialect['mapperGenerators']['relationalRows'],
+    };
   }
 
   // Drizzle passes escapeName unbound, so it must not use `this`. drizzle-orm
@@ -289,7 +264,7 @@ export class DuckDBDialect extends PgDialect {
     this.savepointsSupported = SavepointSupport.No;
   }
 
-  override async migrate(
+  async migrate(
     migrations: MigrationMeta[],
     session: MigrationSession,
     config: MigrationConfig | string
@@ -404,7 +379,7 @@ export class DuckDBDialect extends PgDialect {
         return false;
       }
       try {
-        const [applied] = await session.all<{
+        const [applied] = await session.objects<{
           hash: string;
           created_at: string;
         }>(latestMigrationQuery);
@@ -442,52 +417,22 @@ export class DuckDBDialect extends PgDialect {
     }
   }
 
-  // Drizzle passes prepareTyping unbound, so it must not use `this`.
-  override prepareTyping(
-    encoder: DriverValueEncoder<unknown, unknown>
-  ): QueryTypingsValue {
-    if (is(encoder, PgJsonb) || is(encoder, PgJson)) {
-      throw new Error(PG_JSON_UNSUPPORTED_MESSAGE);
-    } else if (is(encoder, PgArray)) {
-      return DUCKDB_ARRAY_COLUMN_TYPING;
-    } else if (is(encoder, PgNumeric)) {
-      return 'decimal';
-    } else if (is(encoder, PgTime)) {
-      return 'time';
-    } else if (is(encoder, PgTimestamp) || is(encoder, PgTimestampString)) {
-      return 'timestamp';
-    } else if (is(encoder, PgDate) || is(encoder, PgDateString)) {
-      return 'date';
-    } else if (is(encoder, PgUUID)) {
-      return 'uuid';
-    } else if (is(encoder, Column)) {
-      return DUCKDB_SCALAR_COLUMN_TYPING;
-    } else {
-      return 'none';
-    }
-  }
-
-  override buildRelationalQueryWithoutPK(
-    config: Parameters<PgDialect['buildRelationalQueryWithoutPK']>[0]
-  ): BuildRelationalQueryResult<PgTable, PgColumn> {
-    const result = super.buildRelationalQueryWithoutPK(config);
-    // Nested relations recurse through this method; rewrite once at the root.
-    if (!config.nestedQueryRelation && is(result.sql, SQL)) {
-      rewriteRelationalJsonChunks(
-        result.sql.queryChunks,
-        this.options.decimalMode === 'string'
-      );
-      relationalSelections.set(result.sql, result.selection);
-    }
+  override buildRelationalQuery(
+    config: Parameters<PgDialect['buildRelationalQuery']>[0]
+  ): BuildRelationalQueryResult {
+    const result = super.buildRelationalQuery(config);
+    rewriteRelationalChunks(result.sql.queryChunks);
     return result;
   }
 
   override sqlToQuery(
     sqlObj: SQL,
-    invokeSource?: 'indexes' | undefined
-  ): QueryWithTypings {
-    // First, let the parent generate the SQL string
-    const result = super.sqlToQuery(sqlObj, invokeSource);
+    invokeSource?: Parameters<PgDialect['sqlToQuery']>[1]
+  ): Query {
+    // Let the parent render the SQL, noting which params bind to columns.
+    const { result, kinds } = recordParamKinds(() =>
+      super.sqlToQuery(sqlObj, invokeSource)
+    );
 
     // Apply AST-based transformations for DuckDB compatibility
     const transformed = transformSQL(result.sql, {
@@ -498,8 +443,7 @@ export class DuckDBDialect extends PgDialect {
       ...result,
       sql: transformed.sql,
     };
-    const selection = relationalSelections.get(sqlObj);
-    if (selection) relationalSelections.set(query, selection);
+    if (kinds.size > 0) queryParamKinds.set(query, kinds);
     return query;
   }
 }
