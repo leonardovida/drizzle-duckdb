@@ -224,7 +224,7 @@ test('infinite timestamps survive typed column decoders', async () => {
 
 describe('placeholders encoded as SQL', () => {
   test('prepared inserts bind struct, empty list and literal timestamp values', async () => {
-    const db = await drizzle(':memory:', { pool: false, prepareCache: true });
+    const db = await drizzle(':memory:', { pool: false });
     const rows = pgTable('sweep2_placeholders', {
       id: integer('id'),
       struct: duckDbStruct<{ a: number }>('struct', { a: 'INTEGER' }),

@@ -29,7 +29,6 @@ test('exact decimal policy agrees across raw, builder, stream and columnar reads
   const instance = await DuckDBInstance.create(':memory:');
   const db = drizzle(await instance.connect(), {
     decimalMode: 'string',
-    prepareCache: true,
     schema: { entries, owners, entriesRelations, ownersRelations },
   });
   const approximate = drizzle(await instance.connect());

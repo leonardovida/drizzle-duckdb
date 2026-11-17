@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { drizzle, migrate, type DuckDBDatabase } from '../src/index.ts';
 
-describe('prepareCache with SQL that cannot be prepared', () => {
+describe('SQL that cannot be prepared as one statement', () => {
   let instance: DuckDBInstance;
   let db: DuckDBDatabase;
   let migrationsDir: string;
 
   beforeAll(async () => {
     instance = await DuckDBInstance.create(':memory:');
-    db = drizzle(await instance.connect(), { prepareCache: true });
+    db = drizzle(await instance.connect());
 
     migrationsDir = mkdtempSync(join(tmpdir(), 'drizzle-duckdb-cache-'));
     mkdirSync(join(migrationsDir, 'meta'));
@@ -72,7 +72,7 @@ describe('prepareCache with SQL that cannot be prepared', () => {
     ).resolves.toBeDefined();
   });
 
-  test('single statements still use the cache', async () => {
+  test('single statements bind their params', async () => {
     expect(await db.execute(sql`select ${1}::int as one`)).toEqual([
       { one: 1 },
     ]);

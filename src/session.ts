@@ -65,7 +65,6 @@ import {
   type ExecuteInBatchesOptions,
 } from './client.ts';
 import { isPool } from './client.ts';
-import type { PreparedStatementCacheConfig } from './options.ts';
 import {
   createDuckDBSelectMethods,
   DuckDBQueryBuilder,
@@ -203,45 +202,14 @@ function isTransactionAbortedError(error: unknown): boolean {
   );
 }
 
-const VALID_TRANSACTION_ISOLATION_LEVELS = new Set<string>([
-  'read uncommitted',
-  'read committed',
-  'repeatable read',
-  'serializable',
-]);
+const TRANSACTION_CONFIG_ERROR =
+  'Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).';
 
-const VALID_TRANSACTION_ACCESS_MODES = new Set<string>([
-  'read only',
-  'read write',
-]);
-
-function assertValidTransactionOption(
-  label: string,
-  value: string | undefined,
-  validValues: ReadonlySet<string>
-): void {
-  if (!value || validValues.has(value)) {
-    return;
+/** Any config object, even an empty one, is rejected. */
+function assertNoTransactionConfig(config: unknown): void {
+  if (config) {
+    throw new Error(TRANSACTION_CONFIG_ERROR);
   }
-
-  throw new Error(
-    `Invalid transaction ${label} "${value}". Expected one of: ${Array.from(
-      validValues
-    ).join(', ')}.`
-  );
-}
-
-const TRANSACTION_CONFIG_WARNING =
-  'Transaction config is not supported by DuckDB and is ignored. Passing it will throw in the next major version.';
-
-let hasWarnedTransactionConfig = false;
-
-function warnTransactionConfigIgnored(): void {
-  if (hasWarnedTransactionConfig) {
-    return;
-  }
-  hasWarnedTransactionConfig = true;
-  console.warn(TRANSACTION_CONFIG_WARNING);
 }
 
 /**
@@ -458,7 +426,6 @@ export class DuckDBPreparedQuery<
       | ((rows: unknown[][]) => T['execute'])
       | undefined,
     private rejectStringArrayLiterals: boolean,
-    private prepareCache: PreparedStatementCacheConfig | undefined,
     queryMetadata?: QueryMetadata,
     cacheConfig?: CacheConfig,
     private warnOnStringArrayLiteral?: (sql: string) => void,
@@ -522,7 +489,6 @@ export class DuckDBPreparedQuery<
     // fields and expect array rows, including for empty results.
     if (!fields && !customResultMapper) {
       const rows = await executeOnClient(this.client, queryString, params, {
-        prepareCache: this.prepareCache,
         decimalMode: this.decimalMode,
         dateParams: this.dateParams,
       });
@@ -540,7 +506,6 @@ export class DuckDBPreparedQuery<
       queryString,
       params,
       {
-        prepareCache: this.prepareCache,
         exactDecimals: !customResultMapper || relationalSelection !== undefined,
         decimalMode: this.decimalMode,
         dateParams: this.dateParams,
@@ -585,7 +550,6 @@ export interface DuckDBSessionOptions {
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
-  prepareCache?: PreparedStatementCacheConfig;
 }
 
 export class DuckDBSession<
@@ -597,7 +561,6 @@ export class DuckDBSession<
   protected override dialect: DuckDBDialect;
   private logger: Logger;
   private rejectStringArrayLiterals: boolean;
-  private prepareCache: PreparedStatementCacheConfig | undefined;
   private hasWarnedArrayLiteral = false;
   private rollbackOnly = false;
   private rollbackOnlyCause: unknown;
@@ -617,11 +580,6 @@ export class DuckDBSession<
     this.dialect = dialect;
     this.logger = options.logger ?? new NoopLogger();
     this.rejectStringArrayLiterals = options.rejectStringArrayLiterals ?? false;
-    this.prepareCache = options.prepareCache;
-    this.options = {
-      ...options,
-      prepareCache: this.prepareCache,
-    };
   }
 
   prepareQuery<T extends PreparedQueryConfig = PreparedQueryConfig>(
@@ -648,7 +606,6 @@ export class DuckDBSession<
       isResponseInArrayMode,
       customResultMapper,
       this.rejectStringArrayLiterals,
-      this.prepareCache,
       queryMetadata,
       cacheConfig,
       this.rejectStringArrayLiterals
@@ -674,9 +631,8 @@ export class DuckDBSession<
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,
     config?: PgTransactionConfig
   ): Promise<T> {
-    if (config) {
-      warnTransactionConfigIgnored();
-    }
+    // Reject before a connection is leased or BEGIN runs.
+    assertNoTransactionConfig(config);
 
     if (isPool(this.client)) {
       return this.runTransaction(transaction, this.client);
@@ -1159,54 +1115,11 @@ export class DuckDBTransaction<
   }
 
   /**
-   * @deprecated DuckDB has no SET TRANSACTION statement, so transaction config
-   * is ignored. This helper will be removed in the next major version.
+   * DuckDB has no SET TRANSACTION statement. Drizzle's version would send one,
+   * so this override rejects any config and resolves when none is given.
    */
-  getTransactionConfigSQL(config: PgTransactionConfig): SQL {
-    assertValidTransactionOption(
-      'isolation level',
-      config.isolationLevel,
-      VALID_TRANSACTION_ISOLATION_LEVELS
-    );
-    assertValidTransactionOption(
-      'access mode',
-      config.accessMode,
-      VALID_TRANSACTION_ACCESS_MODES
-    );
-
-    if (
-      config.deferrable !== undefined &&
-      typeof config.deferrable !== 'boolean'
-    ) {
-      throw new Error(
-        `Invalid transaction deferrable flag "${String(
-          config.deferrable
-        )}". Expected a boolean.`
-      );
-    }
-
-    const chunks: string[] = [];
-    if (config.isolationLevel) {
-      chunks.push(`isolation level ${config.isolationLevel}`);
-    }
-    if (config.accessMode) {
-      chunks.push(config.accessMode);
-    }
-    if (typeof config.deferrable === 'boolean') {
-      chunks.push(config.deferrable ? 'deferrable' : 'not deferrable');
-    }
-    return sql.raw(chunks.join(' '));
-  }
-
-  /**
-   * @deprecated DuckDB has no SET TRANSACTION statement. This method is a
-   * no-op that warns once, and passing config will throw in the next major
-   * version.
-   */
-  setTransaction(config: PgTransactionConfig): Promise<void> {
-    void config;
-    warnTransactionConfigIgnored();
-    return Promise.resolve();
+  override async setTransaction(config?: PgTransactionConfig): Promise<void> {
+    assertNoTransactionConfig(config);
   }
 
   executeBatches<T extends RowData = RowData>(

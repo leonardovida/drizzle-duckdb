@@ -17,11 +17,6 @@ export interface DuckLakeAttachOptions {
   dataPath?: string;
   encrypted?: boolean;
   /**
-   * @deprecated DuckLake has no `META_PARAMETER_NAME` option, so this setting
-   * always failed the ATTACH. Setting it now throws. Use `metaParameters`.
-   */
-  metaParameterName?: string;
-  /**
    * Options passed to the metadata catalog. Each entry becomes
    * `META_<KEY> 'value'`, so `{ type: 'duckdb' }` emits `META_TYPE 'duckdb'`.
    */
@@ -69,7 +64,7 @@ const DUCKLAKE_ATTACH_OPTION_NAMES = {
   overrideDataPath: 'OVERRIDE_DATA_PATH',
   readOnly: 'READ_ONLY',
 } as const satisfies Record<
-  Exclude<keyof DuckLakeAttachOptions, 'metaParameterName' | 'metaParameters'>,
+  Exclude<keyof DuckLakeAttachOptions, 'metaParameters'>,
   string
 >;
 const META_PARAMETER_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -176,15 +171,6 @@ function buildDuckLakeAttachOptionsSql(
 ): string[] {
   if (!attachOptions) {
     return [];
-  }
-
-  if (
-    attachOptions.metaParameterName !== undefined &&
-    attachOptions.metaParameterName !== ''
-  ) {
-    throw new Error(
-      "DuckLake attachOptions.metaParameterName is not supported because DuckLake has no META_PARAMETER_NAME option. Use metaParameters instead, for example metaParameters: { type: 'duckdb' } for META_TYPE 'duckdb'."
-    );
   }
 
   const options: string[] = [];

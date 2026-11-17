@@ -180,8 +180,6 @@ export interface IntrospectResult {
   files: {
     schemaTs: string;
     metaJson: IntrospectedTable[];
-    /** @deprecated Never populated. Will be removed in the next major version. */
-    relationsTs?: string;
   };
 }
 

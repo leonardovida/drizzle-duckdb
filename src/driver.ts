@@ -54,11 +54,6 @@ import {
   type PoolPreset,
 } from './pool.ts';
 import {
-  resolvePrepareCacheOption,
-  type PreparedStatementCacheConfig,
-  type PrepareCacheOption,
-} from './options.ts';
-import {
   configureDuckLake,
   createDuckLakeConnectionSetup,
   resolveDuckLakePoolSize,
@@ -72,7 +67,6 @@ export interface PgDriverOptions {
   logger?: Logger;
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
-  prepareCache?: PreparedStatementCacheConfig;
 }
 
 export class DuckDBDriver {
@@ -91,7 +85,6 @@ export class DuckDBDriver {
       logger: this.options.logger,
       rejectStringArrayLiterals: this.options.rejectStringArrayLiterals,
       arrayLiteralWarning: this.options.arrayLiteralWarning,
-      prepareCache: this.options.prepareCache,
       decimalMode: this.options.decimalMode,
       dateParams: this.options.dateParams,
     });
@@ -111,12 +104,6 @@ export interface DuckDBDrizzleConfig<
 > extends DrizzleConfig<TSchema> {
   rejectStringArrayLiterals?: boolean;
   arrayLiteralWarning?: (query: string) => void;
-  /**
-   * @deprecated Ignored, with a one-time warning. DuckDB can return wrong
-   * results when a prepared statement runs again after the data changed, so
-   * statements are no longer cached.
-   */
-  prepareCache?: PrepareCacheOption;
   /** Opt into legacy heuristic qualification of raw SQL join operands. */
   qualifyRawJoinColumns?: boolean;
   /** Opt into exact DECIMAL strings across execution paths. */
@@ -267,19 +254,6 @@ function isNodePostgresPool(value: unknown): value is PgDuckPool {
   );
 }
 
-const PREPARE_CACHE_WARNING =
-  'The prepareCache option is deprecated and ignored. DuckDB plans a prepared statement from the table statistics at prepare time, so a cached statement can return wrong results after the data changes. Remove the option. It will be removed in the next major version.';
-
-let hasWarnedPrepareCache = false;
-
-function warnPrepareCacheIgnored(): void {
-  if (hasWarnedPrepareCache) {
-    return;
-  }
-  hasWarnedPrepareCache = true;
-  console.warn(PREPARE_CACHE_WARNING);
-}
-
 /** Internal: create database from a client (connection or pool) */
 function createFromClient<
   TSchema extends Record<string, unknown> = Record<string, never>,
@@ -310,10 +284,6 @@ function createFromClient<
     qualifyRawJoinColumns: config.qualifyRawJoinColumns,
     decimalMode: config.decimalMode,
   });
-  const prepareCache = resolvePrepareCacheOption(config.prepareCache);
-  if (prepareCache) {
-    warnPrepareCacheIgnored();
-  }
 
   const logger =
     config.logger === true ? new DefaultLogger() : config.logger || undefined;
@@ -336,7 +306,6 @@ function createFromClient<
     logger,
     rejectStringArrayLiterals: config.rejectStringArrayLiterals,
     arrayLiteralWarning: config.arrayLiteralWarning,
-    prepareCache,
     decimalMode: config.decimalMode,
     dateParams: config.dateParams,
   });
@@ -647,8 +616,8 @@ export class DuckDBDatabase<
   }
 
   /**
-   * Run a transaction. The `config` argument is deprecated: DuckDB has no
-   * SET TRANSACTION statement, so it is ignored with a one-time warning.
+   * Run a transaction. DuckDB has no SET TRANSACTION statement, so passing
+   * `config` rejects before the transaction begins.
    */
   override async transaction<T>(
     transaction: (tx: DuckDBTransaction<TFullSchema, TSchema>) => Promise<T>,

@@ -11,7 +11,6 @@ import { drizzle } from '../src';
 import { introspect } from '../src/introspect';
 import {
   mdCurrentEmail,
-  mdFlightLogs,
   mdGetFlightLogs,
   mdGetFlightRun,
   mdGetFlightVersion,
@@ -284,14 +283,6 @@ if (skipMotherduck) {
           'line_number',
           'reported_at',
           'line',
-        ]);
-
-        const legacyColumns = await db.execute<{ column_name: string }>(sql`
-          describe select *
-          from ${mdFlightLogs(sql`uuid()`, sql`0::ubigint`)}
-        `);
-        expect(legacyColumns.map((column) => column.column_name)).toEqual([
-          'logs',
         ]);
 
         const runColumns = await db.execute<{ column_name: string }>(sql`

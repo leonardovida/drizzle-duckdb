@@ -262,24 +262,6 @@ export class DuckDBDialect extends PgDialect {
     super(options);
   }
 
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  resetPgJsonFlag(): void {}
-
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  markPgJsonDetected(): void {}
-
-  /**
-   * @deprecated Pg JSON/JSONB params now throw while the query is built. This
-   * method is a no-op and will be removed in the next major version.
-   */
-  assertNoPgJsonColumns(): void {}
-
   // Drizzle passes escapeName unbound, so it must not use `this`. drizzle-orm
   // before 0.45.2 did not escape embedded quotes (GHSA-gpj5-g38j-94v9).
   override escapeName(name: string): string {

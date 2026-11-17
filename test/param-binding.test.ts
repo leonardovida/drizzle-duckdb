@@ -34,16 +34,13 @@ const tzValues = pgTable('binding_tz', {
   tm: duckDbMap<Record<string, Date>>('tm', 'TIMESTAMPTZ'),
 });
 
-describe.each([
-  { name: 'run', prepareCache: undefined },
-  { name: 'prepared statement cache', prepareCache: true as const },
-])('parameter binding ($name)', ({ prepareCache }) => {
+describe('parameter binding', () => {
   let instance: DuckDBInstance;
   let db: DuckDBDatabase;
 
   beforeAll(async () => {
     instance = await DuckDBInstance.create(':memory:');
-    db = drizzle(await instance.connect(), { prepareCache });
+    db = drizzle(await instance.connect());
     await db.execute(sql`
       create table binding_lists (
         id integer, ints integer[], names text[], l integer[], a integer[3],

@@ -6,7 +6,6 @@ import {
   type DuckDBConnectionPool,
 } from '../../src/client.ts';
 import { createDuckDBConnectionPool } from '../../src/pool.ts';
-import type { PrepareCacheOption } from '../../src/options.ts';
 
 export interface PerfHarness {
   connection: DuckDBConnection;
@@ -32,8 +31,6 @@ export interface PerfHarnessOptions {
   poolSize?: number;
   /** Exact DECIMAL output for precision benchmarks. */
   decimalMode?: 'number' | 'string';
-  /** Prepared statement cache configuration */
-  prepareCache?: PrepareCacheOption;
 }
 
 export function createPerfHarness(
@@ -53,7 +50,6 @@ export async function createPerfHarness(
 
   const drizzleConfig = {
     decimalMode: options?.decimalMode,
-    prepareCache: options?.prepareCache,
   } as const;
 
   await seedFactTable(connection);
