@@ -110,7 +110,7 @@ function arrayBoundsSql(name: string, arr: string): string {
   // NULLIF can evaluate its argument twice. Bind the length once when the
   // expression may be volatile, as the AST visitor does.
   return arr.includes('(')
-    ? `list_extract(list_transform(list_value(array_length(${arr})), __drizzle_array_length -> nullif(__drizzle_array_length, 0)), 1)`
+    ? `list_extract(list_transform(list_value(array_length(${arr})), lambda __drizzle_array_length: nullif(__drizzle_array_length, 0)), 1)`
     : `nullif(array_length(${arr}), 0)`;
 }
 

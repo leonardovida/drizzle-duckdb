@@ -9,7 +9,8 @@ updates:
         patterns:
           - '*'
 
-  - package-ecosystem: npm
+  # The lockfile is bun.lock, which the npm ecosystem does not update.
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly

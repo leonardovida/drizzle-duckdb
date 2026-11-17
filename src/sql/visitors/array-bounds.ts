@@ -81,10 +81,22 @@ function arrayBoundsExpr(functionName: string, arrayExpr: unknown) {
       return call('list_extract', [
         call('list_transform', [
           call('list_value', [lengthExpr]),
+          // `lambda x: expr` syntax. DuckDB 2.0 rejects the older `x -> expr`
+          // arrow. The printer has no lambda node, so the parameter list is
+          // printed as an unquoted name on the left of a `:` operator.
           {
             type: 'binary_expr',
-            operator: '->',
-            left: length,
+            operator: ':',
+            left: {
+              type: 'column_ref',
+              table: null,
+              column: {
+                expr: {
+                  type: 'default',
+                  value: 'lambda __drizzle_array_length',
+                },
+              },
+            },
             right: nullIf(length),
           },
         ]),

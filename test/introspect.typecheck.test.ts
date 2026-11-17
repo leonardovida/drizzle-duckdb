@@ -97,9 +97,6 @@ test('generated schema type-checks with tsc', async () => {
       moduleResolution: 'bundler',
       module: 'ESNext',
       target: 'ESNext',
-      ignoreDeprecations: '6.0',
-      // baseUrl is required for TS to apply `paths` mappings below
-      baseUrl: '.',
       paths: {
         '@duckdbfan/drizzle-duckdb': [
           path.relative(tmpDir, path.join(process.cwd(), 'src', 'index.ts')),

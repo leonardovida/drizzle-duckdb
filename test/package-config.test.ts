@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import semver from 'semver';
 
 describe('package.json configuration', () => {
   const packageJson = JSON.parse(
@@ -41,6 +42,19 @@ describe('package.json configuration', () => {
     expect(range).toBeDefined();
     for (const releaseLine of supportedReleaseLines) {
       expect(range.split(' || ')).toContain(releaseLine);
+    }
+  });
+
+  // A new -r.N build needs its own clause in the peer range. Bumping the dev
+  // copy past the range fails here instead of in a consumer's install.
+  test('the installed peers satisfy the declared peer ranges', () => {
+    for (const name of ['@duckdb/node-api', 'drizzle-orm']) {
+      const installed = packageJson.devDependencies[name];
+      const range = packageJson.peerDependencies[name];
+      expect(
+        semver.satisfies(installed, range),
+        `${name}@${installed} is outside the peer range ${range}`
+      ).toBe(true);
     }
   });
 

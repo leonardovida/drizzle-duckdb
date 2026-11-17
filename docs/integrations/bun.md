@@ -7,7 +7,7 @@ nav_order: 3
 
 # Bun
 
-Drizzle DuckDB runs on Bun as well as Node.js. Bun runs TypeScript directly, which suits scripts and local tooling. For production services, Node.js 22 or 24 is the recommended runtime.
+Drizzle DuckDB runs on Bun as well as Node.js. Bun runs TypeScript directly, which suits scripts and local tooling. For production services, Node.js 22, 24 or 26 is the recommended runtime.
 
 ## Installation
 
@@ -76,9 +76,9 @@ bun run scripts/introspect.ts
     "db:introspect": "bun run scripts/introspect.ts"
   },
   "dependencies": {
-    "@duckdb/node-api": "1.5.6-r.1",
+    "@duckdb/node-api": "1.5.6-r.2",
     "@duckdbfan/drizzle-duckdb": "^1.7.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

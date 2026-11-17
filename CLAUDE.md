@@ -11,6 +11,7 @@ This is `@duckdbfan/drizzle-duckdb`, a DuckDB dialect adapter for drizzle-orm. I
 - **Install dependencies:** `bun install`
 - **Run all tests:** `bun run test` (runs Vitest. Plain `bun test` starts Bun's own test runner instead)
 - **Run tests with watch mode and UI:** `bun run t`
+- **Run tests with coverage thresholds:** `bun run test:coverage`
 - **Run a single test file:** `bun run test test/<filename>.test.ts`
 - **Build:** `bun run build` (emits `dist/index.mjs`, `dist/helpers.mjs`, `dist/duckdb-introspect.mjs`, and type declarations)
 - **Build declarations only:** `bun run build:declarations`
@@ -43,6 +44,7 @@ The package exports from `src/index.ts`, which re-exports most of these modules:
 - `sql-constants.ts`: string literal inlining for AI function arguments the binder needs as constants
 - `ducklake.ts`: DuckLake attach SQL, `configureDuckLake()`, `duckLakeMergeAdjacentFiles()`, pool wrapping and local catalog detection
 - `migrator.ts`: `migrate()` function for applying SQL migrations
+- `instance-keys.ts`: records which database a `DuckDBInstance` points at, so `migrate()` can queue calls per database
 - `migration-config.ts`: migration config normalization
 - `introspect.ts`: schema introspection for generating a Drizzle schema from existing DuckDB tables
 - `value-wrappers.ts`: conversion of wrapped values to DuckDB bindings and literals
