@@ -121,7 +121,7 @@ try {
 
 **Symptom**: `db.transaction(fn, config)` or `tx.setTransaction(config)` rejects with this error, and the callback does not run.
 
-**Cause**: DuckDB has no `SET TRANSACTION`, so options such as `isolationLevel`, `accessMode` and `deferrable` are not supported. Versions before 3.0 ignored them with a warning.
+**Cause**: DuckDB has no `SET TRANSACTION`, so options such as `isolationLevel`, `accessMode` and `deferrable` are not supported. Version 2.6 ignored them with a warning.
 
 **Solution**: Remove the config argument, including an empty object `{}`.
 
