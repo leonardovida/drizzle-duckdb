@@ -5,6 +5,14 @@ export default defineConfig({
     // Agent worktrees under .claude/ hold full copies of test/. Collecting
     // them runs every suite twice, and the copies race on test/.tmp.
     exclude: [...configDefaults.exclude, '.claude/**', 'test/.tmp/**'],
+    benchmark: {
+      // The warning counts every module export getter call in a shared Map,
+      // which slows per-row paths measurably. Vitest 4 did not count them, so
+      // turning it off keeps results comparable with the benchmark history.
+      suppressExportGetterWarnings: true,
+      // Agent worktrees hold full copies of test/perf.
+      exclude: [...configDefaults.exclude, '.claude/**', 'test/.tmp/**'],
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

@@ -1,6 +1,6 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, bench, describe } from 'vitest';
+import { afterAll, beforeAll, describe } from 'vitest';
 import { drizzle, type DuckDBDatabase } from '../../src/driver.ts';
 import { createDuckDBConnectionPool } from '../../src/pool.ts';
 import {
@@ -10,6 +10,7 @@ import {
 import {
   closePerfHarness,
   createPerfHarness,
+  perfBench,
   type PerfHarness,
 } from './setup.ts';
 import { factLarge } from './schema.ts';
@@ -48,97 +49,61 @@ afterAll(async () => {
 });
 
 describe('paired execution paths', () => {
-  bench(
-    'paired scan native rows',
-    async () => {
-      checkRows(await (await harness.connection.run(scan)).getRowsJS());
-    },
-    { time: 700 }
-  );
-  bench(
-    'paired scan raw objects',
-    async () => {
-      const rows = await harness.db.execute(sql.raw(scan));
-      if (
-        rows.length !== 100000 ||
-        rows.reduce((sum, row) => sum + Number(row.id), 0) !== expectedChecksum
-      )
-        throw new Error('Raw checksum mismatch');
-    },
-    { time: 700 }
-  );
-  bench(
-    'paired scan builder',
-    async () => {
-      const rows = await harness.db.select().from(factLarge);
-      if (
-        rows.length !== 100000 ||
-        rows.reduce((sum, row) => sum + Number(row.id), 0) !== expectedChecksum
-      )
-        throw new Error('Builder checksum mismatch');
-    },
-    { time: 700 }
-  );
-  bench(
-    'paired lookup query',
-    async () => {
-      const rows = await harness.db.execute(lookup);
-      if (rows.length !== 1 || rows[0]?.checksum !== 49_992_000n)
-        throw new Error('Lookup checksum mismatch');
-    },
-    { time: 700 }
-  );
+  perfBench('paired scan native rows', 700, async () => {
+    checkRows(await (await harness.connection.run(scan)).getRowsJS());
+  });
+  perfBench('paired scan raw objects', 700, async () => {
+    const rows = await harness.db.execute(sql.raw(scan));
+    if (
+      rows.length !== 100000 ||
+      rows.reduce((sum, row) => sum + Number(row.id), 0) !== expectedChecksum
+    )
+      throw new Error('Raw checksum mismatch');
+  });
+  perfBench('paired scan builder', 700, async () => {
+    const rows = await harness.db.select().from(factLarge);
+    if (
+      rows.length !== 100000 ||
+      rows.reduce((sum, row) => sum + Number(row.id), 0) !== expectedChecksum
+    )
+      throw new Error('Builder checksum mismatch');
+  });
+  perfBench('paired lookup query', 700, async () => {
+    const rows = await harness.db.execute(lookup);
+    if (rows.length !== 1 || rows[0]?.checksum !== 49_992_000n)
+      throw new Error('Lookup checksum mismatch');
+  });
   for (const mode of ['single', 'pool-4'] as const) {
-    bench(
-      `paired concurrency-8 ${mode}`,
-      async () => {
-        const db = mode === 'single' ? harness.db : pooled;
-        const results = await Promise.all(
-          Array.from({ length: 8 }, () => db.execute(count))
-        );
-        if (results.some((rows) => rows[0]?.n !== 100000))
-          throw new Error('Concurrent count mismatch');
-      },
-      { time: 700 }
-    );
+    perfBench(`paired concurrency-8 ${mode}`, 700, async () => {
+      const db = mode === 'single' ? harness.db : pooled;
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => db.execute(count))
+      );
+      if (results.some((rows) => rows[0]?.n !== 100000))
+        throw new Error('Concurrent count mismatch');
+    });
   }
-  bench(
-    'paired decimal approximate',
-    async () => {
-      const rows = await harness.db.execute(decimalQuery);
-      if (rows.length !== 10000 || rows[9999]?.amount !== 999.9)
-        throw new Error('Decimal conversion mismatch');
-    },
-    { time: 700 }
-  );
-  bench(
-    'paired decimal exact strings',
-    async () => {
-      const rows = await precise.execute(decimalQuery);
-      if (rows.length !== 10000 || rows[9999]?.amount !== '999.9000000000')
-        throw new Error('Exact decimal conversion mismatch');
-    },
-    { time: 700 }
-  );
+  perfBench('paired decimal approximate', 700, async () => {
+    const rows = await harness.db.execute(decimalQuery);
+    if (rows.length !== 10000 || rows[9999]?.amount !== 999.9)
+      throw new Error('Decimal conversion mismatch');
+  });
+  perfBench('paired decimal exact strings', 700, async () => {
+    const rows = await precise.execute(decimalQuery);
+    if (rows.length !== 10000 || rows[9999]?.amount !== '999.9000000000')
+      throw new Error('Exact decimal conversion mismatch');
+  });
 });
 
 describe('paired AST rewriting', () => {
   const query = "select array_upper(ARRAY['a','b'],1) as n";
-  bench(
-    'paired AST cold',
-    () => {
-      clearTransformCache();
-      if (!transformSQL(query, { qualifyJoinColumns: false }).transformed)
-        throw new Error('AST rewrite failed');
-    },
-    { time: 400 }
-  );
-  bench(
-    'paired AST warm',
-    () => {
-      if (!transformSQL(query, { qualifyJoinColumns: false }).transformed)
-        throw new Error('AST rewrite failed');
-    },
-    { time: 400 }
-  );
+  perfBench('paired AST cold', 400, () => {
+    clearTransformCache();
+    if (!transformSQL(query, { qualifyJoinColumns: false }).transformed)
+      throw new Error('AST rewrite failed');
+  });
+  perfBench('paired AST warm', 400, () => {
+    if (!transformSQL(query, { qualifyJoinColumns: false }).transformed)
+      throw new Error('AST rewrite failed');
+  });
 });

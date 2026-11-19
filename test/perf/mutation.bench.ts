@@ -1,9 +1,10 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import type { DuckDBDatabase } from '../../src/index.ts';
-import { afterAll, beforeAll, bench, describe } from 'vitest';
+import { afterAll, beforeAll, describe } from 'vitest';
 import {
   closePerfHarness,
   createPerfHarness,
+  perfBench,
   type PerfHarness,
 } from './setup.ts';
 import {
@@ -42,99 +43,63 @@ afterAll(async () => {
 });
 
 describe('mutations', () => {
-  bench(
-    'insert batch (builder)',
-    async () => {
-      await db.delete(benchInsert);
-      await db.insert(benchInsert).values(batch);
-    },
-    { time: 700 }
-  );
+  perfBench('insert batch (builder)', 700, async () => {
+    await db.delete(benchInsert);
+    await db.insert(benchInsert).values(batch);
+  });
 
-  bench(
-    'insert batch returning',
-    async () => {
-      await db.delete(benchInsert);
-      await db.insert(benchInsert).values(batch).returning();
-    },
-    { time: 700 }
-  );
+  perfBench('insert batch returning', 700, async () => {
+    await db.delete(benchInsert);
+    await db.insert(benchInsert).values(batch).returning();
+  });
 
-  bench(
-    'upsert do update',
-    async () => {
-      await db.delete(benchInsert);
-      await db.insert(benchInsert).values([{ id: 1, val: 'seed' }]);
-      await db
-        .insert(benchInsert)
-        .values([{ id: 1, val: 'updated' }])
-        .onConflictDoUpdate({
-          target: benchInsert.id,
-          set: { val: sql`excluded.val` },
-        });
-    },
-    { time: 700 }
-  );
-
-  bench(
-    'upsert do nothing',
-    async () => {
-      await db.delete(benchInsert);
-      await db.insert(benchInsert).values([{ id: 1, val: 'seed' }]);
-      await db
-        .insert(benchInsert)
-        .values([{ id: 1, val: 'dup' }])
-        .onConflictDoNothing({ target: benchInsert.id });
-    },
-    { time: 700 }
-  );
-
-  bench(
-    'transaction: insert + select',
-    async () => {
-      await db.transaction(async (tx) => {
-        await tx.delete(benchInsert);
-        await tx.insert(benchInsert).values(batch.slice(0, 20));
-        await tx.select().from(benchInsert).limit(5);
+  perfBench('upsert do update', 700, async () => {
+    await db.delete(benchInsert);
+    await db.insert(benchInsert).values([{ id: 1, val: 'seed' }]);
+    await db
+      .insert(benchInsert)
+      .values([{ id: 1, val: 'updated' }])
+      .onConflictDoUpdate({
+        target: benchInsert.id,
+        set: { val: sql`excluded.val` },
       });
-    },
-    { time: 700 }
-  );
+  });
 
-  bench(
-    'prepared select reuse',
-    async () => {
-      await preparedSelect.execute({ id: 10 });
-    },
-    { time: 700 }
-  );
+  perfBench('upsert do nothing', 700, async () => {
+    await db.delete(benchInsert);
+    await db.insert(benchInsert).values([{ id: 1, val: 'seed' }]);
+    await db
+      .insert(benchInsert)
+      .values([{ id: 1, val: 'dup' }])
+      .onConflictDoNothing({ target: benchInsert.id });
+  });
 
-  bench(
-    'mixed workload (select + insert)',
-    async () => {
-      await db.select().from(factLarge).orderBy(asc(factLarge.id)).limit(20);
-      await db.insert(benchInsert).values([{ id: mixedId++, val: 'mix' }]);
-    },
-    { time: 700 }
-  );
+  perfBench('transaction: insert + select', 700, async () => {
+    await db.transaction(async (tx) => {
+      await tx.delete(benchInsert);
+      await tx.insert(benchInsert).values(batch.slice(0, 20));
+      await tx.select().from(benchInsert).limit(5);
+    });
+  });
 
-  bench(
-    'complex param mapping (struct/map/arrays)',
-    async () => {
-      await db.delete(benchComplex);
-      await db.insert(benchComplex).values({
-        id: 1,
-        meta: { version: 2, tag: 'alpha' },
-        attrs: { region: 'us-east', env: 'dev' },
-        nums: [1, 2, 3, 4],
-        tags: ['a', 'b', 'c'],
-      });
-      await db
-        .select()
-        .from(benchComplex)
-        .where(eq(benchComplex.id, 1))
-        .limit(1);
-    },
-    { time: 700 }
-  );
+  perfBench('prepared select reuse', 700, async () => {
+    await preparedSelect.execute({ id: 10 });
+  });
+
+  perfBench('mixed workload (select + insert)', 700, async () => {
+    await db.select().from(factLarge).orderBy(asc(factLarge.id)).limit(20);
+    await db.insert(benchInsert).values([{ id: mixedId++, val: 'mix' }]);
+  });
+
+  perfBench('complex param mapping (struct/map/arrays)', 700, async () => {
+    await db.delete(benchComplex);
+    await db.insert(benchComplex).values({
+      id: 1,
+      meta: { version: 2, tag: 'alpha' },
+      attrs: { region: 'us-east', env: 'dev' },
+      nums: [1, 2, 3, 4],
+      tags: ['a', 'b', 'c'],
+    });
+    await db.select().from(benchComplex).where(eq(benchComplex.id, 1)).limit(1);
+  });
 });

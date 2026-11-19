@@ -58,7 +58,7 @@
 - Use Vitest only. Share utilities via `test/utils.ts`. When exercising migrations, mirror layouts under `test/drizzle2/pg/meta` or `test/duckdb/pg/meta` and keep snapshots in sync.
 - The large `test/duckdb.test.ts` sets up sequences and schemas in `beforeAll` and `beforeEach`. Follow that pattern or create fresh tables in new files to avoid cross test bleed.
 - Regression tests should cover DuckDB specific branches such as aliasing, selection mapping, transaction handling, and migrator behavior.
-- Perf benchmarks run with `bun run bench`, which calls `bun x vitest bench --run test/perf --pool=threads --maxWorkers=1 --no-file-parallelism` on Vitest 4. Use `bun run perf:run` and `bun run perf:compare` to record and compare results.
+- Perf benchmarks run with `bun run bench`, which calls `bun x vitest bench --run test/perf --pool=threads --maxWorkers=1 --no-file-parallelism` on Vitest 5. Register each benchmark with `perfBench()` from `test/perf/setup.ts`, which wraps the `bench` test fixture and pins the iteration settings. Use `bun run perf:run` and `bun run perf:compare` to record and compare results.
 
 ## Commit and Pull Request Guidelines
 

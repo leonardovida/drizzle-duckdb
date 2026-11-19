@@ -49,22 +49,31 @@ export function parseArgs(argv: string[]): CliArgs {
   return { ghaOutput, runFilters };
 }
 
-function toActionRows(data: any): ActionBenchRow[] {
+/**
+ * Reads benchmark tasks from the Vitest JSON reporter. The value is 1000 over
+ * the mean latency in milliseconds, which is the `hz` that Vitest 4 reported.
+ * tinybench's `throughput.mean` averages per-sample rates instead and runs
+ * higher, so it would not compare with the recorded history.
+ */
+export function toActionRows(data: any): ActionBenchRow[] {
   const rows: ActionBenchRow[] = [];
 
-  for (const file of data.files ?? []) {
-    for (const group of file.groups ?? []) {
-      for (const bench of group.benchmarks ?? []) {
-        if (bench?.hz == null) {
-          continue;
-        }
+  for (const file of data?.testResults ?? []) {
+    for (const test of file.assertionResults ?? []) {
+      for (const benchmark of test.benchmarks ?? []) {
+        for (const task of benchmark.tasks ?? []) {
+          const mean = task?.latency?.mean;
+          if (task?.fromStore || typeof mean !== 'number' || !(mean > 0)) {
+            continue;
+          }
 
-        rows.push({
-          name: bench.name,
-          unit: 'ops/s',
-          value: bench.hz,
-          range: bench.rme ?? 0,
-        });
+          rows.push({
+            name: task.name,
+            unit: 'ops/s',
+            value: 1000 / mean,
+            range: task.latency.rme ?? 0,
+          });
+        }
       }
     }
   }
@@ -95,8 +104,9 @@ export function buildVitestArgs(
     '--pool=threads',
     '--maxWorkers=1',
     '--no-file-parallelism',
-    '--outputJson',
-    outputJson,
+    '--reporter=default',
+    '--reporter=json',
+    `--outputFile.json=${outputJson}`,
     '--run',
   ];
 
