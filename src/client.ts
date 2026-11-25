@@ -1685,30 +1685,41 @@ function quoteAppendIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+/** TIMESTAMPTZ text the appender reads correctly: it ends in a UTC offset. */
+const UTC_TIMESTAMP_TEXT = /(?:Z|[+-]00(?::?00)?| UTC)$/;
+
 /**
  * The appender casts appended text to most column types the way a bound
  * parameter is cast, but not all. It cannot cast text to INTERVAL or INET.
- * Its TIMESTAMPTZ and TIMETZ casts ignore a `+02` offset and read text
- * without one in UTC, not in the session TimeZone. Text for those columns is
- * cast by a query before it is appended.
+ * Its TIMESTAMPTZ cast ignores an offset other than UTC, and its TIMESTAMPTZ
+ * and TIMETZ casts read text without an offset in UTC, not in the session
+ * TimeZone. That text is cast by a query before it is appended.
  */
-function appenderTextCastType(type: DuckDBType): string | undefined {
+function appenderTextCast(
+  type: DuckDBType
+): { castType: string; needsCast: (text: string) => boolean } | undefined {
   switch (type.typeId) {
     case DuckDBTypeId.INTERVAL:
-      return 'INTERVAL';
+      return { castType: 'INTERVAL', needsCast: () => true };
     case DuckDBTypeId.TIMESTAMP_TZ:
-      return 'TIMESTAMPTZ';
+      return {
+        castType: 'TIMESTAMPTZ',
+        needsCast: (text) => !UTC_TIMESTAMP_TEXT.test(text),
+      };
     case DuckDBTypeId.TIME_TZ:
-      return 'TIMETZ';
+      return { castType: 'TIMETZ', needsCast: () => true };
   }
   const alias = (type as { alias?: string }).alias;
-  return alias?.toUpperCase() === 'INET' ? 'INET' : undefined;
+  return alias?.toUpperCase() === 'INET'
+    ? { castType: 'INET', needsCast: () => true }
+    : undefined;
 }
 
 /**
- * Read the cells of the columns whose text the appender cannot cast, and cast
- * their distinct strings in one query. Each cell is read once, so a column's
- * defaultFn runs once per row, as for the other columns.
+ * Read the cells of the columns whose text the appender casts differently
+ * from a bound parameter, and cast their distinct strings in one query. Each
+ * cell is read once, so a column's defaultFn runs once per row, as for the
+ * other columns.
  */
 async function castAppenderText(
   connection: DuckDBConnection,
@@ -1723,20 +1734,20 @@ async function castAppenderText(
     { values: unknown[]; casts: Map<string, DuckDBValue> }
   >();
   for (let columnIndex = 0; columnIndex < columnTypes.length; columnIndex++) {
-    const castType = appenderTextCastType(columnTypes[columnIndex]!);
-    if (!castType) continue;
+    const cast = appenderTextCast(columnTypes[columnIndex]!);
+    if (!cast) continue;
     const values = new Array<unknown>(rowCount);
     const texts = new Set<string>();
     for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
       const value = valueAt(rowIndex, columnIndex);
       values[rowIndex] = value;
-      if (typeof value === 'string') texts.add(value);
+      if (typeof value === 'string' && cast.needsCast(value)) texts.add(value);
     }
     const casts = new Map<string, DuckDBValue>();
     if (texts.size > 0) {
       const list = [...texts];
       const reader = await connection.runAndReadAll(
-        `select cast($1 as ${castType}[]) as v`,
+        `select cast($1 as ${cast.castType}[]) as v`,
         [listValue(list)],
         [LIST(VARCHAR)]
       );
@@ -1814,8 +1825,8 @@ export async function appendRowsOnClient(
             const value = cast
               ? cast.values[rowIndex]
               : valueAt(rowIndex, columnIndex);
-            if (cast && typeof value === 'string') {
-              appender.appendValue(cast.casts.get(value) ?? null, columnType);
+            if (cast && typeof value === 'string' && cast.casts.has(value)) {
+              appender.appendValue(cast.casts.get(value)!, columnType);
             } else {
               appendCell(appender, value, columnType);
             }

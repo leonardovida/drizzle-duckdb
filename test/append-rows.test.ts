@@ -201,7 +201,7 @@ describe('appendRows', () => {
         clock: '12:00:00',
         span: '-90 minutes',
       },
-      { id: 3, at: '2024-07-01 12:00:00', clock: null, span: null },
+      { id: 3, at: '2024-01-01T10:00:00.5Z', clock: null, span: null },
     ];
     await db.appendRows(zoned, rows);
     await db
@@ -225,6 +225,7 @@ describe('appendRows', () => {
     });
     // Text without an offset is read in the session TimeZone.
     expect(appended[1]).toMatchObject({ at: '2024-07-01 12:00:00-04' });
+    expect(appended[2]).toMatchObject({ at: '2024-01-01 05:00:00.5-05' });
   });
 
   test('appends INET text', async (context) => {
