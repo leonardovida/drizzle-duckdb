@@ -19,6 +19,7 @@ import {
   mdListFlights,
   mdListFlightVersions,
   mdListFiles,
+  mdListDiveGrantees,
   mdListFlightGrantees,
   mdListRoleMembers,
   mdListRoles,
@@ -41,6 +42,7 @@ import {
   type MotherDuckFlightSummaryRow,
   type MotherDuckFlightVersionRow,
   type MotherDuckFlightLogLineRow,
+  type MotherDuckDiveGranteeRow,
   type MotherDuckFlightGranteeRow,
   type MotherDuckGrantedRoleRow,
   type MotherDuckRoleMemberRow,
@@ -815,6 +817,34 @@ test('MotherDuck Flight grantee helper lists grants on a Flight', () => {
   expectTypeOf<MotherDuckFlightGranteeRow>().toExtend<
     Record<string, unknown>
   >();
+});
+
+test('MotherDuck Dive grantee helper lists grants on a Dive', () => {
+  const dialect = new DuckDBDialect();
+  const diveId = '80000000-0000-0000-0000-000000000002';
+
+  const grantees = dialect.sqlToQuery(
+    sql`select grantee_name from ${mdListDiveGrantees(diveId)}`
+  );
+  expect(grantees.sql).toBe(
+    'select grantee_name from md_list_dive_grantees(CAST($1 AS UUID))'
+  );
+  expect(grantees.params).toEqual([diveId]);
+
+  const fromExpression = dialect.sqlToQuery(
+    sql`from ${mdListDiveGrantees(sql`'${sql.raw(diveId)}'`)}`
+  );
+  expect(fromExpression.sql).toBe(
+    `from md_list_dive_grantees(CAST('${diveId}' AS UUID))`
+  );
+
+  const row: MotherDuckDiveGranteeRow = {
+    grantee_name: null,
+    grantee_type: 'role',
+    privilege: 'read',
+  };
+  expect(row.privilege).toBe('read');
+  expectTypeOf<MotherDuckDiveGranteeRow>().toExtend<Record<string, unknown>>();
 });
 
 test('MotherDuck role introspection helpers are callable from SELECT', () => {

@@ -10,6 +10,7 @@ import {
   duckLakeMergeAdjacentFiles,
   type DuckLakeMergeAdjacentFilesRow,
 } from '../src/ducklake.ts';
+import { motherDuckTableFunction } from '../src/motherduck.ts';
 import { createDuckDBConnectionPool } from '../src/pool.ts';
 
 async function canLoadDuckLake(): Promise<boolean> {
@@ -260,6 +261,44 @@ describe.skipIf(!ducklakeAvailable)('DuckLake attach integration', () => {
         sql`select count(*)::int as total from events`
       );
       expect(total).toBe(3);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('ducklake_table_changes reads row changes between snapshots', async () => {
+    const db = await drizzle(':memory:', {
+      ducklake: {
+        catalog: join(directory, 'meta.ducklake'),
+        alias: 'lake',
+        attachOptions: { dataPath: join(directory, 'data') },
+      },
+    });
+
+    try {
+      await db.execute(sql`create table events (id integer, label varchar)`);
+      await db.execute(sql`insert into events values (1, 'a'), (2, 'b')`);
+      await db.execute(sql`update events set label = 'c' where id = 2`);
+      const [{ snapshot }] = await db.execute<{ snapshot: number }>(
+        sql`select max(snapshot_id)::int as snapshot from ducklake_snapshots('lake')`
+      );
+
+      const changes = await db.execute<{
+        change_type: string;
+        id: number;
+        label: string;
+      }>(
+        sql`select change_type, id, label from ${motherDuckTableFunction(
+          'ducklake_table_changes',
+          ['lake', 'main', 'events', 0, snapshot]
+        )} order by snapshot_id, id, change_type`
+      );
+      expect(changes).toEqual([
+        { change_type: 'insert', id: 1, label: 'a' },
+        { change_type: 'insert', id: 2, label: 'b' },
+        { change_type: 'update_postimage', id: 2, label: 'c' },
+        { change_type: 'update_preimage', id: 2, label: 'b' },
+      ]);
     } finally {
       await db.close();
     }

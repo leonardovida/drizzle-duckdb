@@ -92,6 +92,7 @@ test('the runtime exports of the package entry point are pinned', () => {
       "mdGetFlightRun",
       "mdGetFlightVersion",
       "mdIsRoleInSession",
+      "mdListDiveGrantees",
       "mdListDiveVersions",
       "mdListDives",
       "mdListFiles",
