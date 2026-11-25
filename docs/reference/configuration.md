@@ -356,6 +356,7 @@ Options for schema introspection:
 
 ```typescript
 const result = await introspect(db, {
+  bigintMode: 'bigint',
   database: 'my_database',
   schemas: ['main', 'analytics'],
   includeViews: true,
@@ -364,6 +365,14 @@ const result = await introspect(db, {
   importBasePath: '@duckdbfan/drizzle-duckdb/helpers',
 });
 ```
+
+### bigintMode
+
+Output mode for `BIGINT` columns.
+
+| Type                   | Default    | Description                              |
+| ---------------------- | ---------- | ---------------------------------------- |
+| `'bigint' \| 'number'` | `'bigint'` | Use JS `bigint` or `number` for `BIGINT` |
 
 ### database
 

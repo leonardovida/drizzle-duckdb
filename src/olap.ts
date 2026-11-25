@@ -3,9 +3,12 @@ import { sql, Subquery, type SQLWrapper } from 'drizzle-orm';
 import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { PgViewBase } from 'drizzle-orm/pg-core/view-base';
 import type { SelectedFields } from 'drizzle-orm/pg-core/query-builders';
+import type { AnyRelations, EmptyRelations } from 'drizzle-orm/relations';
 import { SQL, isSQLWrapper } from 'drizzle-orm/sql/sql';
 import { Column, getColumnTable, getTableName } from 'drizzle-orm';
 import type { DuckDBDatabase } from './driver.ts';
+import { assignOwnProperty } from './own-property.ts';
+import type { DuckDBTransaction } from './session.ts';
 
 export const countN = (expr: SQLWrapper = sql`*`) =>
   sql<number>`count(${expr})`.mapWith(Number);
@@ -240,7 +243,10 @@ function keyAlias(key: SQLWrapper, fallback: string): string {
   return fallback;
 }
 
-export class OlapBuilder {
+export type OlapDatabase<TRelations extends AnyRelations = EmptyRelations> =
+  DuckDBDatabase<TRelations> | DuckDBTransaction<TRelations>;
+
+export class OlapBuilder<TRelations extends AnyRelations = EmptyRelations> {
   private source?: PgTable | Subquery | PgViewBase | SQL;
   private keys: GroupKey[] = [];
   private measureMap: MeasureMap = {};
@@ -248,7 +254,7 @@ export class OlapBuilder {
   private wrapNonAggWithAnyValue = false;
   private orderByClauses: ValueExpr[] = [];
 
-  constructor(private db: DuckDBDatabase) {}
+  constructor(private db: OlapDatabase<TRelations>) {}
 
   from(source: PgTable | Subquery | PgViewBase | SQL): this {
     this.source = source;
@@ -305,7 +311,7 @@ export class OlapBuilder {
         );
       }
       owners.set(alias, `${owner} "${alias}"`);
-      selection[alias] = expr;
+      assignOwnProperty(selection, alias, expr);
     };
 
     this.keys.forEach((key, idx) => {
@@ -343,4 +349,6 @@ export class OlapBuilder {
   }
 }
 
-export const olap = (db: DuckDBDatabase) => new OlapBuilder(db);
+export const olap = <TRelations extends AnyRelations = EmptyRelations>(
+  db: OlapDatabase<TRelations>
+) => new OlapBuilder<TRelations>(db);

@@ -551,6 +551,15 @@ export function duckLakeMergeAdjacentFiles(
     throw new Error('ducklake_merge_adjacent_files schema requires table');
   }
   const { newerThan, olderThan, minFileSize, maxFileSize } = options;
+  const minFileSizeArg = fileSizeArg(minFileSize, 'minFileSize', 0);
+  const maxFileSizeArg = fileSizeArg(maxFileSize, 'maxFileSize');
+  const maxCompactedFilesArg = fileSizeArg(
+    options.maxCompactedFiles,
+    'maxCompactedFiles'
+  );
+  const newerThanArg = timestampArg(newerThan, 'newerThan');
+  const olderThanArg = timestampArg(olderThan, 'olderThan');
+
   if (
     newerThan !== undefined &&
     olderThan !== undefined &&
@@ -584,14 +593,11 @@ export function duckLakeMergeAdjacentFiles(
       'schema',
       options.schema === undefined ? undefined : sql`${options.schema}`,
     ],
-    ['min_file_size', fileSizeArg(minFileSize, 'minFileSize', 0)],
-    ['max_file_size', fileSizeArg(maxFileSize, 'maxFileSize')],
-    [
-      'max_compacted_files',
-      fileSizeArg(options.maxCompactedFiles, 'maxCompactedFiles'),
-    ],
-    ['newer_than', timestampArg(newerThan, 'newerThan')],
-    ['older_than', timestampArg(olderThan, 'olderThan')],
+    ['min_file_size', minFileSizeArg],
+    ['max_file_size', maxFileSizeArg],
+    ['max_compacted_files', maxCompactedFilesArg],
+    ['newer_than', newerThanArg],
+    ['older_than', olderThanArg],
   ];
   for (const [name, value] of named) {
     if (value !== undefined) {

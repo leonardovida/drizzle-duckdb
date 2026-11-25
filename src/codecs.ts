@@ -40,6 +40,9 @@ function decoding(normalize: Normalize): Codec {
   };
 }
 
+const isInfiniteValue = (value: unknown): boolean =>
+  value === 'infinity' || value === '-infinity';
+
 const toNumber: Normalize = (value) =>
   typeof value === 'number' ? value : Number(value);
 const toBigInt: Normalize = (value) =>
@@ -78,16 +81,26 @@ export const duckDbCodecs: Codecs = {
   'numeric:number': decoding(toNumber),
   'numeric:bigint': decoding(toBigInt),
   date: decoding((value) =>
-    typeof value === 'string' ? new Date(value) : value
+    isInfiniteValue(value)
+      ? value
+      : typeof value === 'string'
+        ? new Date(value)
+        : value
   ),
   'date:string': decoding((value) =>
     value instanceof Date ? value.toISOString().slice(0, -14) : value
   ),
-  timestamp: decoding((value) =>
-    typeof value === 'string' ? new Date(`${value}+0000`) : value
-  ),
+  timestamp: decoding((value) => {
+    if (isInfiniteValue(value) || typeof value !== 'string') return value;
+    const hasZone = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(value.trim());
+    return new Date(hasZone ? value : `${value}+0000`);
+  }),
   timestamptz: decoding((value) =>
-    typeof value === 'string' ? new Date(value) : value
+    isInfiniteValue(value)
+      ? value
+      : typeof value === 'string'
+        ? new Date(value)
+        : value
   ),
   json: decoding(parseJson),
   jsonb: decoding(parseJson),

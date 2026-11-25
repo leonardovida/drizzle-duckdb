@@ -25,7 +25,7 @@ This page documents known differences between Drizzle DuckDB and Drizzle's stand
 | JSON/JSONB columns                   | None    | Use `duckDbJson()` instead                                                                                                                         |
 | `VARIANT` / `GEOMETRY` raw JS values | Partial | `VARIANT` materializes with `@duckdb/node-api@1.5.4-r.1` and newer. Project geometry with `ST_AsText(...)` or `ST_AsWKB(...)` for portable output. |
 | Streaming results                    | Partial | Default materialized. Use `executeBatches()` for chunks                                                                                            |
-| Relational queries                   | Full    | With schema configuration                                                                                                                          |
+| Relational queries                   | Full    | With `relations` configuration (`defineRelations()`)                                                                                               |
 
 ## Transactions
 
@@ -309,7 +309,7 @@ Stock drizzle-orm references an aliased field of a subquery or CTE by its bare a
 
 Subqueries (`.as()`), CTEs (`$with`) and views built with this driver expose their fields qualified by the subquery alias, so the ON clause becomes `"users"."id" = "sq"."id"`.
 
-For hand-written SQL, the driver also qualifies bare column references in JOIN ON clauses:
+When `qualifyRawJoinColumns: true` is enabled, the driver also qualifies bare column references in hand-written SQL JOIN ON clauses:
 
 ```sql
 -- Before: ... FROM "users" LEFT JOIN "cte" ON "users"."id" = "id"
@@ -430,13 +430,13 @@ The following column types use native DuckDB value bindings:
 
 ## Workarounds Summary
 
-| Limitation               | Workaround                                  |
-| ------------------------ | ------------------------------------------- |
-| No savepoints            | Avoid nested transactions                   |
-| No JSON/JSONB            | Use `duckDbJson()`                          |
-| No cursor streaming      | Use `executeBatches()` or pagination        |
-| String array warnings    | Use native arrays or DuckDB helpers         |
-| Default schema is `main` | Explicitly use `pgSchema('main')` if needed |
-| CTE join ambiguity       | Automatic (or use different column names)   |
-| DECIMAL precision        | Use `numeric()` or cast to `VARCHAR` in SQL |
-| Transaction config       | Remove it. DuckDB ignores it                |
+| Limitation               | Workaround                                                    |
+| ------------------------ | ------------------------------------------------------------- |
+| No savepoints            | Avoid nested transactions                                     |
+| No JSON/JSONB            | Use `duckDbJson()`                                            |
+| No cursor streaming      | Use `executeBatches()` or pagination                          |
+| String array warnings    | Use native arrays or DuckDB helpers                           |
+| Default schema is `main` | Explicitly use `pgSchema('main')` if needed                   |
+| CTE join ambiguity       | Automatic (or use different column names)                     |
+| DECIMAL precision        | Use `numeric()` or cast to `VARCHAR` in SQL                   |
+| Transaction config       | Remove it. DuckDB has no `SET TRANSACTION`, so config rejects |

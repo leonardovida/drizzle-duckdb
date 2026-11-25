@@ -317,16 +317,15 @@ const elapsedMs = Date.now() - startedAt;
 console.log(`Query took ${elapsedMs}ms`);
 ```
 
-### Warm-Up Critical Queries
+### Warm Up the Pool at Startup
 
-For latency-sensitive applications, warm up caches at startup:
+For latency-sensitive applications, warm up the connection pool and DuckDB extensions at startup so the first user request does not wait for connection setup or SQL AST cache population:
 
 ```typescript
 async function warmUp(db) {
-  // Execute critical queries once to populate caches
+  // Run lightweight queries to initialize pooled connections
   await db.select().from(users).limit(1);
   await db.select().from(orders).limit(1);
-  // ... other frequently-used queries
 }
 
 // Call during application startup
@@ -342,20 +341,20 @@ await warmUp(db);
 - [ ] Use native DuckDB type helpers (`duckDbList`, `duckDbJson`, etc.)
 - [ ] Create indexes for frequently-queried columns
 - [ ] Use `duckDbJson()` instead of Postgres `json`/`jsonb`
-- [ ] Warm up caches at application startup
+- [ ] Warm up pooled connections at application startup
 - [ ] Track query latency and pool queue behavior in production
 
 ## Troubleshooting Slow Queries
 
 ### Symptoms and Solutions
 
-| Symptom                                | Likely Cause                | Solution              |
-| -------------------------------------- | --------------------------- | --------------------- |
-| First query is slow, repeats are fast  | Cache population            | Warm up at startup    |
-| Large inserts are slow                 | One parameter per value     | Use `db.appendRows()` |
-| Concurrent requests queue up           | Single connection           | Use connection pool   |
-| Memory spikes on large results         | Full materialization        | Use streaming         |
-| JOIN queries fail with ambiguous error | Unqualified raw SQL columns | Qualify the columns   |
+| Symptom                                | Likely Cause                | Solution                       |
+| -------------------------------------- | --------------------------- | ------------------------------ |
+| First query is slow, repeats are fast  | Cold pool or extension init | Warm up connections at startup |
+| Large inserts are slow                 | One parameter per value     | Use `db.appendRows()`          |
+| Concurrent requests queue up           | Single connection           | Use connection pool            |
+| Memory spikes on large results         | Full materialization        | Use streaming                  |
+| JOIN queries fail with ambiguous error | Unqualified raw SQL columns | Qualify the columns            |
 
 ### Enable Query Logging
 

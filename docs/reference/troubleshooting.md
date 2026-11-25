@@ -139,9 +139,9 @@ try {
 
 **Symptom**: Large `DECIMAL` values come back rounded.
 
-**Cause**: `numeric()` columns selected with `db.select()` return exact strings. Raw `db.execute()` results, SQL expressions, relational queries, `executeBatches()` and `executeArrow()` read `DECIMAL` as JavaScript numbers, which keep about 15 significant digits.
+**Cause**: `numeric()` columns selected with `db.select()` or relational queries return exact strings. Raw `db.execute()` results, SQL expressions, `executeBatches()` and `executeArrow()` read `DECIMAL` as JavaScript numbers by default, which keep about 15 significant digits.
 
-**Solution**: Select the column through a `numeric()` column, or cast to `VARCHAR` in SQL, for example ``sql`CAST(${orders.total} AS VARCHAR)` ``, and parse it with a decimal library. See [DECIMAL Precision]({{ '/reference/limitations' | relative_url }}#decimal-precision).
+**Solution**: Select the column through a `numeric()` column, set `decimalMode: 'string'` in `drizzle()` to preserve exact DECIMAL strings across raw, streaming, columnar and nested reads, or cast to `VARCHAR` in SQL, for example ``sql`CAST(${orders.total} AS VARCHAR)` ``, and parse it with a decimal library. See [DECIMAL Precision]({{ '/reference/limitations' | relative_url }}#decimal-precision).
 
 ### COUNT or SUM returns a bigint
 

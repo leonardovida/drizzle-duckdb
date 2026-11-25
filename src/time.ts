@@ -149,7 +149,9 @@ export function timestampStringFromMicros(
     fraction += 1_000_000n;
   }
   const date = new Date(Number(seconds) * 1000);
-  const time = date.toISOString().slice(11, 19);
+  const time = [date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':');
   const digits =
     fraction === 0n ? '' : `.${pad(fraction, 6).replace(/0+$/, '')}`;
   const [day, era] = splitEra(dateStringFromDate(date));

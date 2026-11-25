@@ -186,7 +186,7 @@ function isTransactionAbortedError(error: unknown): boolean {
 const TRANSACTION_CONFIG_ERROR =
   'Transaction config is not supported by DuckDB, which has no SET TRANSACTION statement. Remove the config argument (isolationLevel, accessMode, deferrable).';
 
-/** Any config object, even an empty one, is rejected. */
+/** Reject any transaction config with at least one defined option. */
 function assertNoTransactionConfig(config: unknown): void {
   // An object with no option set asks for nothing, so it is accepted.
   if (
