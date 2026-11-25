@@ -379,3 +379,45 @@ test('nested DECIMAL extras follow decimalMode', async () => {
     await stringDb.close();
   }
 });
+
+test('nested relation limit and offset take placeholders', async () => {
+  await db.insert(users).values([
+    { id: 1, fullName: 'Ann' },
+    { id: 2, fullName: 'Bo' },
+  ]);
+  await db.insert(posts).values([
+    { id: 10, authorId: 1, title: 'a' },
+    { id: 11, authorId: 1, title: 'b' },
+    { id: 12, authorId: 1, title: 'c' },
+    { id: 20, authorId: 2, title: 'd' },
+  ]);
+  const query = db.query.users
+    .findMany({
+      columns: { id: true },
+      with: {
+        posts: {
+          columns: { id: true },
+          orderBy: { id: 'asc' },
+          limit: sql.placeholder('limit'),
+          offset: sql.placeholder('offset'),
+        },
+      },
+      orderBy: { id: 'asc' },
+    })
+    .prepare('rq_nested_page');
+
+  expect(await query.execute({ limit: 1, offset: 1 })).toEqual([
+    { id: 1, posts: [{ id: 11 }] },
+    { id: 2, posts: [] },
+  ]);
+  expect(await query.execute({ limit: 2n, offset: '0' })).toEqual([
+    { id: 1, posts: [{ id: 10 }, { id: 11 }] },
+    { id: 2, posts: [{ id: 20 }] },
+  ]);
+  await expect(query.execute({ limit: -1, offset: 0 })).rejects.toThrow(
+    'Invalid limit placeholder value -1'
+  );
+  await expect(
+    query.execute({ limit: 1, offset: '0; drop table rq_users' })
+  ).rejects.toThrow('Invalid offset placeholder value');
+});

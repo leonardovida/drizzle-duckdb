@@ -3,10 +3,12 @@ import {
   DuckDBTypeId,
   JSDuckDBValueConverter,
   JsonDuckDBValueConverter,
+  LIST,
   listValue,
   TIMESTAMPTZ,
   timestampTZValue,
   timestampValue,
+  VARCHAR,
   type DuckDBArrayType,
   type DuckDBConnection,
   type DuckDBInstance,
@@ -1684,6 +1686,70 @@ function quoteAppendIdentifier(name: string): string {
 }
 
 /**
+ * The appender casts appended text to most column types the way a bound
+ * parameter is cast, but not all. It cannot cast text to INTERVAL or INET.
+ * Its TIMESTAMPTZ and TIMETZ casts ignore a `+02` offset and read text
+ * without one in UTC, not in the session TimeZone. Text for those columns is
+ * cast by a query before it is appended.
+ */
+function appenderTextCastType(type: DuckDBType): string | undefined {
+  switch (type.typeId) {
+    case DuckDBTypeId.INTERVAL:
+      return 'INTERVAL';
+    case DuckDBTypeId.TIMESTAMP_TZ:
+      return 'TIMESTAMPTZ';
+    case DuckDBTypeId.TIME_TZ:
+      return 'TIMETZ';
+  }
+  const alias = (type as { alias?: string }).alias;
+  return alias?.toUpperCase() === 'INET' ? 'INET' : undefined;
+}
+
+/**
+ * Read the cells of the columns whose text the appender cannot cast, and cast
+ * their distinct strings in one query. Each cell is read once, so a column's
+ * defaultFn runs once per row, as for the other columns.
+ */
+async function castAppenderText(
+  connection: DuckDBConnection,
+  columnTypes: readonly DuckDBType[],
+  rowCount: number,
+  valueAt: (rowIndex: number, columnIndex: number) => unknown
+): Promise<
+  Map<number, { values: unknown[]; casts: Map<string, DuckDBValue> }>
+> {
+  const result = new Map<
+    number,
+    { values: unknown[]; casts: Map<string, DuckDBValue> }
+  >();
+  for (let columnIndex = 0; columnIndex < columnTypes.length; columnIndex++) {
+    const castType = appenderTextCastType(columnTypes[columnIndex]!);
+    if (!castType) continue;
+    const values = new Array<unknown>(rowCount);
+    const texts = new Set<string>();
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+      const value = valueAt(rowIndex, columnIndex);
+      values[rowIndex] = value;
+      if (typeof value === 'string') texts.add(value);
+    }
+    const casts = new Map<string, DuckDBValue>();
+    if (texts.size > 0) {
+      const list = [...texts];
+      const reader = await connection.runAndReadAll(
+        `select cast($1 as ${castType}[]) as v`,
+        [listValue(list)],
+        [LIST(VARCHAR)]
+      );
+      const items = (reader.getRows()[0]?.[0] as { items?: DuckDBValue[] })
+        ?.items;
+      list.forEach((text, index) => casts.set(text, items?.[index] ?? null));
+    }
+    result.set(columnIndex, { values, casts });
+  }
+  return result;
+}
+
+/**
  * Append rows through node-api's appender, which skips SQL parsing and
  * parameter binding. `bindRows` receives the table's column names in catalog
  * order and returns the value of each cell.
@@ -1713,6 +1779,15 @@ export async function appendRowsOnClient(
       // The appender exposes column types but not names.
       const probe = await connection.run(`select * from ${qualified} limit 0`);
       const columnNames = probe.columnNames();
+      const valueAt = bindRows(columnNames);
+      // Cast before the appender opens, so the cast query does not run while
+      // rows are buffered.
+      const castColumns = await castAppenderText(
+        connection,
+        columnNames.map((_, index) => probe.columnType(index)),
+        rowCount,
+        valueAt
+      );
       const appender = (await connection.createAppender(
         target.table,
         target.schema ?? null
@@ -1728,18 +1803,22 @@ export async function appendRowsOnClient(
         const columnTypes = columnNames.map((_, index) =>
           appender.columnType(index)
         );
-        const valueAt = bindRows(columnNames);
         for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
           for (
             let columnIndex = 0;
             columnIndex < columnTypes.length;
             columnIndex += 1
           ) {
-            appendCell(
-              appender,
-              valueAt(rowIndex, columnIndex),
-              columnTypes[columnIndex] as DuckDBType
-            );
+            const columnType = columnTypes[columnIndex] as DuckDBType;
+            const cast = castColumns.get(columnIndex);
+            const value = cast
+              ? cast.values[rowIndex]
+              : valueAt(rowIndex, columnIndex);
+            if (cast && typeof value === 'string') {
+              appender.appendValue(cast.casts.get(value) ?? null, columnType);
+            } else {
+              appendCell(appender, value, columnType);
+            }
           }
           appender.endRow();
         }

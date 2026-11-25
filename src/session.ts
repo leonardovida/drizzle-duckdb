@@ -304,6 +304,9 @@ function prepareQueryParams({
   return preparedParams;
 }
 
+/** A `$n` parameter reference at the regex's lastIndex. */
+const PARAM_REFERENCE = /\$(\d+)/y;
+
 /**
  * Column encoders such as `duckDbStruct` return SQL literals, because node-api
  * cannot bind those values. Drizzle inlines them when it builds a query, but
@@ -349,8 +352,11 @@ function inlineSqlParams(
       i = skipped;
       continue;
     }
-    const match =
-      queryString[i] === '$' ? /^\$(\d+)/.exec(queryString.slice(i)) : null;
+    let match: RegExpExecArray | null = null;
+    if (queryString[i] === '$') {
+      PARAM_REFERENCE.lastIndex = i;
+      match = PARAM_REFERENCE.exec(queryString);
+    }
     if (!match) {
       text += queryString[i];
       i += 1;
@@ -436,6 +442,9 @@ export class DuckDBPreparedQuery<
     }
   }
 
+  // The param kinds of a prepared query do not change between executions.
+  private scalarParamIndexes: Set<number> | undefined | null = null;
+
   private async executeQuery(
     placeholderValues: Record<string, unknown>
   ): Promise<unknown> {
@@ -443,7 +452,10 @@ export class DuckDBPreparedQuery<
     if (options.waitForTransactions) {
       await waitForOpenTransaction(this.client);
     }
-    const scalarParamIndexes = getScalarParamIndexes(options.paramKinds);
+    if (this.scalarParamIndexes === null) {
+      this.scalarParamIndexes = getScalarParamIndexes(options.paramKinds);
+    }
+    const scalarParamIndexes = this.scalarParamIndexes;
     const filled = inlineSqlParams(
       this.dialect,
       this.query.sql,

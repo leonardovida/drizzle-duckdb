@@ -270,7 +270,19 @@ export function formatLiteral(value: unknown, typeHint?: string): string {
       ? value
       : (JSON.stringify(value) ?? String(value));
 
-  return `'${str.replace(/'/g, "''")}'`;
+  return stringLiteral(str);
+}
+
+/**
+ * A SQL string literal. DuckDB's parser stops reading the statement at a NUL
+ * character, so a string that holds one is spelled with chr(0).
+ */
+function stringLiteral(value: string): string {
+  const quote = (part: string) => `'${part.replace(/'/g, "''")}'`;
+  if (!value.includes('\0')) {
+    return quote(value);
+  }
+  return `(${value.split('\0').map(quote).join(' || chr(0) || ')})`;
 }
 
 export function buildListLiteral(values: unknown[], elementType?: string): SQL {

@@ -9,6 +9,7 @@ import { Column, getColumnTable, getTableName } from 'drizzle-orm';
 import type { DuckDBDatabase } from './driver.ts';
 import { assignOwnProperty } from './own-property.ts';
 import type { DuckDBTransaction } from './session.ts';
+import { resolveFieldDecoder } from './sql/result-mapper.ts';
 
 export const countN = (expr: SQLWrapper = sql`*`) =>
   sql<number>`count(${expr})`.mapWith(Number);
@@ -41,8 +42,15 @@ export const percentileCont = (p: number, expr: SQLWrapper) =>
 
 export const median = (expr: SQLWrapper) => percentileCont(0.5, expr);
 
-export const anyValue = <T = unknown>(expr: SQLWrapper) =>
-  sql<T>`any_value(${expr})`;
+/**
+ * any_value() returns a value of its argument's type, so it decodes the way
+ * the argument does: a column keeps its decoder, as in a plain select. The
+ * alias of an aliased field names the selection, so it is left out here.
+ */
+export const anyValue = <T = unknown>(expr: SQLWrapper): SQL<T> => {
+  const inner = is(expr, SQL.Aliased) ? expr.sql : expr;
+  return sql`any_value(${inner})`.mapWith(resolveFieldDecoder(inner)) as SQL<T>;
+};
 
 type LanceSqlArgument =
   SQLWrapper | string | number | boolean | readonly unknown[];

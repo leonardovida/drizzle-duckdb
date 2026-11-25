@@ -81,6 +81,8 @@ await db
   .groupBy(orders.region);
 ```
 
+`anyValue()` decodes its result the way its argument decodes. A column keeps its mode, so `anyValue()` of a `numeric()` column returns the exact string and `anyValue()` of a string-mode timestamp returns a string. An aliased field can be passed. Its alias is left out of the SQL, and the selection key names the result.
+
 ## MotherDuck Lance search
 
 MotherDuck exposes Lance table functions for vector, full-text, and hybrid search. The helpers parameterize positional arguments and expose the remote-only named options added by MotherDuck:

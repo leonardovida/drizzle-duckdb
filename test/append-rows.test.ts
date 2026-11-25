@@ -5,11 +5,14 @@ import {
   boolean,
   date,
   doublePrecision,
+  inet,
   integer,
+  interval,
   numeric,
   pgSchema,
   pgTable,
   text,
+  time,
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -174,6 +177,82 @@ describe('appendRows', () => {
       db.appendRows(structs, [{ id: 1, point: { x: 1 } }])
     ).rejects.toThrow(/Use db\.insert\(\)/);
     expect(await db.select().from(structs)).toEqual([]);
+  });
+
+  test('casts text the way an insert does', async () => {
+    const zoned = pgTable('append_zoned', {
+      id: integer('id'),
+      at: timestamp('happened_at', { withTimezone: true, mode: 'string' }),
+      clock: time('clock', { withTimezone: true }),
+      span: interval('span'),
+    });
+    await db.execute(sql`create table append_zoned(
+      id integer, happened_at timestamptz, clock timetz, span interval)`);
+    const rows = [
+      {
+        id: 1,
+        at: '2024-01-01 12:00:00.5+02',
+        clock: '12:00:00+02',
+        span: '1 year 2 days 00:00:01.5',
+      },
+      {
+        id: 2,
+        at: '2024-07-01 12:00:00',
+        clock: '12:00:00',
+        span: '-90 minutes',
+      },
+      { id: 3, at: '2024-07-01 12:00:00', clock: null, span: null },
+    ];
+    await db.appendRows(zoned, rows);
+    await db
+      .insert(zoned)
+      .values(rows.map((row) => ({ ...row, id: row.id + 10 })));
+
+    const all = await db.execute<Record<string, string | null>>(sql`
+      select id, happened_at::varchar as at, clock::varchar as clock, span::varchar as span
+      from append_zoned order by id`);
+    const withoutId = (row: Record<string, unknown>) => {
+      const { id: _, ...rest } = row;
+      return rest;
+    };
+    const appended = all.filter((row) => Number(row.id) < 10);
+    const inserted = all.filter((row) => Number(row.id) >= 10);
+    expect(appended.map(withoutId)).toEqual(inserted.map(withoutId));
+    expect(appended[0]).toMatchObject({
+      at: '2024-01-01 05:00:00.5-05',
+      clock: '12:00:00+02',
+      span: '1 year 2 days 00:00:01.5',
+    });
+    // Text without an offset is read in the session TimeZone.
+    expect(appended[1]).toMatchObject({ at: '2024-07-01 12:00:00-04' });
+  });
+
+  test('appends INET text', async (context) => {
+    try {
+      await db.execute(sql`load inet`);
+    } catch {
+      try {
+        await db.execute(sql`install inet`);
+        await db.execute(sql`load inet`);
+      } catch {
+        context.skip('inet extension is not available');
+      }
+    }
+    const hosts = pgTable('append_hosts', {
+      id: integer('id'),
+      ip: inet('ip'),
+    });
+    await db.execute(sql`create table append_hosts(id integer, ip inet)`);
+    await db.appendRows(hosts, [
+      { id: 1, ip: '10.0.0.1/8' },
+      { id: 2, ip: '::1' },
+      { id: 3, ip: null },
+    ]);
+    expect(await db.select().from(hosts).orderBy(hosts.id)).toEqual([
+      { id: 1, ip: '10.0.0.1/8' },
+      { id: 2, ip: '::1' },
+      { id: 3, ip: null },
+    ]);
   });
 
   test('works through a connection pool', async () => {
