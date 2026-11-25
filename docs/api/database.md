@@ -233,7 +233,7 @@ await db.transaction(async (tx) => {
 // Neither Alice nor Bob are inserted
 ```
 
-The transaction object `tx` also has `executeBatches()`, `executeBatchesRaw()` and `executeArrow()`. On a pool, all of them run on the connection pinned for the transaction.
+The transaction object `tx` also has `appendRows()`, `executeBatches()`, `executeBatchesRaw()` and `executeArrow()`. On a pool, all of them run on the connection pinned for the transaction.
 
 ### executeBatches()
 

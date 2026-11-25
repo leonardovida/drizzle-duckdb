@@ -106,7 +106,9 @@ type SqlTokens = {
   comments: number;
 };
 
-const NUMBER = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+const NUMBER_STICKY = /(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/y;
+const PARAM_STICKY = /\$\d+/y;
+const WORD_STICKY = /[A-Za-z_][A-Za-z0-9_$]*/y;
 
 /**
  * Scan SQL with DuckDB lexing rules: '' and "" escapes, backslash escapes
@@ -147,7 +149,6 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
   let index = 0;
   while (index < query.length) {
     const char = query[index]!;
-    const rest = query.slice(index);
 
     if (char === "'" || char === '"') {
       const end = readQuoted(index, char);
@@ -155,39 +156,53 @@ function scanSqlTokens(query: string): SqlTokens | undefined {
       const text = query.slice(index + 1, end);
       (char === "'" ? tokens.strings : tokens.identifiers).push(text);
       index = end + 1;
-    } else if (rest.startsWith('--')) {
+    } else if (char === '-' && query[index + 1] === '-') {
       tokens.comments += 1;
       const end = query.indexOf('\n', index);
       index = end === -1 ? query.length : end + 1;
-    } else if (rest.startsWith('/*')) {
+    } else if (char === '/' && query[index + 1] === '*') {
       tokens.comments += 1;
       const end = query.indexOf('*/', index + 2);
       if (end === -1) return undefined;
       index = end + 2;
     } else if (char === '$') {
-      const param = /^\$\d+/.exec(rest);
-      const tag = dollarTagAt(query, index);
+      PARAM_STICKY.lastIndex = index;
+      const param = PARAM_STICKY.exec(query);
       if (param) {
         tokens.params.push(param[0]);
         index += param[0].length;
-      } else if (tag) {
-        const end = query.indexOf(tag, index + tag.length);
-        if (end === -1) return undefined;
-        tokens.strings.push(query.slice(index, end + tag.length));
-        index = end + tag.length;
       } else {
-        index += 1;
+        const tag = dollarTagAt(query, index);
+        if (tag) {
+          const end = query.indexOf(tag, index + tag.length);
+          if (end === -1) return undefined;
+          tokens.strings.push(query.slice(index, end + tag.length));
+          index = end + tag.length;
+        } else {
+          index += 1;
+        }
       }
-    } else if (/[A-Za-z_]/.test(char)) {
-      const word = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(rest)![0];
+    } else if (
+      (char >= 'A' && char <= 'Z') ||
+      (char >= 'a' && char <= 'z') ||
+      char === '_'
+    ) {
+      WORD_STICKY.lastIndex = index;
+      const word = WORD_STICKY.exec(query)![0];
       tokens.words.add(word);
       tokens.wordSequence.push(word.toLowerCase());
       index += word.length;
-    } else if (NUMBER.test(rest)) {
-      const number = NUMBER.exec(rest)![0];
-      // The printer writes .5 as 0.5.
-      tokens.numbers.push(number.startsWith('.') ? `0${number}` : number);
-      index += number.length;
+    } else if ((char >= '0' && char <= '9') || char === '.') {
+      NUMBER_STICKY.lastIndex = index;
+      const numberMatch = NUMBER_STICKY.exec(query);
+      if (numberMatch) {
+        const number = numberMatch[0];
+        // The printer writes .5 as 0.5.
+        tokens.numbers.push(number.startsWith('.') ? `0${number}` : number);
+        index += number.length;
+      } else {
+        index += 1;
+      }
     } else {
       index += 1;
     }

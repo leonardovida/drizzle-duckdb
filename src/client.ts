@@ -870,11 +870,22 @@ function convertChunkRows(
   recursiveDecimals = false
 ): unknown[][] {
   const convert = <T>(converter: DuckDBValueConverter<T>) => {
-    const rows: unknown[][] = [];
+    if (chunks.length === 0) return [];
+    if (chunks.length === 1) return chunks[0]!.convertRows(converter);
+    let totalRows = 0;
     for (const chunk of chunks) {
-      for (const row of chunk.convertRows(converter)) {
-        rows.push(row);
+      totalRows += typeof chunk.rowCount === 'number' ? chunk.rowCount : 0;
+    }
+    const rows: unknown[][] = new Array(totalRows);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const converted = chunk.convertRows(converter);
+      for (let i = 0; i < converted.length; i += 1) {
+        rows[offset++] = converted[i]!;
       }
+    }
+    if (offset !== rows.length) {
+      rows.length = offset;
     }
     return rows;
   };
@@ -976,6 +987,10 @@ async function* yieldChunkRows(
 ): AsyncGenerator<unknown[][], void, void> {
   let useJson = preferJson;
   let yieldedRows = false;
+  const jsonConverter = exactDecimals
+    ? withExactDecimals(PerColumnValueConverter, true)
+    : PerColumnValueConverter;
+  let jsConverter: DuckDBValueConverter<JS> | undefined;
 
   while (true) {
     const chunk = await fetchChunk();
@@ -986,11 +1001,7 @@ async function* yieldChunkRows(
     let rows: unknown[][] | undefined;
     if (useJson) {
       try {
-        rows = chunk.convertRows(
-          exactDecimals
-            ? withExactDecimals(PerColumnValueConverter, true)
-            : PerColumnValueConverter
-        );
+        rows = chunk.convertRows(jsonConverter);
       } catch (error) {
         // Earlier chunks used string values. Switching now would mix formats.
         if (yieldedRows) {
@@ -1000,10 +1011,13 @@ async function* yieldChunkRows(
       }
     }
 
-    const js = jsConverterFor([chunk]);
-    rows ??= chunk.convertRows(
-      exactDecimals ? withExactDecimals(js, true, js) : js
-    );
+    if (rows === undefined) {
+      if (!jsConverter) {
+        const js = jsConverterFor([chunk]);
+        jsConverter = exactDecimals ? withExactDecimals(js, true, js) : js;
+      }
+      rows = chunk.convertRows(jsConverter);
+    }
     yieldedRows = true;
     yield rows;
   }
@@ -1148,13 +1162,30 @@ async function materializePgDuckRows(
 }
 
 function mapRowsToObjects(columns: string[], rows: unknown[][]): RowData[] {
-  const mappedRows: RowData[] = new Array(rows.length);
+  const rowCount = rows.length;
+  const colCount = columns.length;
+  const mappedRows: RowData[] = new Array(rowCount);
+  const hasProto = columns.includes('__proto__');
 
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+  if (!hasProto) {
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+      const values = rows[rowIndex] as unknown[];
+      const row: RowData = {};
+
+      for (let columnIndex = 0; columnIndex < colCount; columnIndex += 1) {
+        row[columns[columnIndex]!] = values[columnIndex];
+      }
+
+      mappedRows[rowIndex] = row;
+    }
+    return mappedRows;
+  }
+
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
     const values = rows[rowIndex] as unknown[];
     const row: RowData = {};
 
-    for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+    for (let columnIndex = 0; columnIndex < colCount; columnIndex += 1) {
       assignOwnProperty(
         row,
         columns[columnIndex] as string,
@@ -1393,18 +1424,13 @@ async function* streamNodeApiResult(
         return chunk;
       }
     : undefined;
-  const preferJson =
-    prefersJsonMaterialization(result) &&
-    typeof result.yieldRowsJson === 'function';
+  const prefersJson = prefersJsonMaterialization(result);
+  const preferJson = prefersJson && typeof result.yieldRowsJson === 'function';
 
   try {
     if (fetchChunk) {
       yield* chunkRowStream(
-        yieldChunkRows(
-          fetchChunk,
-          prefersJsonMaterialization(result),
-          exactDecimals
-        ),
+        yieldChunkRows(fetchChunk, prefersJson, exactDecimals),
         columns,
         rowsPerChunk
       );
@@ -1505,6 +1531,17 @@ export async function executeArrowOnClient(
             options.decimalMode === 'string'
               ? withExactDecimals(baseConverter, true, js)
               : baseConverter;
+          if (
+            chunks.length === 1 &&
+            typeof chunks[0]!.convertColumns === 'function'
+          ) {
+            const converted = chunks[0]!.convertColumns(converter);
+            const data: Record<string, unknown[]> = {};
+            columns.forEach((name, index) =>
+              assignOwnProperty(data, name, converted[index] ?? [])
+            );
+            return data;
+          }
           const values: unknown[][] = columns.map(() => []);
           for (const chunk of chunks) {
             if (typeof chunk.convertColumns === 'function') {

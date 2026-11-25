@@ -137,6 +137,12 @@ interface DuckDBDrizzleConfig<TRelations> {
   // a TIMESTAMPTZ instant.
   dateParams?: 'timestamp' | 'timestamptz';
 
+  // Read DECIMAL values as exact strings across raw, streaming and nested reads (default: 'number')
+  decimalMode?: 'number' | 'string';
+
+  // Opt into legacy heuristic qualification of raw SQL join operands (default: false)
+  qualifyRawJoinColumns?: boolean;
+
   // Throw on Postgres-style array literals like '{1,2,3}' (default: false)
   rejectStringArrayLiterals?: boolean;
 

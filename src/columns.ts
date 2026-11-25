@@ -16,6 +16,7 @@ import {
   type TimestampValueWrapper,
 } from './value-wrappers-core.ts';
 import { coerceArrayString as parseArrayString } from './array-literals.ts';
+import { assignOwnProperty } from './own-property.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
 import {
   dateStringFromDate,
@@ -123,17 +124,35 @@ function isNaiveTimestampType(typeHint: string | undefined): boolean {
  * targets its UTC date, and anything else a TIMESTAMPTZ literal.
  */
 function dateLiteral(value: Date, typeHint: string | undefined): string {
-  const utc = value.toISOString().replace('T', ' ').replace('Z', '');
-  if (/^DATE$/i.test(typeHint?.trim() ?? '')) {
-    return `DATE '${utc.slice(0, 10)}'`;
+  if (Number.isNaN(value.getTime())) {
+    throw new Error('Invalid Date parameter: cannot bind an invalid Date');
   }
-  if (isNaiveTimestampType(typeHint)) {
+  if (/^DATE$/i.test(typeHint?.trim() ?? '')) {
+    return `DATE '${dateStringFromDate(value)}'`;
+  }
+  const naive = isNaiveTimestampType(typeHint);
+  const year = value.getUTCFullYear();
+  if (year <= 0 || year > 9999) {
+    const literal = timestampStringFromMicros(dateToMicros(value), !naive);
+    return naive ? `TIMESTAMP '${literal}'` : `TIMESTAMPTZ '${literal}'`;
+  }
+  const utc = value.toISOString().replace('T', ' ').replace('Z', '');
+  if (naive) {
     return `TIMESTAMP '${utc}'`;
   }
   return `TIMESTAMPTZ '${utc}+00'`;
 }
 
 function blobLiteral(value: Uint8Array): string {
+  const NodeBuffer = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+  if (typeof NodeBuffer === 'function') {
+    const hex = NodeBuffer.from(
+      value.buffer,
+      value.byteOffset,
+      value.byteLength
+    ).toString('hex');
+    return `from_hex('${hex}')`;
+  }
   let hex = '';
   for (const byte of value) {
     hex += byte.toString(16).padStart(2, '0');
@@ -167,7 +186,11 @@ function parseStructSchema(
     if (!match) continue;
 
     const [, key, type] = match;
-    fields[key.replace(/""/g, '"')] = type.trim() as Primitive;
+    assignOwnProperty(
+      fields,
+      key.replace(/""/g, '"'),
+      type.trim() as Primitive
+    );
   }
 
   return fields;
@@ -299,7 +322,8 @@ export function buildStructLiteral(
   schema?: Record<string, DuckDbTypeName<Primitive>>
 ): SQL {
   const parts = Object.entries(value).map(([key, val]) => {
-    const typeHint = schema?.[key];
+    const typeHint =
+      schema && Object.hasOwn(schema, key) ? schema[key] : undefined;
     // Quote locally so keys are escaped whatever the dialect's escapeName does.
     const name = sql.raw(`"${key.replace(/"/g, '""')}"`);
     return sql`${name} := ${valueToSqlLiteral(val, typeHint)}`;
@@ -417,9 +441,14 @@ export const duckDbMap = <TData extends Record<string, any>>(
  */
 function mapKeyString(key: unknown, keyType: string | undefined): string {
   if (key instanceof Date) {
-    return /^DATE$/i.test(keyType?.trim() ?? '')
-      ? dateStringFromDate(key)
-      : timestampStringFromMicros(BigInt(key.getTime()) * 1000n, false);
+    if (/^DATE$/i.test(keyType?.trim() ?? '')) {
+      return dateStringFromDate(key);
+    }
+    const withTimezone =
+      /^(?:TIMESTAMPTZ|TIMESTAMP_TZ|TIMESTAMP\s+WITH\s+TIME\s+ZONE)$/i.test(
+        keyType?.trim() ?? ''
+      );
+    return timestampStringFromMicros(dateToMicros(key), withTimezone);
   }
   return String(key);
 }
@@ -688,6 +717,9 @@ function resolveTimeType(options: TimeOptions): DuckDbTimeType {
  */
 function timestampLiteral(value: Date | string, withTimezone: boolean): string {
   if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error('Invalid Date parameter: cannot bind an invalid Date');
+    }
     return value.toISOString().replace('T', ' ').replace('Z', '+00');
   }
 

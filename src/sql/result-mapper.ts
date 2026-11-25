@@ -399,11 +399,11 @@ function decodesInet(decoder: DriverValueDecoder<unknown, unknown>): boolean {
  * as DuckDB's text for TIME and INTERVAL values. Decoding stays separate, so
  * Drizzle's relational mapper can decode the normalized value itself.
  */
-function compileValueNormalizer(
+function compileValueNormalizerOptional(
   decoder: DriverValueDecoder<unknown, unknown>
-): (value: unknown) => unknown {
-  const inet = decodesInet(decoder) ? normalizeInet : (value: unknown) => value;
-  let normalize: (value: unknown) => unknown = (value) => value;
+): ((value: unknown) => unknown) | undefined {
+  const inet = decodesInet(decoder);
+  let normalize: ((value: unknown) => unknown) | undefined;
   if (is(decoder, PgTimestampString)) {
     normalize = (value) =>
       normalizeTimestampString(value, decoder.withTimezone);
@@ -421,7 +421,20 @@ function compileValueNormalizer(
   } else if (is(decoder, PgInterval)) {
     normalize = normalizeInterval;
   }
-  return (value) => (value === null ? null : normalize(inet(value)));
+  if (!inet && !normalize) return undefined;
+  if (!normalize) {
+    return (value) => (value === null ? null : normalizeInet(value));
+  }
+  if (!inet) {
+    return (value) => (value === null ? null : normalize(value));
+  }
+  return (value) => (value === null ? null : normalize(normalizeInet(value)));
+}
+
+function compileValueNormalizer(
+  decoder: DriverValueDecoder<unknown, unknown>
+): (value: unknown) => unknown {
+  return compileValueNormalizerOptional(decoder) ?? ((value) => value);
 }
 
 /**
@@ -449,8 +462,11 @@ function compileValueMapper(
   decoder: DriverValueDecoder<unknown, unknown>,
   codec?: ValueCodec
 ): (value: unknown) => unknown {
-  const normalize = compileValueNormalizer(decoder);
+  const normalize = compileValueNormalizerOptional(decoder);
   const decode = decodeWith(decoder, codec);
+  if (!normalize) {
+    return (value) => (value === null ? null : decode(value));
+  }
   if (is(decoder, PgTimestamp) || is(decoder, PgDate)) {
     // Dates are final, and infinite values keep DuckDB's text.
     return (value) => {
@@ -497,14 +513,23 @@ export function compileRelationalRowNormalizer(
   selection: readonly RelationalSelectionItem[]
 ): (row: unknown[]) => void {
   const normalizeObject = compileNestedNormalizer(selection);
-  const steps = selection.map((item) =>
-    item.selection
+  const steps: Array<{ index: number; step: (value: unknown) => unknown }> = [];
+  for (let index = 0; index < selection.length; index += 1) {
+    const item = selection[index]!;
+    const step = item.selection
       ? nestedValueNormalizer(item, normalizeObject.get(item)!)
-      : compileValueNormalizer(resolveFieldDecoder(item.field))
-  );
+      : compileValueNormalizerOptional(resolveFieldDecoder(item.field));
+    if (step) {
+      steps.push({ index, step });
+    }
+  }
+  if (steps.length === 0) {
+    return () => {};
+  }
   return (row) => {
-    for (let index = 0; index < steps.length; index += 1) {
-      row[index] = steps[index]!(row[index]);
+    for (let i = 0; i < steps.length; i += 1) {
+      const { index, step } = steps[i]!;
+      row[index] = step(row[index]);
     }
   };
 }
@@ -622,6 +647,28 @@ export function compileResultMapper<TResult>(
       entry.nullifies && entry.path[0] === key ? [index] : []
     ),
   }));
+
+  if (flat && nullifyTargets.length === 0) {
+    const len = plan.length;
+    const keys = plan.map((entry) => entry.path[0]!);
+    const mappers = plan.map((entry) => entry.map);
+    if (!keys.includes('__proto__')) {
+      return (row) => {
+        const result: ResultRow = {};
+        for (let index = 0; index < len; index += 1) {
+          result[keys[index]!] = mappers[index]!(row[index]);
+        }
+        return result as TResult;
+      };
+    }
+    return (row) => {
+      const result: ResultRow = {};
+      for (let index = 0; index < len; index += 1) {
+        assignOwnProperty(result, keys[index]!, mappers[index]!(row[index]));
+      }
+      return result as TResult;
+    };
+  }
 
   return (row) => {
     const result: ResultRow = {};

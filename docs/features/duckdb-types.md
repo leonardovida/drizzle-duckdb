@@ -158,7 +158,7 @@ const results = await db.execute(sql`
 
 ## MAP (Key-Value Pairs)
 
-Maps store key-value pairs. Keys are `STRING` by default. Pass `{ keyType }` as the third argument to use another key type, for example `duckDbMap<Record<string, string>>('labels', 'VARCHAR', { keyType: 'INTEGER' })` for `MAP(INTEGER, VARCHAR)`.
+Maps store key-value pairs. Keys are `STRING` by default. Pass `{ keyType }` as the third argument to use another key type, for example `duckDbMap<Record<string, string>>('labels', 'VARCHAR', { keyType: 'INTEGER' })` for `MAP(INTEGER, VARCHAR)`. Pass `{ mode: 'object' }` to decode reads into a plain object instead of `{ key, value }` entry arrays.
 
 ```typescript
 const products = pgTable('products', {
@@ -199,7 +199,7 @@ console.log(product.inventory);
 
 {: .warning }
 
-> The TypeScript type of a `duckDbMap` column is the `Record` you pass as the type parameter, but reads return an array of `{ key, value }` entries at runtime. Convert the entries when you need an object:
+> By default (`mode: 'entries'`), the TypeScript type of a `duckDbMap` column is the `Record` you pass as the type parameter, while reads return an array of `{ key, value }` entries at runtime. Pass `{ mode: 'object' }` in the column options to decode directly into a plain object, or convert the entries yourself:
 >
 > ```typescript
 > const inventory = Object.fromEntries(

@@ -1,4 +1,5 @@
 import { sql, type SQL } from 'drizzle-orm';
+import type { AnyRelations, EmptyRelations } from 'drizzle-orm/relations';
 import type { RowData } from './client.ts';
 import type { DuckDBDatabase } from './driver.ts';
 import { splitTopLevel } from './sql/split-top-level.ts';
@@ -191,8 +192,10 @@ type ImportBuckets = {
 
 export const DEFAULT_IMPORT_BASE = '@duckdbfan/drizzle-duckdb/helpers';
 
-export async function introspect(
-  db: DuckDBDatabase,
+export async function introspect<
+  TRelations extends AnyRelations = EmptyRelations,
+>(
+  db: DuckDBDatabase<TRelations>,
   opts: IntrospectOptions = {}
 ): Promise<IntrospectResult> {
   // Pin pooled clients and read one catalog snapshot for the entire operation.

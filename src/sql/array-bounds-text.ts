@@ -11,12 +11,13 @@
 
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/;
 // A tag is empty or an identifier, so $1 parameters never match.
-const DOLLAR_TAG = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/;
+const DOLLAR_TAG = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y;
 
 /** The dollar-quote tag at `index`, such as `$$` or `$a1$`. */
 export function dollarTagAt(query: string, index: number): string | undefined {
   if (query[index] !== '$') return undefined;
-  return DOLLAR_TAG.exec(query.slice(index, index + 64))?.[0];
+  DOLLAR_TAG.lastIndex = index;
+  return DOLLAR_TAG.exec(query)?.[0];
 }
 
 /**

@@ -94,6 +94,9 @@ function dateToMicros(value: Date | string | number | bigint): bigint {
   }
 
   if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new Error(`Invalid timestamp number: ${value}`);
+    }
     // Assume JS milliseconds
     return BigInt(Math.trunc(value)) * 1000n;
   }

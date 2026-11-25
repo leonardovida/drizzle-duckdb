@@ -22,6 +22,7 @@ bunx duckdb-introspect --url ./my-database.duckdb --out ./drizzle/schema.ts
 | `--url`                               | DuckDB database path (`:memory:`, `./file.duckdb`, `md:`). A local file must already exist                                         | Required                            |
 | `--database`, `--db`                  | Database/catalog to introspect                                                                                                     | Current database                    |
 | `--all-databases`                     | Introspect all attached databases                                                                                                  | `false`                             |
+| `--bigint-mode`                       | Output mode for `BIGINT` columns: `bigint` (exact) or `number` (may round past `Number.MAX_SAFE_INTEGER`)                          | `bigint`                            |
 | `--schema`, `--schemas`               | Comma-separated schema names, such as `--schema main,analytics`. Repeatable, and repeated values are merged                        | All non-system schemas              |
 | `--out`, `--outFile`                  | Output file path                                                                                                                   | `./drizzle/schema.ts`               |
 | `--json`, `--out-json`, `--outJson`   | Also write table metadata as JSON to this path                                                                                     | Not written                         |
@@ -189,7 +190,7 @@ interface IntrospectResult {
 The introspector generates Drizzle schema files with:
 
 1. **Imports** from `drizzle-orm`, `drizzle-orm/pg-core`, and DuckDB helpers
-2. **Schema declarations** for each database schema. A schema named `public` is declared as `new PgSchema("public")`, because `pgSchema("public")` throws and an unqualified `pgTable()` would resolve against DuckDB's `main` schema
+2. **Schema declarations** for each database schema. A schema named `public` is declared as `new PgSchema("public", undefined)`, because `pgSchema("public")` throws and an unqualified `pgTable()` would resolve against DuckDB's `main` schema
 3. **Table definitions** with columns, primary keys, unique constraints and foreign keys
 4. **View definitions** (with `--include-views`) as `schema.view(name, { ...columns }).existing()`, which Drizzle treats as read-only and drizzle-kit does not try to create
 5. **Comments** for CHECK constraints and `CREATE INDEX` indexes, which are not emitted as Drizzle config
@@ -232,7 +233,7 @@ export const events = analyticsSchema.table("events", {
   id: integer("id").notNull(),
   name: varchar("name").notNull(),
   properties: duckDbJson("properties"),
-  tags: duckDbList("tags", "VARCHAR"),
+  tags: duckDbList<string | null>("tags", "VARCHAR"),
   createdAt: duckDbTimestamp("created_at").default(sql`current_timestamp`),
 }, (t) => [
   primaryKey({ columns: [t.id], name: "events_id_pkey" }),
@@ -241,7 +242,7 @@ export const events = analyticsSchema.table("events", {
 export const users = analyticsSchema.table("users", {
   id: integer("id").notNull(),
   email: varchar("email").notNull(),
-  metadata: duckDbStruct("metadata", { "plan": "VARCHAR", "active": "BOOLEAN" }),
+  metadata: duckDbStruct<{ "plan": string | null; "active": boolean | null }>("metadata", { "plan": "VARCHAR", "active": "BOOLEAN" }),
 }, (t) => [
   primaryKey({ columns: [t.id], name: "users_id_pkey" }),
   unique("users_email_key").on(t.email),
@@ -303,18 +304,18 @@ DuckDB stores `TEXT` and `STRING` columns as `VARCHAR` and does not keep a `VARC
 
 ### DuckDB-Specific Types
 
-| DuckDB Type       | Drizzle Builder                            |
-| ----------------- | ------------------------------------------ |
-| `type[]` (list)   | `duckDbList('name', 'TYPE')`               |
-| `type[n]` (array) | `duckDbArray('name', 'TYPE', n)`           |
-| `STRUCT(...)`     | `duckDbStruct('name', { ... })`            |
-| `MAP(K, V)`       | `duckDbMap('name', 'V', { keyType: 'K' })` |
-| `JSON`            | `duckDbJson('name')`                       |
-| `BLOB`            | `duckDbBlob('name')`                       |
-| `INET`            | `duckDbInet('name')`                       |
-| `INTERVAL`        | `duckDbInterval('name')`                   |
+| DuckDB Type       | Drizzle Builder                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `type[]` (list)   | `duckDbList<T \| null>('name', 'TYPE')`                                               |
+| `type[n]` (array) | `duckDbArray<T \| null>('name', 'TYPE', n)`                                           |
+| `STRUCT(...)`     | `duckDbStruct<...>('name', { ... })`                                                  |
+| `MAP(K, V)`       | `duckDbMap<Record<string, T \| null>>('name', 'V', { mode: 'object', keyType: 'K' })` |
+| `JSON`            | `duckDbJson('name')`                                                                  |
+| `BLOB`            | `duckDbBlob('name')`                                                                  |
+| `INET`            | `duckDbInet('name')`                                                                  |
+| `INTERVAL`        | `duckDbInterval('name')`                                                              |
 
-The generated `duckDbMap` always has the value type. A non-string key type is emitted as `{ keyType }`, for example `duckDbMap("counts", "VARCHAR", { keyType: "INTEGER" })`. String keys (`VARCHAR`) leave out the option because `VARCHAR` is the default.
+The generated `duckDbMap` includes `{ mode: 'object' }` and the value type. A non-string key type also emits `keyType`, for example `duckDbMap<Record<string, string | null>>("counts", "VARCHAR", { mode: 'object', keyType: "INTEGER" })`. String keys (`VARCHAR`) leave out `keyType` because `VARCHAR` is the default.
 
 DuckDB returns a `UNION` value as an object such as `{ tag: "num", value: 1 }`, so the generated column type is a union of one `{ tag; value }` shape per member. `duckDbUnion` writes the same shape back with `union_value()`, so inserts and updates accept it too.
 

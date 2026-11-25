@@ -5,6 +5,9 @@ export default defineConfig({
     // Agent worktrees under .claude/ hold full copies of test/. Collecting
     // them runs every suite twice, and the copies race on test/.tmp.
     exclude: [...configDefaults.exclude, '.claude/**', 'test/.tmp/**'],
+    benchmark: {
+      exclude: [...configDefaults.exclude, '.claude/**', 'test/.tmp/**'],
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

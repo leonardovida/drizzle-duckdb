@@ -220,10 +220,14 @@ await db.insert(readings).values({ id: 1, value: { tag: 'num', value: 42 } });
 
 ### Map
 
-For key-value pairs. Keys are `STRING` unless you pass `keyType`:
+For key-value pairs. Keys are `STRING` unless you pass `keyType`. Pass `mode: 'object'` to decode reads into a plain object instead of an array of `{ key, value }` entries:
 
 ```typescript
-duckDbMap<TData>(name, valueType, options?: { keyType?: string })
+duckDbMap<TData>(
+  name,
+  valueType,
+  options?: { mode?: 'entries' | 'object'; keyType?: string }
+)
 ```
 
 ```typescript
@@ -262,7 +266,7 @@ await db.insert(config).values({
 });
 ```
 
-Reads return an array of `{ key, value }` entries at runtime, not the `Record` shown in the TypeScript type. See [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}#map-key-value-pairs) for a conversion example.
+By default (`mode: 'entries'`), reads return an array of `{ key, value }` entries at runtime, not the `Record` shown in the TypeScript type. Pass `{ mode: 'object' }` to decode directly to a `Record`. See [DuckDB Types]({{ '/features/duckdb-types' | relative_url }}#map-key-value-pairs) for examples.
 
 ### JSON
 
