@@ -16,6 +16,7 @@ import {
   mdGetFlightVersion,
   mdIsRoleInSession,
   mdListDives,
+  mdListDiveGrantees,
   mdListFlightGrantees,
   mdListFlights,
   mdListFlightVersions,
@@ -348,6 +349,11 @@ if (skipMotherduck) {
         expect(
           await describeColumns(mdListFlightGrantees(sql`uuid()`))
         ).toEqual(['grantee_name', 'grantee_type', 'privilege']);
+        expect(await describeColumns(mdListDiveGrantees(sql`uuid()`))).toEqual([
+          'grantee_name',
+          'grantee_type',
+          'privilege',
+        ]);
         expect(await describeColumns(mdListRoles())).toEqual([
           'role_name',
           'role_type',

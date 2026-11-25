@@ -170,6 +170,13 @@ export type MotherDuckFlightGranteeRow = {
   privilege: 'run' | (string & {});
 };
 
+export type MotherDuckDiveGranteeRow = {
+  /** NULL when the caller may read the Dive but not manage its grants. */
+  grantee_name: string | null;
+  grantee_type: 'user' | 'role' | 'organization' | (string & {});
+  privilege: 'read' | (string & {});
+};
+
 /** Flight metadata that `md_create_flight` and `md_update_flight` accept. */
 export type MotherDuckFlightMetadata = {
   /**
@@ -365,6 +372,7 @@ const motherDuckTableFunctionNameList = [
   'ducklake_table_info',
   'ducklake_table_insertions',
   'ducklake_table_deletions',
+  'ducklake_table_changes',
   'ducklake_current_snapshot',
   'ducklake_last_committed_snapshot',
   'ducklake_merge_adjacent_files',
@@ -800,6 +808,14 @@ export function mdListDiveVersions(
     'md_list_dive_versions',
     motherDuckIdPagedParams('id', id, options)
   );
+}
+
+/**
+ * Who holds which privilege on a Dive, as `SHOW GRANTS ON DIVE` lists it.
+ * Grant and revoke access with `GRANT READ ON DIVE` and `REVOKE READ ON DIVE`.
+ */
+export function mdListDiveGrantees(diveId: string | SQLWrapper): SQL {
+  return sql`md_list_dive_grantees(CAST(${motherDuckArg(diveId)} AS UUID))`;
 }
 
 export function mdGetDiveVersion(

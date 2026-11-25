@@ -161,6 +161,25 @@ await db.execute(sql`
 `);
 ```
 
+`ducklake_table_changes` returns the rows inserted, deleted and updated in a
+DuckLake table between two snapshots. Each row carries `snapshot_id`,
+`rowid`, `change_type` (`insert`, `delete`, `update_preimage` or
+`update_postimage`) and the table's columns. It is a DuckLake macro, so it does
+not accept `mdRun`:
+
+```typescript
+const changes = await db.execute(sql`
+  select snapshot_id, change_type, id
+  from ${motherDuckTableFunction('ducklake_table_changes', [
+    'my_lake',
+    'main',
+    'events',
+    startSnapshot,
+    endSnapshot,
+  ])}
+`);
+```
+
 ## MotherDuck metadata table functions
 
 Use `mdAccessTokens()` and the Dives helpers when querying the matching
@@ -213,8 +232,9 @@ const versions = await db.execute(sql`
 ```
 
 `mdAccessTokens({ activeOnly: true })` filters out rows whose `expire_at` is in
-the past. `mdListDives()` accepts pagination plus `includeOrgShares` for Dives
-shared with the organization. The Dives helper family covers listing, reading,
+the past. `mdListDives()` lists the Dives you own and accepts pagination.
+Pass `includeOrgShares: true` to also list Dives that other users shared with
+you. The Dives helper family covers listing, reading,
 creating, updating metadata or content, deleting, listing versions, and reading
 a specific version. `mdUpdateDiveStatus({ id, status, version })` sets a
 Dive's governance status to `draft`, `ready`, `endorsed` or `archived`, and
@@ -226,6 +246,29 @@ empty list is sent as a typed empty list. `mdListDives()`, `mdListDiveVersions()
 `mdGetDiveVersion()` include `required_resources` on supported MotherDuck
 deployments. The column is a list of structs with `name`, `alias`, `url`, `id`,
 and `resource_type` fields.
+
+### Dive grants
+
+New Dives are private to their owner. Grant read access with
+`GRANT READ ON DIVE '<id>' TO USER <name>, ROLE <name>, ORGANIZATION` and
+remove it with `REVOKE READ ON DIVE '<id>' FROM ...`. Read access opens the
+Dive. It does not grant access to the databases the Dive reads or run access
+on its Flights.
+
+```typescript
+import { mdListDiveGrantees } from '@duckdbfan/drizzle-duckdb';
+
+const grantees = await db.execute(sql`
+  select grantee_name, grantee_type, privilege
+  from ${mdListDiveGrantees(diveId)}
+`);
+```
+
+`mdListDiveGrantees(diveId)` calls `md_list_dive_grantees`, the table function
+behind `SHOW GRANTS ON DIVE`, and casts the ID to `UUID`. Rows match
+`MotherDuckDiveGranteeRow`: `grantee_name`, `grantee_type` (`user`, `role` or
+`organization`) and `privilege` (`read`). `grantee_name` is `NULL` when the
+caller may read the Dive but not manage its grants.
 
 ## MotherDuck Flight table functions
 
