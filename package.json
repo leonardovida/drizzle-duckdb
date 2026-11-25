@@ -30,7 +30,7 @@
     "@types/bun": "1.4.4",
     "@types/node": "26.6.6",
     "@types/semver": "7.8.0",
-    "@vitest/coverage-v8": "4.1.12",
+    "@vitest/coverage-v8": "5.1.1",
     "@vitest/ui": "4.1.12",
     "drizzle-orm": "1.0.0-rc.5",
     "prettier": "3.10.1",
