@@ -1,7 +1,14 @@
 import { entityKind, is } from 'drizzle-orm/entity';
 import type { MigrationConfig, MigrationMeta } from 'drizzle-orm/migrator';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { commonStringChunks, sql, StringChunk, type SQL } from 'drizzle-orm';
+import {
+  commonStringChunks,
+  Param,
+  Placeholder,
+  sql,
+  StringChunk,
+  type SQL,
+} from 'drizzle-orm';
 import {
   makeDefaultRqbMapper,
   type BuildRelationalQueryResult,
@@ -294,14 +301,43 @@ function finishRelationalChunks(chunks: unknown[]): void {
       continue;
     }
     const next = chunks[index + 1];
-    if (
-      RELATIONAL_LIMIT_CHUNKS.has(chunk.value) &&
-      Number.isSafeInteger(next)
-    ) {
-      chunks[index + 1] = new StringChunk(String(next));
+    if (RELATIONAL_LIMIT_CHUNKS.has(chunk.value)) {
+      if (Number.isSafeInteger(next)) {
+        chunks[index + 1] = new StringChunk(String(next));
+      } else if (is(next, Placeholder)) {
+        // The session inlines a param whose value is SQL, so the placeholder
+        // value becomes a constant when the prepared query runs.
+        chunks[index + 1] = new Param(
+          next,
+          inlinedCountEncoder(chunk.value.trim())
+        );
+      }
     }
   }
   if (closings.length > 0) throw new Error(UNMATCHED_JOIN_MESSAGE);
+}
+
+/** Encodes a LIMIT or OFFSET placeholder value as an integer literal. */
+function inlinedCountEncoder(clause: string): {
+  mapToDriverValue: (value: unknown) => SQL;
+} {
+  return {
+    mapToDriverValue: (value) => {
+      const count =
+        typeof value === 'string' && /^\d+$/.test(value.trim())
+          ? BigInt(value.trim())
+          : value;
+      if (
+        !(typeof count === 'bigint' && count >= 0n) &&
+        !(Number.isSafeInteger(count) && (count as number) >= 0)
+      ) {
+        throw new Error(
+          `Invalid ${clause} placeholder value ${String(value)}: relational queries need a non-negative integer.`
+        );
+      }
+      return sql.raw(String(count));
+    },
+  };
 }
 
 function quoteIdentifier(name: string): string {

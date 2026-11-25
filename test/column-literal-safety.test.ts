@@ -315,3 +315,28 @@ describe('type names', () => {
     expect(Number(rows[0]!.empty)).toBe(0);
   });
 });
+
+describe('NUL characters', () => {
+  const notes = pgTable('nul_notes', {
+    id: integer('id'),
+    tags: duckDbList<string>('tags', 'VARCHAR'),
+    meta: duckDbStruct<{ note: string }>('meta', { note: 'VARCHAR' }),
+  });
+
+  test('round-trip in list and struct literals', async () => {
+    await db.execute(
+      sql`create table nul_notes (id integer, tags varchar[], meta struct(note varchar))`
+    );
+    const value = "a\0b'\0";
+    await db
+      .insert(notes)
+      .values({ id: 1, tags: [value, 'c'], meta: { note: value } });
+    const [row] = await db.select().from(notes);
+    expect(row).toEqual({ id: 1, tags: [value, 'c'], meta: { note: value } });
+    const matches = await db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(duckDbArrayContains(notes.tags, [value]));
+    expect(matches).toEqual([{ id: 1 }]);
+  });
+});

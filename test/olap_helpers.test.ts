@@ -513,3 +513,34 @@ test('percentileCont interpolates DECIMAL columns and keeps timestamps', async (
   expect(row.p25).toBeCloseTo(1.3875);
   expect(row.seen).toBe(Date.UTC(2024, 0, 2));
 });
+
+test('anyValue decodes like the column it wraps', async () => {
+  const picks = pgTable('olap_picks', {
+    grp: integer('grp').notNull(),
+    price: numeric('price', { precision: 38, scale: 2 }).notNull(),
+    seenAt: timestamp('seen_at', { mode: 'string' }).notNull(),
+  });
+  await db.execute(sql`
+    create or replace table ${picks} (grp integer not null, price decimal(38, 2) not null, seen_at timestamp not null)
+  `);
+  await db.execute(sql`
+    insert into ${picks} values (1, 12345678901234567890.12, '2024-01-02 03:04:05')
+  `);
+
+  const [row] = await db
+    .select({
+      price: anyValue(picks.price),
+      seenAt: anyValue(picks.seenAt),
+      doubled: anyValue(
+        sql<number>`${picks.grp} * 2`.mapWith(Number).as('ignored')
+      ),
+    })
+    .from(picks)
+    .groupBy(picks.grp);
+
+  expect(row).toEqual({
+    price: '12345678901234567890.12',
+    seenAt: '2024-01-02 03:04:05.000',
+    doubled: 2,
+  });
+});
